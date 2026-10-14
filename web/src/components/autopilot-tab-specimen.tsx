@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react"
 
+import type { AutoReviewRound } from "../../../shared/api/auto-review"
 import type { AutopilotHistoryEntry, AutopilotStatus } from "../../../shared/autopilot"
 import { AutopilotView, type AutomationModel, type HistoryLinks } from "@/components/autopilot-pane"
 import { Section } from "@/components/gallery-chrome"
@@ -169,12 +170,46 @@ const H_RICH: AutopilotHistoryEntry[] = [
   e(60 * 26 + 2, "armed", "Auto-merge on, Auto-fix on", null),
 ]
 
-function automationOf(status: AutopilotStatus, history: AutopilotHistoryEntry[] | null): AutomationModel {
+function automationOf(status: AutopilotStatus, history: AutopilotHistoryEntry[] | null, rounds?: AutoReviewRound[]): AutomationModel {
   return {
     status, locked: null, pending: false, error: null,
     history: history ? { entries: history, error: null } : null,
+    reviews: rounds ? { rounds, error: null, onOpenTask: noop } : null,
     onSet: noop, onAct: noop,
   }
+}
+
+/* ── auto-review ────────────────────────────────────────────────────────── */
+
+const round = (id: string, n: number, head: string, state: AutoReviewRound["state"], min: number, over: Partial<AutoReviewRound> = {}): AutoReviewRound => ({
+  id, pr: 318, head, round: n, counted: true, state, summary: null, findings: [], recipeFeedback: null, recipeArea: null,
+  evidence: [], reviewerTaskId: `tr${id}`, recipeVersion: "3", createdAt: ago(min + 9), finishedAt: state === "running" ? null : ago(min), ...over,
+})
+
+const ROUNDS: AutoReviewRound[] = [
+  round("4", 2, "9c41e07aa11", "running", 1),
+  round("3", 1, "5d2b8aa0c3", "fail", 14, { summary: "Saving twice in one frame still sends two PUTs: the shortcut bypasses the store." }),
+  round("2", 1, "5d2b8aa0c3", "recipe", 31, { counted: false, recipeFeedback: "The editor area's launch step needs a seeded document; the recipe never creates one.", recipeArea: "editor" }),
+  round("1", 1, "3f8e0c1b44", "superseded", 52),
+]
+const ROUNDS_PASSED: AutoReviewRound[] = [
+  round("5", 2, "9c41e07aa11", "pass", 3, { summary: "Saved by button, shortcut and autosave in one frame: one PUT each time. Toast unchanged." }),
+  ...ROUNDS.slice(1),
+]
+const ROUNDS_SPENT: AutoReviewRound[] = [
+  round("8", 3, "b7e1d52ffe", "inconclusive", 4, { summary: "The save toast never appeared, so the change could not be observed." }),
+  round("7", 2, "2ac9f10de9", "fail", 30, { summary: "Autosave still races a manual save when the network is slow." }),
+  round("6", 1, "4e5f6a7b8c", "error", 70, { summary: null }),
+]
+
+const REVIEW_OFF: AutopilotStatus = { ...WAITING, autoReview: false, reviewRounds: 0 }
+const REVIEWING: AutopilotStatus = {
+  ...WAITING, autoReview: true, by: "auto-review", reviewRounds: 2, reason: "Auto-review: reviewing 9c41e07 (round 2 of 3)", updatedAt: ago(1),
+}
+const REVIEW_QUIET: AutopilotStatus = { ...WAITING, autoReview: true, reviewRounds: 2 }
+const REVIEW_PAUSED: AutopilotStatus = {
+  ...WAITING, autoFix: false, autoReview: true, by: "auto-review", state: "paused", reviewRounds: 3,
+  reason: "Auto-review rejected 3 rounds: the save toast never appeared", updatedAt: ago(4),
 }
 
 const REPOSITORY = "https://github.com/example/editor"
@@ -285,7 +320,7 @@ function TabPane({
 
 export function AutopilotTabSpecimen() {
   return (
-    <Section title="Autopilot tab — the brief first, then what auto-merge and auto-fix are doing">
+    <Section title="Autopilot tab — the brief first, then what auto-merge, auto-fix and auto-review are doing">
       <div className="flex flex-col gap-10">
         <Frame id="autopilot-a" title="Everything off, no history"
           note="Brief first, its switch in its own header row. The strong full-width line, then Automation. Every off switch's second line teaches what it does.">
@@ -331,6 +366,29 @@ export function AutopilotTabSpecimen() {
           <div>
             <Caption>Phone, at the top</Caption>
             <Panel touch width={390} height={720}><TabPane touch brief={briefOf(BRIEF_LONG)} automation={automationOf(PAUSED, H_PAUSED)} /></Panel>
+          </div>
+        </Frame>
+        <Frame id="autopilot-review" title="Auto-review: the third switch, and its rounds"
+          note="On a daemon with features.autoReview the third switch teaches what it does while off. When the reviewer is the speaker the live line sits under it; otherwise it says one quiet fact, the round it is on. Reviews lists the current PR's rounds, newest first: the dot carries the verdict (green pass, blue reviewing, red rejected or no verdict, amber where a person may look, faint superseded), and Open selects the reviewer task.">
+          <div>
+            <Caption>Off, teaching</Caption>
+            <Panel height={360}><TabPane brief={null} automation={automationOf(REVIEW_OFF, null, [])} /></Panel>
+          </div>
+          <div>
+            <Caption>Reviewing a new head, the reviewer speaking</Caption>
+            <Panel height={420}><TabPane brief={null} automation={automationOf(REVIEWING, null, ROUNDS)} /></Panel>
+          </div>
+          <div>
+            <Caption>Passed, while auto-merge speaks</Caption>
+            <Panel height={420}><TabPane brief={null} automation={automationOf(REVIEW_QUIET, null, ROUNDS_PASSED)} /></Panel>
+          </div>
+          <div>
+            <Caption>Three rounds spent: paused, with Resume</Caption>
+            <Panel height={470}><TabPane brief={null} automation={automationOf(REVIEW_PAUSED, null, ROUNDS_SPENT)} /></Panel>
+          </div>
+          <div>
+            <Caption>Touch</Caption>
+            <Panel touch width={390} height={520}><TabPane touch brief={null} automation={automationOf(REVIEWING, null, ROUNDS)} /></Panel>
           </div>
         </Frame>
         <BriefLines />

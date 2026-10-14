@@ -25,6 +25,8 @@ export const BRIEF_RUN_ENV = "WISP_BRIEF_RUN"
  * agent driving Wisp from a person typing in the task's terminal (cli-api.ts).
  */
 export const AGENT_TURN_ENV = "WISP_AGENT_TURN"
+/** An auto-review reviewer's round token (verify/rounds.ts): `wisp review submit` sends it with the verdict. */
+export const REVIEW_TOKEN_ENV = "WISP_REVIEW_TOKEN"
 
 /**
  * The single line an eligible turn is given. Short on purpose — the schema,
@@ -125,7 +127,8 @@ export function envForCwd<T extends Record<string, string | undefined>>(env: T, 
   // binding to anything. The runner adds a turn's OWN binding after this.
   // The agent-turn marker is dropped for the same reason: only the runner
   // may say a child is a turn.
-  const { [BRIEF_RUN_ENV]: _inherited, [AGENT_TURN_ENV]: _turn, ...rest } = env
+  // An auto-review token is dropped too: only a reviewer's own turn gets one.
+  const { [BRIEF_RUN_ENV]: _inherited, [AGENT_TURN_ENV]: _turn, [REVIEW_TOKEN_ENV]: _review, ...rest } = env
   return { ...rest, PWD: cwd } as T & { PWD: string }
 }
 

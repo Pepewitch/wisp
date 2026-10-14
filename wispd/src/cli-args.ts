@@ -8,6 +8,8 @@ export type Flags = Parsed["flags"];
 const VALUE_FLAGS = new Set(["harness", "model", "effort", "timeout", "name", "setup", "archive", "base", "port", "confirm", "archived-before", "confirm-count", "limit", "task", "turn", "out"]);
 const REPEAT_FLAGS = new Set(["attach", "image", "copy"]);
 for (const flag of ["every", "prompt", "at", "lifetime", "max-wakeups", "params", "file", "replace"]) VALUE_FLAGS.add(flag);
+// auto-review and verification recipes
+for (const flag of ["round", "project", "draft", "area", "note", "pr"]) VALUE_FLAGS.add(flag);
 
 export function parseArgs(args: string[]): Parsed {
   const positional: string[] = [];

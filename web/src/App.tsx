@@ -21,7 +21,7 @@ import { PaneErrorBoundary } from "@/components/error-boundary"
 import { LazyGallery } from "@/components/lazy-gallery"
 import { MobileShell } from "@/components/mobile-shell"
 import { MobileConnectionStatus } from "@/components/conn-indicator"
-import { ProjectSettingsDialog } from "@/components/project-settings-dialog"
+import { ProjectSettingsDialog, type ProjectSettingsTarget } from "@/components/project-settings-dialog"
 import { SettingsDialog } from "@/components/settings-dialog"
 import { UsageLimitsControl } from "@/components/usage-limits-control"
 import { StartHere } from "@/components/start-here"
@@ -257,8 +257,9 @@ function MainView({
   const [logGeneration, bumpLogGeneration] = useReducer((n: number) => n + 1, 0)
   const reconnectRequests = useReconnectRequests(runtime.connectionId)
   // held as a PATH, not a row: the repos query refetches after a save, and a
-  // captured row would leave the modal showing what was just replaced
-  const [configuringPath, setConfiguringPath] = useState<string | null>(null)
+  // captured row would leave the modal showing what was just replaced; plus
+  // the section it opens at (the sidebar's verification control's)
+  const [configuring, setConfiguring] = useState<ProjectSettingsTarget | null>(null)
   // Wisp's own preferences are client-local and global (§5g), so they belong
   // to the shell rather than to the selected connection.
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -357,10 +358,11 @@ function MainView({
         setCreateFor({ repoPath })
         opts?.afterSelect?.()
       }}
-      onConfigureProject={(repoPath) => {
-        setConfiguringPath(repoPath)
+      onConfigureProject={(repoPath, section) => {
+        setConfiguring({ path: repoPath, section: section ?? null })
         opts?.afterSelect?.()
       }}
+      verification={searchFeature.data?.autoReview === true}
       onOpenSettings={() => {
         // dismiss and open in the same commit — the same pair a project's gear
         // already makes on touch, so the drawer is never left over the modal
@@ -426,13 +428,13 @@ function MainView({
     <>
       <AppDialogs
         createFor={createFor}
-        configuringPath={configuringPath}
+        configuring={configuring}
         repos={reposQuery.data}
-        activeTaskCount={groups.find((g) => g.path === configuringPath)?.tasks.length ?? 0}
+        activeTaskCount={groups.find((g) => g.path === configuring?.path)?.tasks.length ?? 0}
         harnesses={harnessesQuery.data}
         harnessesError={harnessesQuery.error}
         onCloseCreate={() => setCreateFor(null)}
-        onCloseSettings={() => setConfiguringPath(null)}
+        onCloseSettings={() => setConfiguring(null)}
         onCreated={selectTask}
       />
       {projectAdd.dialogs}
@@ -638,7 +640,7 @@ function TaskComposer({
 
 function AppDialogs({
   createFor,
-  configuringPath,
+  configuring,
   repos,
   activeTaskCount,
   harnesses,
@@ -648,7 +650,7 @@ function AppDialogs({
   onCreated,
 }: {
   createFor: { repoPath: string | null } | null
-  configuringPath: string | null
+  configuring: ProjectSettingsTarget | null
   repos: RepoInfo[] | undefined
   activeTaskCount: number
   harnesses: HarnessInfo[] | undefined
@@ -671,8 +673,9 @@ function AppDialogs({
         onCreated={onCreated}
       />
       <ProjectSettingsDialog
-        project={repos?.find((repo) => repo.path === configuringPath) ?? null}
+        project={repos?.find((repo) => repo.path === configuring?.path) ?? null}
         activeTaskCount={activeTaskCount}
+        section={configuring?.section}
         onOpenChange={(open) => !open && onCloseSettings()}
       />
       <AuthDialog />

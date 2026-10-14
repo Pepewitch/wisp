@@ -50,6 +50,7 @@ export {
   LineHorizontal3Regular as Hamburger,
   SearchRegular as Search,
   SettingsRegular as Gear,
+  ShieldCheckmarkRegular as Verify,
   DesktopRegular as Local,
   LayerDiagonalRegular as Worktree,
   MoreHorizontalRegular as More,

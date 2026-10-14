@@ -21,6 +21,8 @@ const TONE: Record<string, HistoryTone> = {
   "merge-failed": "alert",
   paused: "alert",
   "judge-unavailable": "alert",
+  // the PR is held until a person activates a fixed verification recipe
+  "review-hold": "alert",
   wait: "routine",
   active: "routine",
   configured: "routine",
@@ -54,6 +56,8 @@ const WORD: Record<string, string> = {
   active: "Active",
   paused: "Paused",
   completed: "Switched off",
+  review: "Auto-review",
+  "review-hold": "Held for the recipe",
 }
 
 /** A merge somebody else made reads `#7 was merged into main`; Wisp's own reads `Merged #7 into main`. */

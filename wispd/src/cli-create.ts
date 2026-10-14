@@ -18,7 +18,7 @@ export async function createCommand(positional: string[], flags: Flags): Promise
     [repo, prompt] = [process.cwd(), positional[0]!];
   } else {
     printError(
-      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--brief] [--attach <path>]…`,
+      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--brief] [--attach <path>]…`,
     );
     process.exit(1);
   }
@@ -52,8 +52,12 @@ export async function createCommand(positional: string[], flags: Flags): Promise
       fast: flags.fast === true ? true : undefined,
       mode: flags.local ? "local" : undefined,
       base: typeof flags.base === "string" ? flags.base : undefined,
-      autopilot: flags["auto-merge"] === true || flags["auto-fix"] === true
-        ? { autoMerge: flags["auto-merge"] === true, autoFix: flags["auto-fix"] === true }
+      autopilot: flags["auto-merge"] === true || flags["auto-fix"] === true || flags["auto-review"] === true
+        ? {
+          autoMerge: flags["auto-merge"] === true, autoFix: flags["auto-fix"] === true,
+          // only when asked: an older daemon refuses a field it does not know
+          ...(flags["auto-review"] === true ? { autoReview: true } : {}),
+        }
         : undefined,
       briefEnabled: flags.brief === true ? true : undefined,
       attachments,
@@ -68,11 +72,12 @@ export async function createCommand(positional: string[], flags: Flags): Promise
 /** What the daemon armed, not what was asked: an older daemon ignores the fields it does not know. */
 function reportCreated(task: ApiTask, flags: Flags): void {
   const where = task.mode === "local" ? ", local" : "";
-  const autopilot = (task as ApiTask & { autopilot?: { autoMerge?: boolean; autoFix?: boolean } }).autopilot;
-  const merge = [autopilot?.autoMerge && ", auto-merge", autopilot?.autoFix && ", auto-fix"].filter(Boolean).join("");
+  const autopilot = (task as ApiTask & { autopilot?: { autoMerge?: boolean; autoFix?: boolean; autoReview?: boolean } }).autopilot;
+  const merge = [autopilot?.autoMerge && ", auto-merge", autopilot?.autoFix && ", auto-fix", autopilot?.autoReview && ", auto-review"].filter(Boolean).join("");
   const brief = task.briefEnabled === true ? ", brief" : "";
   print(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}${brief}) — ${task.title}`);
   const asked = flags["auto-merge"] === true || flags["auto-fix"] === true;
   if (asked && !autopilot?.autoMerge && !autopilot?.autoFix) printError("warning: this daemon did not arm auto-merge or auto-fix (it may be older than this CLI)");
+  if (flags["auto-review"] === true && !autopilot?.autoReview) printError("warning: this daemon did not arm auto-review (it may be older than this CLI)");
   if (flags.brief === true && task.briefEnabled !== true) printError("warning: this daemon did not turn briefs on (it may be older than this CLI)");
 }

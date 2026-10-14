@@ -13,8 +13,15 @@ import { cn } from "@/lib/utils"
  * Portalled and unmounted while `reason` is null, so a row that is not
  * refusing anything contributes nothing to the document.
  */
-const stops = (task: ApiTask): string =>
-  task.autopilot?.autoMerge && task.autopilot.autoFix ? "merging and fixing" : task.autopilot?.autoFix ? "fixing" : "merging"
+const stops = (task: ApiTask): string => {
+  const verbs = [
+    task.autopilot?.autoMerge && "merging",
+    task.autopilot?.autoFix && "fixing",
+    task.autopilot?.autoReview && "reviewing",
+  ].filter((verb): verb is string => typeof verb === "string")
+  if (verbs.length === 0) return "merging"
+  return verbs.length === 1 ? verbs[0]! : `${verbs.slice(0, -1).join(", ")} and ${verbs.at(-1)}`
+}
 
 export function ArchiveConfirmDialog({
   task,

@@ -289,6 +289,32 @@ export interface RepoInfo {
   baseBranch: string;
   /** false for a repo wisp only knows from task history — it has no config entry to edit */
   configured: boolean;
+  /**
+   * Who reviews this project's PRs under auto-review: null = each task's own
+   * agent. Absent from a daemon older than auto-review.
+   */
+  verify?: ProjectVerifyAgent | null;
+  /** The sidebar's summary of the project's verification recipe. Absent from a daemon older than auto-review. */
+  verification?: VerificationSummary;
+}
+
+/** The project's reviewer agent, as POST /api/projects saves it and GET /api/repos serves it. */
+export interface ProjectVerifyAgent {
+  harness: string;
+  model?: string;
+  effort?: string;
+}
+
+/** `verification` on a GET /api/repos entry: enough for the sidebar; the full status is GET /api/projects/verification. */
+export interface VerificationSummary {
+  state: "none" | "active";
+  areas: number;
+  /** a recipe task's proposal waiting to be activated */
+  draft: boolean;
+  /** a reviewer reported the recipe failing since it was last activated */
+  attention: boolean;
+  /** a recipe task is working on it */
+  busy: boolean;
 }
 
 /** The probed model cache for one harness (null when the probe never ran or failed). */
@@ -388,6 +414,11 @@ export interface HarnessesResponse {
     taskBriefs?: boolean;
     /** /send takes `when`, tasks carry `turn_input`, and a queued message can be sent now (the composer's queue toggle). */
     steerDelivery?: boolean;
+    /**
+     * The third autopilot switch, auto-review: GET /api/tasks/:id/auto-review,
+     * `autoReview` on the autopilot routes, and /api/projects/verification.
+     */
+    autoReview?: boolean;
   };
 }
 

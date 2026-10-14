@@ -1,15 +1,27 @@
-import { useEffect, useState } from "react"
+import { useEffect, useState, type Ref } from "react"
 import { Dialog } from "@base-ui/react/dialog"
 
 import { Button, Eyebrow, POPOVER_SURFACE } from "@/components/primitives"
+import { VerificationFields, VerificationSection, type VerificationFieldsModel } from "@/components/project-verification"
 import { useCopyPreview, useRemoveProject, useSaveProject } from "@/hooks/mutations"
+import { useVerificationField } from "@/hooks/useVerificationField"
 import { ApiError, failureReason } from "@/lib/api"
 import type { RepoInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
+/** A section the dialog can open scrolled to: the sidebar's verification control opens it at Verification. */
+export type ProjectSettingsSection = "verification"
+
+/** Which project's settings are open, and the section they open at. */
+export interface ProjectSettingsTarget {
+  path: string
+  section: ProjectSettingsSection | null
+}
+
 /**
  * Per-project settings: the two worktree hooks, the file-copy patterns, the
- * base new worktrees fork from, and unregistering a configured project.
+ * base new worktrees fork from, the verification recipe auto-review checks
+ * against (on a daemon that has it), and unregistering a configured project.
  *
  * Everything here applies to WORKTREE tasks only, and the modal says so once
  * at the top rather than four times. A local task runs in the checkout the
@@ -28,11 +40,14 @@ import { cn } from "@/lib/utils"
 export function ProjectSettingsDialog({
   project,
   activeTaskCount,
+  section = null,
   onOpenChange,
 }: {
   /** null closes the dialog; a repo opens it seeded from that repo's config */
   project: RepoInfo | null
   activeTaskCount: number
+  /** open scrolled to this section */
+  section?: ProjectSettingsSection | null
   onOpenChange: (open: boolean) => void
 }) {
   return (
@@ -42,6 +57,7 @@ export function ProjectSettingsDialog({
         <ProjectSettingsPopup
           project={project}
           activeTaskCount={activeTaskCount}
+          section={section}
           onClose={() => onOpenChange(false)}
         />
       </Dialog.Portal>
@@ -56,11 +72,13 @@ export function ProjectSettingsDialog({
 export function ProjectSettingsPopup({
   project,
   activeTaskCount,
+  section = null,
   onClose,
   className,
 }: {
   project: RepoInfo | null
   activeTaskCount: number
+  section?: ProjectSettingsSection | null
   onClose: () => void
   className?: string
 }) {
@@ -79,6 +97,7 @@ export function ProjectSettingsPopup({
           key={project.path}
           project={project}
           activeTaskCount={activeTaskCount}
+          section={section}
           onClose={onClose}
           dialog
         />
@@ -90,13 +109,16 @@ export function ProjectSettingsPopup({
 export function ProjectSettingsSpecimen({
   project,
   activeTaskCount = 0,
+  verification,
 }: {
   project: RepoInfo
   activeTaskCount?: number
+  /** draw the Verification section from this model instead of the daemon's answer */
+  verification?: VerificationFieldsModel
 }) {
   return (
     <div className={cn(POPOVER_SURFACE, "w-full max-w-[720px] overflow-hidden rounded-xl")}>
-      <Form project={project} activeTaskCount={activeTaskCount} onClose={() => {}} />
+      <Form project={project} activeTaskCount={activeTaskCount} onClose={() => {}} verification={verification} />
     </div>
   )
 }
@@ -104,13 +126,17 @@ export function ProjectSettingsSpecimen({
 function Form({
   project,
   activeTaskCount,
+  section = null,
   onClose,
   dialog = false,
+  verification,
 }: {
   project: RepoInfo
   activeTaskCount: number
+  section?: ProjectSettingsSection | null
   onClose: () => void
   dialog?: boolean
+  verification?: VerificationFieldsModel
 }) {
   const [setupScript, setSetupScript] = useState(project.setupScript)
   const [archiveScript, setArchiveScript] = useState(project.archiveScript)
@@ -118,6 +144,7 @@ function Form({
   const [baseBranch, setBaseBranch] = useState(project.baseBranch)
   const [confirmingRemove, setConfirmingRemove] = useState(false)
   const [archiveTasks, setArchiveTasks] = useState(activeTaskCount > 0)
+  const field = useVerificationField(project, section, verification !== undefined)
 
   const saveProject = useSaveProject()
   const removeProject = useRemoveProject()
@@ -137,7 +164,7 @@ function Form({
 
   const save = () => {
     saveProject.mutate(
-      { path: project.path, setupScript, archiveScript, copyFiles: patterns, baseBranch: baseBranch.trim() },
+      { path: project.path, setupScript, archiveScript, copyFiles: patterns, baseBranch: baseBranch.trim(), ...(field.reviewable ? { verify: field.verify } : {}) },
       { onSuccess: onClose },
     )
   }
@@ -201,6 +228,20 @@ function Form({
           <ScriptBox value={copyText} onChange={setCopyText} placeholder=".env*" aria-label="Files to copy" rows={3} />
           <CopyPreview path={project.path} patterns={patterns} />
         </Section>
+
+        {field.show && (
+          <Section
+            label="Verification"
+            hint="The recipe auto-review checks each PR against: how to launch the project and prove every area works. Kept in Wisp, never in the repo. A recipe task proposes a draft; you activate it."
+            sectionRef={field.ref}
+          >
+            {verification ? (
+              <VerificationFields {...verification} />
+            ) : (
+              <VerificationSection project={project} agent={field.verify} onAgentChange={field.setVerify} />
+            )}
+          </Section>
+        )}
       </div>
 
       {error && <div className="shrink-0 px-4 pb-1 text-[11.5px] text-destructive">{error}</div>}
@@ -293,9 +334,25 @@ function Form({
   )
 }
 
-function Section({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
+function Section({
+  label,
+  hint,
+  children,
+  sectionRef,
+}: {
+  label: string
+  hint: string
+  children: React.ReactNode
+  /** a section the dialog can open at: focusable, so the jump is announced */
+  sectionRef?: Ref<HTMLElement>
+}) {
   return (
-    <section className="mt-4 border-t border-border pt-3.5 first-of-type:mt-3.5">
+    <section
+      ref={sectionRef}
+      tabIndex={sectionRef ? -1 : undefined}
+      aria-label={sectionRef ? label : undefined}
+      className="mt-4 scroll-mt-3 border-t border-border pt-3.5 outline-none first-of-type:mt-3.5"
+    >
       <Eyebrow>{label}</Eyebrow>
       <p className="mt-1 text-[11.5px] leading-relaxed text-muted-foreground">{hint}</p>
       <div className="mt-2">{children}</div>

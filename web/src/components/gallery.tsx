@@ -22,6 +22,7 @@ import { QuestionnaireSpecimens } from "@/components/questionnaire-gallery-speci
 import { SearchSpecimens } from "@/components/search-gallery-specimen"
 import { StartHereSpecimen } from "@/components/start-here"
 import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
+import { VerificationSpecimen } from "@/components/verification-specimen"
 import { AutopilotRailSpecimen } from "@/components/autopilot-rail-specimen"
 import { AutopilotTabSpecimen } from "@/components/autopilot-tab-specimen"
 import { MetricRow, Section, Specimen, TextRow } from "@/components/gallery-chrome"
@@ -576,6 +577,7 @@ function WorkflowSpecimens() {
                 explains why the control is absent.
               </p>
             </div>
+            <VerificationSpecimen />
           </div>
       </Section>
 

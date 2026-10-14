@@ -607,6 +607,20 @@ and the modal says so once at the top rather than four times.
 - Scripts run in a fixed order: the repo's committed `.wisp/setup.sh` (the
   team's) before the configured one (this machine's). Both run — dropping
   either would silently change behaviour for a repo already relying on it.
+- **Verification** (`project-verification.tsx`, only with
+  `features.autoReview`) is the project's verification recipe, which lives in
+  the Wisp home and never in the repo: its state as a dot plus muted text, its
+  areas (proven or not, and what a reviewer reported), a waiting draft with
+  **Activate draft** (outline: the modal's one primary stays Save), the recipe
+  task at work with Open, the **Reviewer agent** (saved with Save as `verify`),
+  and a note with **Set up verification** / **Improve** and a per-area **Fix**.
+  A recipe task needs a named agent, so those buttons stay disabled while the
+  reviewer is "Each task's own agent", and a muted line beside them says why
+  (a disabled button shows no title and takes no focus). A started
+  task is selected behind the modal, so unsaved edits survive. The sidebar's
+  shield button on a project row opens the modal at this section; it carries a
+  dot only when there is something to say (red: a reviewer reported the recipe
+  failing; blue: a recipe task is working; neutral: a draft waits).
 
 `⌘↵` belongs to the **form**, not the prompt box — the model and effort fields
 are part of the composer, and a shortcut bound to the textarea alone silently
@@ -790,7 +804,7 @@ REPLACES the CI and review words — `PR #271 · Open · Auto-merge: Waiting for
 checks (2 running)` — because the reason already accounts for both, and the
 line truncates: a reason appended at the end would be the first thing cut. The
 hover title keeps every fact. A PR Wisp merged reads `Merged by Wisp`. The
-switches — Auto-merge and Auto-fix — live in the Autopilot tab (§5k) with
+switches — Auto-merge, Auto-fix and Auto-review — live in the Autopilot tab (§5k) with
 their live line, the one action the state asks for, and History; the task's
 `…` menu keeps them as checkbox rows (`MenuCheckboxItem`, a trailing switch)
 naming the PR they are bound to, and nothing else. Only a reason about the PR's own state
@@ -1266,7 +1280,7 @@ naming whose filesystem the path is on). The disabled button it replaced meant
 the web UI could not be taken from zero to one project without a terminal, on
 the one surface — a phone — where that costs the most.
 
-## 5k. The Autopilot tab — the brief, then what auto-merge and auto-fix are doing
+## 5k. The Autopilot tab — the brief, then what auto-merge, auto-fix and auto-review are doing
 
 `components/autopilot-pane.tsx` (`AutopilotPane`, drawn from its models by
 `AutopilotView`). Autopilot is the first tab of the task panel, beside Changes
@@ -1279,8 +1293,11 @@ PR. Two sections share ONE scroller:
    and its switch; under it the report in full, at agent-prose leading
    (13 / 1.7). Nothing caps it and it has no scroller of its own.
 2. **Automation**, under the one full-width line in the tab
-   (`border-border-strong`; every other rule is inset): the Auto-merge and
-   Auto-fix switch rows, then History.
+   (`border-border-strong`; every other rule is inset): the Auto-merge,
+   Auto-fix and Auto-review switch rows (Auto-review only where the daemon
+   advertises `features.autoReview`), the current PR's review rounds while
+   Auto-review is on (`auto-review-view.tsx`: a dot, the round and its
+   verdict, and an Open action for the reviewer task), then History.
 
 - **Section headers are 12.5 / 600**, the §4 row size at a heavier weight, so
   they outrank the `Auto-merge` row under them without an eyebrow.
@@ -1290,7 +1307,7 @@ PR. Two sections share ONE scroller:
   carries the live line: a dot in the sidebar rail's tone (§5f), `#PR` when
   the reason is about the PR, the reason, and how long it has stood. A
   needs-you or paused line is red, text and all. The other switch says one
-  quiet fact (`On · merges #318 once it is ready`). The one action the state
+  quiet fact (`On · merges #318 once it is ready`, `On · round 1 of 3`). The one action the state
   asks for (`autopilotAction`: Resume, Continue now, or Send now / Skip with
   its countdown) sits under that line as buttons.
 - **History** (`autopilot-history-view.tsx`, words in `lib/autopilot-history.ts`):
@@ -1323,7 +1340,7 @@ PR. Two sections share ONE scroller:
   mobile shell's strip (`Chat · Autopilot · Changes · Workflows · Terminal`);
   a task still opens on Chat.
 - **The task menu keeps the switches as shortcuts** — `Task brief`,
-  `Auto-merge #318`, `Auto-fix` — and nothing else: no reason notes, no action
+  `Auto-merge #318`, `Auto-fix`, `Auto-review` — and nothing else: no reason notes, no action
   rows. A menu that repeats a paragraph is why this tab exists. Each surface
   owns its own write: a pending write or its error shows only on the control
   that sent it. An archived task has no brief switch but keeps the report it

@@ -21,6 +21,11 @@ the PR merges when it's ready, and a brief is waiting for you when you're back.<
   merge conflicts and review comments back to the agent until the PR is green.
   With auto-merge on, Wisp merges it once its checks pass and reviews allow.
   Both are switches on the task. [How it works](docs/PR-AUTOPILOT.md)
+- **Never merge on the agent's word.** With auto-review on, every PR head gets
+  a separate reviewer agent that runs the change, takes screenshots of what it
+  touched, and passes it or sends its findings back. It follows a verification
+  recipe Wisp keeps per project, outside your repository, which a recipe task
+  writes and you activate. [Auto-review](docs/AUTO-REVIEW.md)
 - **Keep watch while you're away.** A heartbeat wakes a task on a schedule
   until its goal is met: "check staging until the smoke test passes." Each
   wake-up is an agent turn. A scheduled steer sends your next instruction at

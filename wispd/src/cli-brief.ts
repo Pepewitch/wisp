@@ -50,7 +50,7 @@ function taskArgument(positional: string[]): string {
  * stays open with nothing arriving — a tool shell whose stdin never closes
  * must not hold the agent's turn.
  */
-function boundedStdin(limit: number, idleMs: number): Promise<Uint8Array | null | "idle"> {
+export function boundedStdin(limit: number, idleMs: number): Promise<Uint8Array | null | "idle"> {
   return new Promise((resolve) => {
     const chunks: Uint8Array[] = []
     let total = 0

@@ -9,7 +9,8 @@
 import type { AutopilotState } from "../../../shared/autopilot"
 import type { AdapterDef } from "../adapters"
 import { repoConfigFor, type WispConfig } from "../config"
-import { subscribe } from "../events"
+import { emit, subscribe } from "../events"
+import { resolve } from "node:path"
 import { backgroundPass, homeIsDraining } from "../home-lifetime"
 import { bunProbeSpawn } from "../probes"
 import { taskBranches } from "../pull-request-branches"
@@ -17,7 +18,6 @@ import { startNextQueuedMessage } from "../runner"
 import { getTask } from "../store"
 import { assertTaskCapacity, TaskCapacityError } from "../task-admission"
 import { recordAudit } from "../task-audit"
-import { backgroundWork } from "../task-processes"
 import type { Task } from "../types"
 import { announceWorkflow, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
 import { conversationsBlock, mergeEvidence, mergeGate, sameReviewState, type PublishedWork } from "./gate"
@@ -34,13 +34,19 @@ import {
   approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, relayedBlocks, reviewerPasses, withDelivered, type FeedbackItem,
 } from "./feedback"
 import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsChanges, writeJudgeLog, type Judged, type JudgeClient, type JudgeLook } from "./judge"
-import { headFirstSeen, headSince, trimHeads } from "./heads"
+import { headFirstSeen, headSince } from "./heads"
 import { planFix, type FixPlan } from "./fix"
 import {
-  checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, endMergeAttempt, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
+  anySwitch, checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, endMergeAttempt, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
   reserveRound, saveAutopilotCheck, unmarkedTurns, withdrawQueuedRound, writeAutopilotCheckpoint, type AutopilotCheck, type AutopilotCheckpoint,
 } from "./store"
 import { CONTEXT_CHANGE_PAUSE } from "./type"
+import { busyReason, forgetIdle, forgetPending, lastActivity, nextPrReason, observe } from "./look"
+import { autoReviewLook, endUnwantedReviews, supersedeStaleRounds, sweepReviews } from "./auto-review"
+import { createAndLaunchTask } from "../domain/task-create"
+import type { ModelProbeCache } from "../model-probes"
+import type { Launch } from "../verify/reviewer"
+import { roundOfReviewer } from "../verify/rounds"
 
 export { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
 export { choosePull, skippedPull } from "./bind"
@@ -69,66 +75,19 @@ export interface AutopilotRuntimeOptions {
   judge?: JudgeClient
   /** the GitHub budget the looks spend from and are paced by; the daemon's own by default */
   budget?: GitHubBudget
+  /** how auto-review starts its reviewer and recipe tasks; createAndLaunchTask by default */
+  launch?: Launch
+  /** the daemon's model probe cache, so a reviewer gets Wisp's default model like any task */
+  models?: ModelProbeCache
 }
 
 export { taskIsIdle } from "./idle"
-
-function busyReason(task: Task): string {
-  switch (task.state) {
-    case "needs-input": return "Waiting for your answer"
-    case "failed": return "The task failed — waiting for you"
-    case "stuck": return "The task is stuck — waiting for you"
-    case "creating": return "Waiting for the task to start"
-    case "running": return "Waiting for the task to finish"
-    default: return backgroundWork(task.id).state !== "none" ? "Waiting for the task's background work" : "Waiting for the task to finish"
-  }
-}
 
 interface FixContext {
   row: WorkflowRow; task: Task; checkpoint: AutopilotCheckpoint; pr: PrSnapshot; required: ReadonlySet<string>
   repository: string; autoMerge: boolean; signal: AbortSignal
   /** the review judge's answers, only while a judge is configured */
   judged?: Record<string, Judged>
-}
-
-/** What one look at an open, unqueued PR teaches the checkpoint. */
-function observe(checkpoint: AutopilotCheckpoint, pr: PrSnapshot, now: Date): void {
-  // A merge attempt no longer being confirmed did not land (or a merge queue
-  // ejected it): forget it, so a later merge by someone else is not Wisp's.
-  if (checkpoint.mergeAttempt && checkpoint.state !== "merging") delete checkpoint.mergeAttempt
-  checkpoint.heads = trimHeads({ ...checkpoint.heads, [pr.head]: checkpoint.heads?.[pr.head] ?? now.toISOString() }, pr.head)
-  // A draft marked ready queues new CI; its draft-time results prove nothing.
-  if (pr.isDraft) delete checkpoint.readySince
-  else checkpoint.readySince ??= now.toISOString()
-}
-
-function forgetPending(checkpoint: AutopilotCheckpoint): void {
-  delete checkpoint.pending
-  delete checkpoint.sendNow
-}
-
-/** The task is busy, or a round went out: the next delay starts from its next idle moment. */
-function forgetIdle(checkpoint: AutopilotCheckpoint): void {
-  delete checkpoint.idleSince
-  delete checkpoint.idleTurn
-  forgetPending(checkpoint)
-}
-
-/** The PR's latest sign of life: its head appearing or going green, a round going out, or a review or comment anyone can see. */
-function lastActivity(pr: PrSnapshot, checkpoint: AutopilotCheckpoint): number {
-  const seen = (comment: { hidden: boolean }) => !comment.hidden
-  const times = [
-    checkpoint.heads?.[pr.head], checkpoint.lastRoundAt, checkpoint.greenHead === pr.head ? checkpoint.greenAt : undefined,
-    ...pr.reviews.filter((review) => review.state !== "PENDING").map((review) => review.editedAt ?? review.submittedAt),
-    ...pr.comments.filter(seen).map((comment) => comment.editedAt ?? comment.createdAt),
-    ...pr.threads.flatMap((thread) => thread.comments.filter(seen).map((comment) => comment.editedAt ?? comment.createdAt)),
-  ]
-  return Math.max(0, ...times.map((time) => Date.parse(time ?? "")).filter(Number.isFinite))
-}
-
-/** Waiting on the task or for its next PR, after one merged: the status keeps saying which merged. */
-function nextPrReason(merged: NonNullable<AutopilotCheckpoint["lastMerged"]>, reason: string): string {
-  return `#${merged.pr} ${merged.byWisp ? "merged by Wisp" : "merged"} · ${reason === "Waiting for a PR" ? "Waiting for the task's next PR" : reason}`
 }
 
 export class AutopilotRuntime {
@@ -169,8 +128,17 @@ export class AutopilotRuntime {
     this.timer = setInterval(kick, 10_000)
     this.timer.unref?.()
     // A task that settles is the moment auto-merge usually has something to do.
+    // A reviewer settling (or stopping to ask) is its author's moment.
     this.unsubscribe = subscribe((event) => {
-      if (event.type === "task" && event.state === "done" && checkAutopilotSoon(event.taskId, this.now())) kick()
+      if (event.type !== "task") return
+      if (event.state === "done" && checkAutopilotSoon(event.taskId, this.now())) kick()
+      if (["done", "failed", "needs-input"].includes(event.state)) {
+        const round = roundOfReviewer(event.taskId)
+        if (round && checkAutopilotSoon(round.task_id, this.now())) kick()
+      }
+      // a recipe task's state is its project's verification state ("a recipe task is working")
+      const task = getTask(event.taskId)
+      if (task?.verify_role === "recipe") emit({ type: "project", action: "update", path: resolve(task.repo_path) })
     })
     kick()
   }
@@ -198,6 +166,7 @@ export class AutopilotRuntime {
   }
 
   private async runDue(): Promise<void> {
+    await sweepReviews(this.cfg, this.now())
     const rows = dueAutopilots(this.now())
     let cursor = 0
     this.origins = new Map()
@@ -255,9 +224,10 @@ export class AutopilotRuntime {
       return
     }
     const task = getTask(row.task_id)
-    if (!task || task.archived) { changeWorkflowState(row.id, "completed", "Task archived", now); return }
     const params = paramsOf(row)
-    if (!params.autoMerge && !params.autoFix) { changeWorkflowState(row.id, "completed", "Auto-merge off", now); return }
+    endUnwantedReviews(row.task_id, task, params.autoReview, this.cfg, now)
+    if (!task || task.archived) { changeWorkflowState(row.id, "completed", "Task archived", now); return }
+    if (!anySwitch(params)) { changeWorkflowState(row.id, "completed", "Auto-merge off", now); return }
     // A round reserved but never started goes back; the next look plans it
     // afresh from current evidence rather than sending a stale one.
     if (withdrawQueuedRound(row)) return
@@ -311,13 +281,13 @@ export class AutopilotRuntime {
     }
 
     const pr = await this.batches?.take(row.id, checkpoint.pr, signal) ?? await this.github.snapshot(repository, checkpoint.pr, cwd, signal)
-    await this.lookAt({ row, task, checkpoint, pr, repository, configured, idle, save, autoFix: params.autoFix, autoMerge: params.autoMerge, signal })
+    await this.lookAt({ row, task, checkpoint, pr, repository, configured, idle, save, autoFix: params.autoFix, autoMerge: params.autoMerge, autoReview: params.autoReview, signal })
   }
 
   /** Everything after the bound PR has been read: settle it, fix it, or merge it. */
   private async lookAt(ctx: {
     row: WorkflowRow; task: Task; checkpoint: AutopilotCheckpoint; pr: PrSnapshot; repository: string
-    configured: string | undefined; idle: boolean; autoFix: boolean; autoMerge: boolean; signal: AbortSignal
+    configured: string | undefined; idle: boolean; autoFix: boolean; autoMerge: boolean; autoReview: boolean; signal: AbortSignal
     save: (state: AutopilotState, reason: string, delayMs: number, about?: "pr" | "task", patient?: boolean) => boolean
   }): Promise<void> {
     const { row, task, checkpoint, pr, repository, configured, save, signal } = ctx
@@ -328,6 +298,8 @@ export class AutopilotRuntime {
     if (pr.providerAutoMerge) { this.providerPause(row, checkpoint, pr); return }
     if (pr.queued) { save("queued", "Queued to merge", MOVING_MS, "pr"); return }
     observe(checkpoint, pr, now)
+    // a push or retarget ends an obsolete reviewer at once (none run while auto-review is off)
+    supersedeStaleRounds(row, pr, this.cfg, now)
     if (!ctx.idle) {
       forgetIdle(checkpoint)
       save("waiting", busyReason(task), BUSY_MS)
@@ -351,7 +323,13 @@ export class AutopilotRuntime {
       ? await this.autoFix({ row, task, checkpoint, pr, required: new Set(required), repository, autoMerge: ctx.autoMerge, signal, judged: judging?.judged })
       : "Nothing to fix"
     if (nothingToFix === null) return
-    if (!ctx.autoMerge) { this.autoFixAlone(row, checkpoint, pr, nothingToFix); return }
+    // Then the independent reviewer: nothing merges past a head it has not passed.
+    if (ctx.autoReview && await this.autoReview(row, task, checkpoint, pr, new Set(required), ctx.autoFix) === null) return
+    if (!ctx.autoMerge) {
+      if (ctx.autoFix) this.autoFixAlone(row, checkpoint, pr, nothingToFix)
+      else this.saveCheck(row, { state: "waiting", reason: `Auto-review passed ${pr.head.slice(0, 7)}`, checkpoint, delayMs: WAITING_ON_YOU_MS, about: "pr", by: "auto-review", done: true, patient: true })
+      return
+    }
     const verdicts = judging
       ? judgedHead(judging, pr, { sinceMs: headSince(checkpoint, pr), firstSeenMs: headFirstSeen(checkpoint, pr, now.getTime()), nowMs: now.getTime() })
       : { problems: [], awaited: [], pending: false }
@@ -363,6 +341,8 @@ export class AutopilotRuntime {
       headFirstSeenMs: Math.max(Date.parse(checkpoint.heads?.[pr.head] ?? ""), Date.parse(checkpoint.readySince ?? "")),
       nowMs: now.getTime(), published,
       reviewerProblems: verdicts.problems, reviewersAwaited: verdicts.awaited, judgePending: verdicts.pending,
+      // only reached once auto-review passed this head
+      autoReviewPassed: ctx.autoReview ? true : undefined,
     })
     // waiting on reviewers backs off from a minute, like needs-you (cadence.ts)
     if (gate.kind === "wait") { save("waiting", gate.reason, gate.slow ? WAITING_ON_YOU_MS : MOVING_MS, "pr", gate.slow === true); return }
@@ -371,7 +351,9 @@ export class AutopilotRuntime {
     // this look judged and gated are looked at (and judged) first, not merged over.
     const fresh = await this.github.snapshot(repository, pr.number, cwd, signal).catch(unlessPaused(null))
     if (!fresh || !sameReviewState(pr, fresh)) { save("waiting", "The PR changed while it was checked; checking again", RECHECK_MS, "pr"); return }
-    await this.merge(row, checkpoint, pr, repository, { turnCount: task.turn_count, evidence: mergeEvidence(pr, new Set(required), judging !== null) })
+    await this.merge(row, checkpoint, pr, repository, {
+      turnCount: task.turn_count, evidence: mergeEvidence(pr, new Set(required), judging !== null, ctx.autoReview ? `auto-review passed (round ${checkpoint.reviewRounds ?? 1})` : undefined),
+    })
   }
 
   /**
@@ -450,6 +432,19 @@ export class AutopilotRuntime {
       return say("waiting", `Auto-fix will send: ${summary}`, Math.max(5_000, sendsAt - now.getTime()))
     }
     return this.sendRound({ ...ctx, content: { ci, items, summary }, key, round: rounds + 1 })
+  }
+
+  /** Auto-review's look at this head (auto-review.ts): "passed", or null when it acted or explained itself. */
+  private autoReview(row: WorkflowRow, task: Task, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, required: ReadonlySet<string>, autoFix: boolean): Promise<"passed" | null> {
+    const launch: Launch = this.options.launch ?? ((input) => createAndLaunchTask(input, this.cfg, this.adapters, this.options.models ?? null))
+    return autoReviewLook({
+      row, task, checkpoint, pr, required, autoFix, now: this.now(), start: { cfg: this.cfg, adapters: this.adapters, launch },
+      hasSlot: (t) => this.hasSlot(t),
+      say: (state, reason, delayMs, patient) => {
+        this.saveCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-review", patient })
+        return null
+      },
+    })
   }
 
   /** No round to send: what CI alone says. */

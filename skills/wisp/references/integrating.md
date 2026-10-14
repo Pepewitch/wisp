@@ -21,7 +21,7 @@ work you would merge yourself on green, because Wisp then merges the PR
 without asking. `--auto-fix` (`wisp pr <id> fix on`) hands red CI, merge
 conflicts, and review feedback back to the agent. `wisp pr <id>` names what
 either is waiting for; what each does and when:
-[cli.md](cli.md#auto-merge-and-auto-fix).
+[cli.md](cli.md#auto-merge-auto-fix-and-auto-review).
 
 ## When archive refuses
 

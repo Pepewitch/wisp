@@ -127,3 +127,27 @@ describe("the error row carries its own repair", () => {
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull()
   })
 })
+
+describe("a project's verification control", () => {
+  const summary = { state: "active" as const, areas: 3, draft: false, attention: false, busy: false }
+
+  it("hides until hover with nothing to say, and is absent on a daemon without auto-review", () => {
+    const { unmount } = mountPane({ groups: [{ ...group(), verification: summary }], verification: true })
+    const quiet = screen.getByRole("button", { name: "Verification: 3 areas — wisp" })
+    expect(quiet).toHaveAttribute("title", "Verification: 3 areas")
+    expect(quiet.className).toContain("hidden")
+    unmount()
+    mountPane({ groups: [{ ...group(), verification: summary }], verification: false })
+    expect(screen.queryByRole("button", { name: /^Verification/ })).toBeNull()
+  })
+
+  it("stays on screen with a dot when it has something to say, and opens the settings at Verification", () => {
+    const onConfigureProject = vi.fn()
+    mountPane({ groups: [{ ...group(), verification: { ...summary, attention: true, draft: true } }], verification: true, onConfigureProject })
+    const loud = screen.getByRole("button", { name: "Verification needs attention — wisp" })
+    expect(loud.className).not.toContain("hidden")
+    expect(loud.querySelector(".bg-destructive")).not.toBeNull()
+    fireEvent.click(loud)
+    expect(onConfigureProject).toHaveBeenCalledWith("/src/wisp", "verification")
+  })
+})

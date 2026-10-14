@@ -88,6 +88,7 @@ import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
 import { pendingBriefRun, recordBriefRun } from "./brief-store";
+import { reviewTurnEnv } from "./verify/rounds";
 import { markPendingAnswersUncertain } from "./brief-inputs";
 import {
   AGENT_TURN_ENV,
@@ -264,6 +265,8 @@ export function startTurn(
         // only this turn's own bindings: envForCwd has already dropped any inherited ones
         [AGENT_TURN_ENV]: "1",
         ...(brief ? { [BRIEF_RUN_ENV]: brief.runId } : {}),
+        // an auto-review reviewer's turns carry its round's token: the verdict it submits must show it
+        ...reviewTurnEnv(task),
       },
       // Its own process GROUP, so a stop reaches the builds, servers, and
       // sub-agents the harness starts — not just the harness (ENG-03). The

@@ -90,12 +90,13 @@ characters removed. Everything else it prints is the agent's text, cleaned the
 same way; `--json` stays lossless. A scheduled steer counts as yours, since its
 words are; Wisp's own messages and a workflow plugin's never do.
 
-## Auto-merge and auto-fix
+## Auto-merge, auto-fix and auto-review
 
 ```
 wisp pr <task>                 # status and the reason it is waiting
 wisp pr <task> merge on|off    # auto-merge
 wisp pr <task> fix on|off      # auto-fix
+wisp pr <task> review on|off   # auto-review
 wisp pr <task> send-now        # send a waiting auto-fix round at once
 wisp pr <task> skip            # never send that round
 wisp pr <task> resume          # after a pause, or to release a Stop hold early
@@ -111,11 +112,32 @@ push) goes back to the idle agent as a round, at most five per PR; the agent
 signs its GitHub posts so Wisp never feeds them back. See
 [Auto-merge and auto-fix](../../../docs/PR-AUTOPILOT.md).
 
+With auto-review on, each green head of the PR gets a fresh reviewer task in its
+own worktree at that head. It verifies the change against the project's
+verification recipe and submits pass, fail or inconclusive. Nothing merges past
+a head it has not passed. A rejection goes back to the author (with auto-fix) at
+most three rounds per PR. See [Auto-review](../../../docs/AUTO-REVIEW.md).
+
+```
+wisp review show <task> [--round <n>] [--pr <n> | --all] [--json]   # the current PR's rounds; one in full
+wisp review submit --stdin                       # a reviewer's verdict (wisp review submit --help)
+wisp verify status [project] [--json]            # the project's recipe, a draft, the recipe task
+wisp verify setup|improve|fix [project] [--area <name>] [--note "…"] [--harness <h>] [--model <m>]
+wisp verify activate [project]                   # make the newest draft the active recipe
+wisp verify show [file] | checkout <dir> | draft save <dir>
+```
+
+The recipe lives in the Wisp home, never in the repository. `checkout` and
+`draft save` are what a recipe task runs; only a recipe task's own turn may
+save a draft, and only a person activates it (an agent's `activate` is refused).
+Resume on a task whose reviewer needs you has a fresh reviewer look at the same
+head again without spending a round.
+
 ## Tasks
 
 ```
 wisp new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local]
-         [--base <ref>] [--auto-merge] [--auto-fix] [--brief] [--attach <path>]…
+         [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--brief] [--attach <path>]…
 ```
 
 Create and start a task. `repo` defaults to the current directory.
@@ -128,9 +150,10 @@ worktree from `<ref>` instead of the project's base branch — any commit-ish
 (`origin/release-2.1`, a local branch to stack on, a tag, a SHA), taken
 literally, and the create fails if it does not resolve. It is rejected for
 `--local`, which adopts the branch the checkout is already on. `--auto-merge`
-merges the task's PR once it is ready (below). `--attach` repeats (see
+merges the task's PR once it is ready (below); `--auto-review` has an independent
+reviewer task verify each of its heads first. `--attach` repeats (see
 images.md; `--image` is the old name and still works). Prints
-`created <id> (<harness>[, <model>][, local][, auto-merge][, auto-fix][, brief]) — <title>`;
+`created <id> (<harness>[, <model>][, local][, auto-merge][, auto-fix][, auto-review][, brief]) — <title>`;
 the model is shown when Wisp received an explicit or configured choice, and
 omitted when the harness will choose its own default.
 

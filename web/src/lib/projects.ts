@@ -22,6 +22,8 @@ export interface ProjectGroup {
   /** true when no /api/repos entry backed this group (active-task fallback) */
   unlisted: boolean;
   tasks: ApiTask[];
+  /** the repo entry's verification summary; absent from a daemon older than auto-review */
+  verification?: RepoInfo["verification"];
 }
 
 /** Paths are resolved server-side; the only drift to absorb is a trailing slash. */
@@ -55,6 +57,7 @@ export function groupTasksByProject(tasks: ApiTask[], repos: RepoInfo[]): Projec
     exists: repo.exists,
     unlisted: false,
     tasks: [],
+    ...(repo.verification ? { verification: repo.verification } : {}),
   }));
   const byPath = new Map(groups.map((g) => [normalizePath(g.path), g]));
 

@@ -756,7 +756,7 @@ async function serveOwned(
     { name: "model discovery", stop: () => modelCache.stop() },
     { name: "process groups", ...startProcessGroupLoop() },
     startedService("workflows", new WorkflowRuntime(cfg, adapters)),
-    startedService("autopilot", new AutopilotRuntime(cfg, adapters)),
+    startedService("autopilot", new AutopilotRuntime(cfg, adapters, { models: modelCache })),
     startedService("plan limits refresh", new LimitsTurnRefresh(limitsCache, cfg, adapters)),
   );
   const stopServer = server.stop.bind(server);

@@ -95,6 +95,8 @@ interface RepoRow {
   archiveScript: string;
   copyFiles: string[];
   baseBranch: string;
+  verify?: unknown;
+  verification?: unknown;
   configured: boolean;
 }
 
@@ -135,6 +137,9 @@ function makeRepo(): { path: string; branch: string; base: string } {
   return { path, branch: shell(path, ["branch", "--show-current"]), base: shell(path, ["rev-parse", "HEAD"]) };
 }
 
+
+/** A project with no verification recipe, as /api/repos reports it. */
+const NO_VERIFICATION = { state: "none", areas: 0, draft: false, attention: false, busy: false };
 describe("daemon API contracts", () => {
   test("lists tasks, returns detail, and reads the selected log turn", async () => {
     const base = await startServer();
@@ -973,7 +978,7 @@ describe("daemon API contracts", () => {
       archiveScript: "",
       copyFiles: [],
       baseBranch: "",
-      configured: true,
+      verify: null, verification: NO_VERIFICATION, configured: true,
     });
     expect(repoRows.repos.find((row) => row.path === missing)).toEqual({
       path: missing,
@@ -983,7 +988,7 @@ describe("daemon API contracts", () => {
       archiveScript: "",
       copyFiles: [],
       baseBranch: "",
-      configured: true,
+      verify: null, verification: NO_VERIFICATION, configured: true,
     });
     expect(repoRows.repos.find((row) => row.path === repo.path)).toEqual({
       path: repo.path,
@@ -993,7 +998,7 @@ describe("daemon API contracts", () => {
       archiveScript: "",
       copyFiles: [],
       baseBranch: "",
-      configured: false,
+      verify: null, verification: NO_VERIFICATION, configured: false,
     });
   });
 

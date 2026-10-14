@@ -104,11 +104,12 @@ export function recordSendAudit(taskId: string, result: SendResult, actor: TaskA
   });
 }
 
-/** Which auto-merge / auto-fix switches moved, or null when neither did. */
+/** Which auto-merge / auto-fix / auto-review switches moved, or null when none did. */
 export function autopilotSwitchDetail(before: AutopilotStatus | null, after: AutopilotStatus): string | null {
   const moved = [
     (before?.autoMerge ?? false) !== after.autoMerge && `auto-merge ${after.autoMerge ? "on" : "off"}`,
     (before?.autoFix ?? false) !== after.autoFix && `auto-fix ${after.autoFix ? "on" : "off"}`,
+    (before?.autoReview ?? false) !== (after.autoReview ?? false) && `auto-review ${after.autoReview ? "on" : "off"}`,
   ].filter((part): part is string => typeof part === "string");
   return moved.length > 0 ? moved.join(", ") : null;
 }

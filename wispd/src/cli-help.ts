@@ -12,6 +12,7 @@
  * be added without its usage, and `wisp help` is these usages joined.
  */
 import { briefOfflineAnswer } from "./cli-brief-help";
+import { REVIEW_SUBMIT_HELP } from "./cli-review-help";
 import { wispCommand } from "./command";
 import { controlFree } from "./control-free";
 
@@ -20,7 +21,7 @@ const COMMAND = wispCommand();
 /** One usage block per command, in `wisp help` order. */
 const COMMAND_USAGE = {
   serve: `  ${COMMAND} serve                                   run the daemon`,
-  new: `  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--brief] [--attach <path>]…
+  new: `  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--brief] [--attach <path>]…
                                                        create a task (repo defaults to cwd;
                                                        model/effort fall back to config.json harnessDefaults,
                                                        then Wisp's default model for the harness;
@@ -30,6 +31,7 @@ const COMMAND_USAGE = {
                                                        and archiving it never removes anything;
                                                        --auto-merge merges the task's PR once it is ready;
                                                        --auto-fix sends red CI, a conflict, or review feedback back to the agent;
+                                                       --auto-review has an independent reviewer task verify each PR head;
                                                        --brief asks each turn's agent for a short task brief;
                                                        --attach repeats, up to 10 files and 50 MB per turn:
                                                        images 5 MB, pdf and text 20 MB, video 50 MB
@@ -49,8 +51,18 @@ const COMMAND_USAGE = {
   interrupt: `  ${COMMAND} interrupt <task>                        stop the running turn (session survives)`,
   workflow: `  ${COMMAND} workflow <command>                      task automations: types, start, list, show, set, pause, resume, complete
                                                     (${COMMAND} workflow --help lists their parameters)`,
-  pr: `  ${COMMAND} pr <task> [merge on|off | fix on|off | resume | send-now | skip | history] [--json]
-                                                    auto-merge and auto-fix for the task's PR (history: what it did)`,
+  pr: `  ${COMMAND} pr <task> [merge on|off | fix on|off | review on|off | resume | send-now | skip | history] [--json]
+                                                    auto-merge, auto-fix and auto-review for the task's PR (history: what it did)`,
+  review: `  ${COMMAND} review show <task> [--round <n>] [--pr <n> | --all] [--json]
+                                                    auto-review rounds for the task's current PR, newest first
+                                                    (--round: one round in full, with findings and evidence)
+  ${COMMAND} review submit --stdin                    what a reviewer agent runs to give its verdict (${COMMAND} review submit --help)`,
+  verify: `  ${COMMAND} verify status [project] [--json]        the project's verification recipe: areas, draft, recipe task, reviewer
+  ${COMMAND} verify show [file] [--project <path>]   list the recipe's files, or print one (--draft <task> reads a draft)
+  ${COMMAND} verify checkout <dir> | draft save <dir> what a recipe task runs to edit and propose the recipe
+  ${COMMAND} verify setup|improve|fix [project] [--area <name>] [--note "…"] [--harness <h>] [--model <m>]
+                                                    start a task that sets up or fixes the recipe (kept in Wisp, never the repo)
+  ${COMMAND} verify activate [project]               make the newest draft the active recipe`,
   audit: `  ${COMMAND} audit <task> [--limit <1-500>] [--json]  who did what to the task, newest first (default: the newest 100):
                                                     web, desktop, cli, agent:<task> (an agent running in that task),
                                                     autopilot, workflow:<id>, system, or api (an unnamed client)`,
@@ -165,6 +177,8 @@ export function offlineAnswer(args: readonly string[]): OfflineAnswer | null {
   if (command === null) return unknownCommand(first);
   // brief keeps its own help: it is what an agent reads before saving one
   if (command === "brief") return briefOfflineAnswer(rest);
+  // so does a verdict: a reviewer reads it before submitting
+  if (command === "review" && rest[0] === "submit" && rest.some((arg) => HELP_FLAGS.has(arg))) return { text: REVIEW_SUBMIT_HELP, exit: 0, stream: "out" };
   return rest.some((arg) => HELP_FLAGS.has(arg)) ? { text: commandHelp(command), exit: 0, stream: "out" } : null;
 }
 

@@ -15,6 +15,7 @@ import type { AdapterDef } from "./adapters";
 import { wispCommand } from "./command";
 import { isInstanceId, loadOrCreateInstanceId } from "./instance-id";
 import { isRecord, readUserJson, stringArray, typeName } from "./validate";
+import { validateVerifyAgent } from "./config-verify";
 import type { WispPreferences } from "../../shared/api/settings";
 import type { ModelTaskDefaultsMap } from "../../shared/model-task-defaults";
 import { validateModelTaskDefaults } from "./model-task-defaults";
@@ -60,6 +61,12 @@ export interface RepoConfig {
    * takes "backend/.env"), which is what makes one line cover a monorepo.
    */
   copyFiles?: string[];
+  /**
+   * Who reviews this project's PRs under auto-review, and who sets up its
+   * verification recipe. Unset: each reviewer runs on the author task's own
+   * agent, model and effort.
+   */
+  verify?: { harness: string; model?: string; effort?: string };
 }
 
 /** The configured entry for a repo path, if it has one. Paths are compared resolved. */
@@ -202,6 +209,8 @@ export const DIAGNOSTIC_DIR = join(WISP_HOME, "diagnostics");
 export const WORKTREE_ROOT = join(WISP_HOME, "worktrees");
 /** per-turn image attachments live at tasks/<id>/attachments/turn-<n>/ (S3; dirs are created at write time) */
 export const TASKS_DIR = join(WISP_HOME, "tasks");
+/** Per-project data Wisp keeps outside every repository: the verification recipe (verify/recipe.ts). */
+export const PROJECTS_DIR = join(WISP_HOME, "projects");
 /** Short-lived one-shot attachment uploads, promoted into TASKS_DIR on submission. */
 export const UPLOADS_DIR = join(WISP_HOME, "attachment-uploads");
 export const DB_PATH = join(WISP_HOME, "wisp.db");
@@ -575,6 +584,8 @@ function validateRepos(raw: unknown): (string | RepoConfig)[] {
       const patterns = stringArray(entry.copyFiles, `${label}.copyFiles`).filter((v) => v.trim() !== "");
       if (patterns.length > 0) out.copyFiles = patterns;
     }
+    const verify = validateVerifyAgent(entry.verify, `${label}.verify`);
+    if (verify) out.verify = verify;
     return out;
   });
 }

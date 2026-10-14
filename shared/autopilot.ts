@@ -1,5 +1,5 @@
 /**
- * Auto-merge and auto-fix for a task's pull request: the API shape
+ * Auto-merge, auto-fix and auto-review for a task's pull request: the API shape
  * every client reads. The daemon owns the decision; clients only show it and
  * flip the toggles.
  */
@@ -24,12 +24,17 @@ export type AutopilotState =
   /** not armed */
   | "off"
 
-/** Which switch a reason speaks for: the merge gate, or auto-fix's own look at CI. */
-export type AutopilotBy = "auto-merge" | "auto-fix"
+/** Which switch a reason speaks for: the merge gate, auto-fix's own look at CI, or the independent reviewer. */
+export type AutopilotBy = "auto-merge" | "auto-fix" | "auto-review"
 
 export interface AutopilotStatus {
   autoMerge: boolean
   autoFix: boolean
+  /**
+   * An independent reviewer task verifies each PR head before it merges.
+   * Absent from a daemon older than auto-review.
+   */
+  autoReview?: boolean
   /** the pull request it is bound to; null until the task has an open one */
   pr: number | null
   state: AutopilotState
@@ -53,6 +58,8 @@ export interface AutopilotStatus {
   pendingFix: { summary: string; sendsAt: string } | null
   /** auto-fix rounds sent to the agent for the bound PR */
   fixRounds: number
+  /** counted auto-review rounds for the bound PR (absent from an older daemon) */
+  reviewRounds?: number
   /**
    * Nothing left for it to do right now: with auto-merge on, the current PR
    * has merged; with auto-fix alone, CI is green and no review has come in
@@ -73,7 +80,9 @@ export interface AutopilotHistoryEntry {
   /**
    * armed, configured, bound, wait, blocked, rerun, judged, judge-unavailable,
    * wake (a round sent), skipped, held, resumed, merging, merged,
-   * merge-failed, and the row's own active, paused and completed
+   * merge-failed, review (an auto-review round started or ended),
+   * review-hold (the verification recipe needs fixing), and the row's own
+   * active, paused and completed
    */
   kind: string
   detail: string
@@ -88,4 +97,5 @@ export interface AutopilotHistoryEntry {
 export interface AutopilotUpdate {
   autoMerge?: boolean
   autoFix?: boolean
+  autoReview?: boolean
 }

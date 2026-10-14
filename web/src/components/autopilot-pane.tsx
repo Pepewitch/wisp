@@ -1,12 +1,13 @@
 import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react"
 
-import type { AutopilotStatus } from "../../../shared/autopilot"
+import type { AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
+import { Reviews, type ReviewsModel } from "@/components/auto-review-view"
 import { History, HistoryLog, PrLink, Sep, Time, type HistoryLinks, type HistoryModel } from "@/components/autopilot-history-view"
 import { ChevronDown } from "@/components/icons"
 import { Button, PaneHeader, SwitchTrack } from "@/components/primitives"
 import { BriefSection, type BriefSectionProps, type Reveal } from "@/components/task-brief"
 import { useAutopilot } from "@/hooks/mutations"
-import { useAutopilotHistory, useHarnessFeatures, usePullRequestStatus } from "@/hooks/queries"
+import { useAutopilotHistory, useAutoReviewRounds, useHarnessFeatures, usePullRequestStatus } from "@/hooks/queries"
 import { useBriefSwitch } from "@/hooks/useBriefSwitch"
 import { useTick } from "@/hooks/useTick"
 import { failureReason } from "@/lib/api"
@@ -20,17 +21,18 @@ import {
   autopilotSpeaker,
   autopilotTint,
   fixRoundsWords,
+  reviewRoundsWords,
 } from "@/lib/autopilot-words"
 import { briefBand, type BriefBandModel } from "@/lib/brief"
 import { useDaemonRuntime } from "@/lib/runtime"
-import type { ApiTask } from "@/lib/types"
+import type { ApiTask, HarnessesResponse } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 
 export type { HistoryLinks } from "@/components/autopilot-history-view"
 
 type Act = "resume" | "send-now" | "skip"
-type Change = { autoMerge?: boolean; autoFix?: boolean }
+type Change = AutopilotUpdate
 
 /** The Automation section's inputs: what the task row says, and what this surface may do about it. */
 export interface AutomationModel {
@@ -42,6 +44,11 @@ export interface AutomationModel {
   error: string | null
   /** null on a daemon without `features.autopilotHistory`: the sub-section is not drawn at all */
   history: HistoryModel | null
+  /**
+   * null on a daemon without `features.autoReview`: no third switch and no
+   * Reviews block. Otherwise the current PR's rounds, shown while it is on.
+   */
+  reviews?: ReviewsModel | null
   onSet: (change: Change) => void
   onAct: (act: Act) => void
 }
@@ -58,8 +65,9 @@ const NO_LINKS: HistoryLinks = { repository: null, pullRequest: null }
  *
  *  1. **Brief**, first. It is the part you read, so nothing sits above it but
  *     the tab strip, and nothing caps it (task-brief.tsx).
- *  2. **Automation**: the Auto-merge and Auto-fix switches, the live line and
+ *  2. **Automation**: the Auto-merge, Auto-fix and Auto-review switches, the live line and
  *     the one action the state asks for under the switch it speaks for, then
+ *     auto-review's rounds for the PR (Reviews), then
  *     the three latest meaningful events of its History, and "All history",
  *     which swaps the pane for the dense per-PR log.
  *
@@ -100,6 +108,7 @@ export function AutopilotPane({
   const brief = useBriefSwitch(task)
   const autopilot = useAutopilot()
   const history = useAutopilotHistory(task?.id ?? null, historySupported)
+  const reviews = useReviewsModel(task, autopilotSupported, features.data, connectionId)
   // the header's PR read: one key, so this is the request it already makes
   const pullRequest = usePullRequestStatus(autopilotSupported ? task?.id ?? null : null).data
   // relative times and a round's countdown, only while the tab is on screen
@@ -135,6 +144,7 @@ export function AutopilotPane({
     pending: autopilot.isPending,
     error: autopilot.error ? failureReason(autopilot.error) : null,
     history: historySupported ? { entries: history.data, error: history.error ? failureReason(history.error) : null } : null,
+    reviews,
     onSet: (change) => autopilot.mutate({ id: task.id, set: change }),
     onAct: (act) => autopilot.mutate({ id: task.id, act }),
   } : null
@@ -158,6 +168,28 @@ export function AutopilotPane({
       links={links}
     />
   )
+}
+
+/**
+ * Auto-review's rounds for the Automation section, or null on a daemon
+ * without `features.autoReview` (no third switch, no Reviews). The rounds are
+ * asked for only while the switch is on, because only then are they drawn.
+ */
+function useReviewsModel(
+  task: ApiTask | null,
+  autopilotSupported: boolean,
+  features: HarnessesResponse["features"],
+  connectionId: string,
+): ReviewsModel | null {
+  const supported = autopilotSupported && features?.autoReview === true
+  const rounds = useAutoReviewRounds(task?.id ?? null, supported && task?.autopilot?.autoReview === true)
+  if (!supported) return null
+  return {
+    rounds: rounds.data,
+    error: rounds.error ? failureReason(rounds.error) : null,
+    // a reviewer is a task like any other: selecting it is the desktop's focus request
+    onOpenTask: (id) => uiIntentsFor(connectionId).focusTask(id),
+  }
 }
 
 /**
@@ -228,6 +260,9 @@ export function AutopilotView({
                   <AutomationHead id={headingId} status={automation.status ?? OFF} divider={brief !== null} touch={touch} scroller={scroller} />
                   <section aria-labelledby={headingId}>
                     <Switches automation={automation} touch={touch} now={now} links={links} />
+                    {automation.reviews && automation.status?.autoReview && (
+                      <Reviews reviews={automation.reviews} pr={automation.status.pr} touch={touch} now={now} />
+                    )}
                     {automation.history && (
                       <History history={automation.history} touch={touch} now={now} links={links} onOpen={() => setView("log")} />
                     )}
@@ -348,6 +383,8 @@ function Switches({ automation, touch, now, links }: { automation: AutomationMod
   const speaker = autopilotSpeaker(status)
   const disabled = automation.locked !== null || automation.pending
   const action = autopilotAction(automation.status)
+  const reviewable = automation.reviews != null
+  const review = status.autoReview === true
   // a round belongs to auto-fix; a pause or a hold to whichever switch speaks
   const actsOn = action === "round" ? "auto-fix" : speaker
   const offReason = autopilotOffReason(automation.status)
@@ -355,7 +392,7 @@ function Switches({ automation, touch, now, links }: { automation: AutomationMod
   const actions = action && (
     <AutopilotActions status={status} action={action} pending={automation.pending} touch={touch} now={now} act={automation.onAct} />
   )
-  const off = (which: "auto-merge" | "auto-fix") => (offReason && status.by === which ? offReason : AUTOPILOT_OFF_WORDS[which])
+  const off = (which: "auto-merge" | "auto-fix" | "auto-review") => (offReason && status.by === which ? offReason : AUTOPILOT_OFF_WORDS[which])
   return (
     <div className="pb-1">
       {automation.locked === "local" && (
@@ -387,6 +424,20 @@ function Switches({ automation, touch, now, links }: { automation: AutomationMod
           <>On · {status.pr === null ? "for the task's next PR" : fixRoundsWords(status.fixRounds)}</>
         )}
       </SwitchRow>
+      {reviewable && (
+        <SwitchRow
+          name="Auto-review"
+          on={review}
+          disabled={disabled}
+          touch={touch}
+          onChange={() => automation.onSet({ autoReview: !review })}
+          actions={review && actsOn === "auto-review" ? actions : null}
+        >
+          {!review ? off("auto-review") : speaker === "auto-review" ? live : (
+            <>On · {status.pr === null ? "for the task's next PR" : reviewRoundsWords(status.reviewRounds ?? 0)}</>
+          )}
+        </SwitchRow>
+      )}
       {automation.error && (
         <p role="alert" className="px-3.5 pt-1 pb-1.5 text-[11.5px] leading-relaxed text-destructive">{automation.error}</p>
       )}

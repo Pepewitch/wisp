@@ -1,13 +1,14 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import type { AutopilotStatus } from "../../../shared/autopilot";
+import type { VerificationTaskBody } from "../../../shared/api/auto-review";
+import type { AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot";
 import type { BriefSettings } from "../../../shared/task-brief";
 
 import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
-import type { ApiTask, ConversationDetail, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SendWhen, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
+import type { ApiTask, ConversationDetail, ProjectVerifyAgent, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SendWhen, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
 
 /**
  * Every WRITE the app makes, one hook each — the mirror of queries.ts.
@@ -75,8 +76,11 @@ export interface CreateTaskBody {
   fast?: boolean;
   suffixPromptId?: string;
   attachments?: AttachmentPayload[];
-  /** arm auto-merge / auto-fix for the task's PR from the start (worktree tasks only) */
-  autopilot?: { autoMerge: boolean; autoFix: boolean };
+  /**
+   * arm auto-merge / auto-fix for the task's PR from the start (worktree tasks
+   * only); `autoReview` rides only when it is on and the daemon advertises it
+   */
+  autopilot?: { autoMerge: boolean; autoFix: boolean; autoReview?: boolean };
   /** ask each eligible turn for a task brief from the first one; omitted = off */
   briefEnabled?: boolean;
 }
@@ -130,7 +134,7 @@ export function useAutopilot() {
   const client = useQueryClient();
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: ({ id, set, act }: { id: string; set?: { autoMerge?: boolean; autoFix?: boolean }; act?: "resume" | "send-now" | "skip" }) =>
+    mutationFn: ({ id, set, act }: { id: string; set?: AutopilotUpdate; act?: "resume" | "send-now" | "skip" }) =>
       set
         ? transport.request<AutopilotStatus>(`/api/tasks/${id}/autopilot`, { method: "PUT", body: set })
         : transport.request<AutopilotStatus>(`/api/tasks/${id}/autopilot/${act ?? "resume"}`, { method: "POST", body: {} }),
@@ -427,6 +431,11 @@ export interface SaveProjectBody {
   archiveScript: string;
   copyFiles: string[];
   baseBranch: string;
+  /**
+   * The project's auto-review agent; null clears it (each task's own agent).
+   * Sent only to a daemon that advertises `features.autoReview`.
+   */
+  verify?: ProjectVerifyAgent | null;
 }
 
 /**
@@ -439,6 +448,37 @@ export function useSaveProject() {
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
     mutationFn: (body: SaveProjectBody) => transport.request("/api/projects", { method: "POST", body }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: qk.repos });
+    },
+  });
+}
+
+/**
+ * POST /api/projects/verification/tasks — start a recipe task that sets up,
+ * improves, or fixes one area of the project's verification recipe. Resolves
+ * to the new task, which the caller may select.
+ */
+export function useStartVerificationTask() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: (body: VerificationTaskBody) =>
+      transport.request<{ task: { id: string; title: string } }>("/api/projects/verification/tasks", { method: "POST", body }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: qk.repos });
+      void client.invalidateQueries({ queryKey: qk.tasks });
+    },
+  });
+}
+
+/** POST /api/projects/verification/activate — make the newest draft the project's active recipe. */
+export function useActivateVerification() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: ({ path }: { path: string }) =>
+      transport.request<{ version: string; areas: unknown[]; changed: boolean }>("/api/projects/verification/activate", { method: "POST", body: { path } }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: qk.repos });
     },
