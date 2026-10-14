@@ -6,14 +6,14 @@
 import type { CaptureBody, CaptureResponse } from "../../../shared/api/captures"
 import { outputImageUrl } from "../../../shared/api/outputs"
 import { repoConfigFor, type WispConfig } from "../config"
-import { publishOutputImage } from "../outputs"
+import { OutputError, publishOutputImage } from "../outputs"
 import { getTask, runningTurn } from "../store"
 import { portRange } from "../turn-input"
 import type { Task } from "../types"
 import { reviewOfTask, reviewTokenFor } from "../verify/reviews"
 import { capturePage, CaptureFailure, MAX_VIEWPORT, SCRIPT_MAX_BYTES, VIEWPORTS, type CaptureRequest, type CaptureShot, type Viewport } from "./capture"
 import { findChrome } from "./chrome"
-import { CaptureUrlError, parseCaptureUrl, portOf, sanitizeUrl } from "./policy"
+import { CaptureUrlError, isLoopbackHost, parseCaptureUrl, portOf, sanitizeUrl } from "./policy"
 import { servedFrom, type ServedFrom } from "./served-from"
 import { captureView, recordCapture, type NewCapture } from "./store"
 
@@ -115,6 +115,24 @@ function admit(task: Task, token: string | undefined): { turn: { id: number; n: 
   return { turn, reviewId: reviewOfTask(task.id)?.id ?? null }
 }
 
+/** Still the same running turn, and for a reviewer still its live review: checked again after every wait. */
+function stillAdmitted(task: Task, turnId: number, reviewId: string | null, token: string | undefined): boolean {
+  if (runningTurn(task.id)?.id !== turnId) return false
+  return reviewId === null || (reviewTokenFor(task.id) === token && token !== undefined)
+}
+
+/** Where the page now on screen came from: a loopback page's listener, and never the worktree for a page off this machine. */
+async function provenanceOf(finalUrl: string, worktree: string | null, served: NonNullable<CaptureDeps["served"]>): Promise<ServedFrom> {
+  let url: URL
+  try {
+    url = new URL(finalUrl)
+  } catch {
+    return "unknown"
+  }
+  if ((url.protocol !== "http:" && url.protocol !== "https:") || !isLoopbackHost(url.hostname)) return "elsewhere"
+  return served(portOf(url), worktree)
+}
+
 export async function captureForTask(taskId: string, body: CaptureBody, deps: CaptureDeps): Promise<CaptureResponse & { failed?: boolean }> {
   const task = getTask(taskId)
   if (!task) throw new CaptureRefusal("Task not found", 404)
@@ -133,14 +151,18 @@ export async function captureForTask(taskId: string, body: CaptureBody, deps: Ca
   }
   const chrome = (deps.chrome ?? (() => findChrome(deps.cfg.chromePath)))()
   if (!("path" in chrome)) return failed("no-chrome", chrome.reason)
-  if (busyTasks.has(task.id)) return failed("busy", "this task already has a capture running: wait for it, then capture again")
+  // the task's own second capture is the caller's doing: refused, never recorded as the machine being busy
+  if (busyTasks.has(task.id)) throw new CaptureRefusal("this task already has a capture running: wait for it, then capture again", 409)
   busyTasks.add(task.id)
   try {
     if (!(await acquire())) return failed("busy", `every capture slot stayed busy for ${QUEUE_WAIT_MS / 1000}s: try again in a moment`)
     try {
-      return await shootAndStore(task, turn, request, base, { chromePath: chrome.path, allowPorts, name }, deps)
+      if (!stillAdmitted(task, turn.id, reviewId, body.token)) return failed("cancelled", "the turn or the review ended while the capture waited for a browser")
+      const admitted = () => stillAdmitted(task, turn.id, reviewId, body.token)
+      return await shootAndStore(task, turn, request, base, { chromePath: chrome.path, allowPorts, name, admitted }, deps)
     } catch (error) {
       if (error instanceof CaptureFailure) return failed(error.reason, error.message)
+      if (error instanceof OutputError) return failed("storage", `the shot could not be stored: ${error.message}`)
       throw error
     } finally {
       release()
@@ -152,7 +174,7 @@ export async function captureForTask(taskId: string, body: CaptureBody, deps: Ca
 
 async function shootAndStore(
   task: Task, turn: { id: number; n: number }, request: CaptureRequest, base: NewCapture,
-  options: { chromePath: string; allowPorts: number[]; name: string | null }, deps: CaptureDeps,
+  options: { chromePath: string; allowPorts: number[]; name: string | null; admitted: () => boolean }, deps: CaptureDeps,
 ): Promise<CaptureResponse> {
   // the capture ends with its turn: a stopped or finished turn's capture is moot
   const controller = new AbortController()
@@ -164,7 +186,9 @@ async function shootAndStore(
       chromePath: options.chromePath, daemonPort: deps.cfg.port, ports, publicAllowed: repoConfigFor(deps.cfg, task.repo_path)?.capturePublic !== false,
       signal: controller.signal,
     })
-    const served = await (deps.served ?? servedFrom)(portOf(request.url), task.worktree_path)
+    const served = await provenanceOf(shot.finalUrl, task.worktree_path, deps.served ?? servedFrom)
+    // checked once more right before the image lands: a turn or review that ended meanwhile gets nothing
+    if (!options.admitted()) throw new CaptureFailure("cancelled", "the turn or the review ended before the shot could be stored")
     const extension = shot.mediaType === "image/png" ? "png" : "jpg"
     const image = publishOutputImage(turn.id, shot.bytes, `${options.name ?? `capture-${base.viewport}`}.${extension}`, "published")
     const row = recordCapture({

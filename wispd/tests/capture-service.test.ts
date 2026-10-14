@@ -5,7 +5,7 @@ import { CaptureFailure } from "../src/capture/capture";
 import { CaptureRefusal, captureForTask, viewportOf, type CaptureDeps } from "../src/capture/service";
 import { capturesOfTask } from "../src/capture/store";
 import { LOG_DIR, loadConfig } from "../src/config";
-import { parseOutputManifest } from "../src/outputs";
+import { parseOutputManifest, publishOutputImage } from "../src/outputs";
 import { createTask, createTurn, finishTurn, freeSlot, getTurn, newTaskId, setTaskFields } from "../src/store";
 import { portRange, taskEnv } from "../src/turn-input";
 
@@ -73,6 +73,44 @@ describe("wisp capture's service", () => {
     expect(ports).toContain(low);
     expect(ports).toContain(high);
     expect(ports).toHaveLength(11);
+  });
+
+  test("a second capture in the same task is refused, not recorded as the machine being busy", async () => {
+    const { task } = fixture();
+    let release = () => {};
+    const slow = deps({ shoot: () => new Promise((resolve) => { release = () => resolve(shot) }) });
+    const first = captureForTask(task.id, { url: "http://localhost:3000/" }, slow);
+    await Bun.sleep(10);
+    await expect(captureForTask(task.id, { url: "http://localhost:3000/" }, slow)).rejects.toMatchObject({ status: 409 });
+    release();
+    await first;
+    expect(capturesOfTask(task.id).map((capture) => capture.status)).toEqual(["ok"]);
+  });
+
+  test("a turn that ends while the browser works gets no image: the attempt is recorded as cancelled", async () => {
+    const { task, turnId } = fixture();
+    const result = await captureForTask(task.id, { url: "http://localhost:3000/" }, deps({ shoot: async () => { finishTurn(turnId, "done", 0, null); return shot } }));
+    expect(result).toMatchObject({ failed: true, capture: { reason: "cancelled" } });
+    expect(parseOutputManifest(getTurn(turnId)!.outputs_json)).toHaveLength(0);
+  });
+
+  test("where the page came from is judged on the page now on screen, not the address first opened", async () => {
+    const { task } = fixture();
+    const asked: number[] = [];
+    const served = async (port: number) => { asked.push(port); return port === 3000 ? "worktree" as const : "elsewhere" as const };
+    const moved = await captureForTask(task.id, { url: "http://localhost:3000/" }, deps({ served, shoot: async () => ({ ...shot, finalUrl: "http://127.0.0.1:4000/elsewhere" }) }));
+    expect(moved.capture.servedFrom).toBe("elsewhere");
+    expect(asked).toEqual([4000]);
+    const offMachine = await captureForTask(task.id, { url: "http://localhost:3000/" }, deps({ served, shoot: async () => ({ ...shot, finalUrl: "https://example.com/" }) }));
+    expect(offMachine.capture.servedFrom).toBe("elsewhere");
+  });
+
+  test("a shot that cannot be stored is a recorded attempt", async () => {
+    const { task, turnId } = fixture();
+    // fill the turn's image quota with distinct images, so the capture's own publication is refused
+    for (let i = 0; i < 32; i++) publishOutputImage(turnId, Buffer.concat([samplePng(), Buffer.from([i])]), `filler-${i}.png`, "published");
+    const result = await captureForTask(task.id, { url: "http://localhost:3000/" }, deps({ shoot: async () => ({ ...shot, bytes: Buffer.concat([samplePng(), Buffer.from("x")]) }) }));
+    expect(result).toMatchObject({ failed: true, capture: { reason: "storage" } });
   });
 
   test("viewports", () => {

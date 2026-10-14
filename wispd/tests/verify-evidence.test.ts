@@ -40,6 +40,14 @@ describe("a pass and its evidence", () => {
     expect(rule([capture({ status: "failed", reason: "no-chrome", area: null })], why, 0)).toContain("published");
     // an app failure is the app's, not the machine's: it does not back a waiver
     expect(rule([capture({ status: "failed", reason: "http-error" })], why)).toContain("has nothing behind it");
+    // nor is a page that never loads, an element that never appears, or a shot too large to keep
+    for (const reason of ["timeout", "no-element", "too-large", "unreachable", "script-error"] as const) {
+      expect(rule([capture({ status: "failed", reason })], why)).toContain("has nothing behind it");
+    }
+    // a busy or failing browser excuses only the area it was capturing
+    expect(rule([capture({ status: "failed", reason: "busy", area: "admin" })], why)).toContain("has nothing behind it");
+    expect(rule([capture({ status: "failed", reason: "busy", area: "web" })], why)).toBeNull();
+    expect(rule([capture({ status: "failed", reason: "browser-error", area: null })], why)).toBeNull();
     expect(rule([capture({ served_from: "unknown" })], why)).toBeNull();
   });
 

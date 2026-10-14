@@ -11,8 +11,15 @@ import type { CaptureRow } from "../capture/store"
 import { docOrTest } from "./depth"
 import type { RecipeArea } from "./recipe"
 
-/** Failures of the machine, not the app: they excuse a missing capture. */
-const INFRASTRUCTURE = new Set(["no-chrome", "launch-failed", "busy", "timeout"])
+/**
+ * Failures of the machine, not the app, the page or the caller: they excuse a
+ * missing capture. No browser at all excuses every area; a busy or failing
+ * browser only the area that attempt was for (a timeout, a missing element,
+ * an error page or an oversized shot is the app's or the request's, never the
+ * machine's, and a task's own concurrent capture is refused, not recorded).
+ */
+const MACHINE_WIDE = new Set(["no-chrome", "launch-failed"])
+const MACHINE_FOR_AREA = new Set(["busy", "browser-error"])
 
 export interface Waiver {
   area: string
@@ -51,12 +58,14 @@ export function waiversError(raw: unknown): string | null {
  * or unknowably) together with at least one published image.
  */
 export function evidenceShortfall(input: { required: string[]; captures: CaptureRow[]; waivers: Waiver[]; images: number }): string | null {
-  const machineFailed = input.captures.some((capture) => capture.status === "failed" && INFRASTRUCTURE.has(capture.reason ?? ""))
+  const failed = input.captures.filter((capture) => capture.status === "failed")
+  const machineWide = failed.some((capture) => MACHINE_WIDE.has(capture.reason ?? ""))
   for (const area of input.required) {
     const ofArea = input.captures.filter((capture) => capture.status === "ok" && capture.area === area)
     if (ofArea.some((capture) => capture.served_from === "worktree")) continue
     const waiver = input.waivers.find((entry) => entry.area === area)
-    const backed = machineFailed || ofArea.some((capture) => capture.served_from !== "worktree")
+    const machineHere = failed.some((capture) => MACHINE_FOR_AREA.has(capture.reason ?? "") && (capture.area === area || capture.area === null))
+    const backed = machineWide || machineHere || ofArea.some((capture) => capture.served_from !== "worktree")
     if (waiver && backed && input.images > 0) continue
     if (waiver && !backed) {
       return `the waiver for area ${area} has nothing behind it: Wisp has no failed capture or off-worktree capture of it from this review. Run \`wisp capture <url> --area ${area}\` against the app you launched.`

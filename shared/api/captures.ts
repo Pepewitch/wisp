@@ -2,7 +2,7 @@
 
 /** Why a capture attempt failed, as Wisp recorded it. */
 export type CaptureFailureReason =
-  | "no-chrome" | "launch-failed" | "unreachable" | "http-error" | "refused" | "timeout" | "script-error" | "busy" | "cancelled" | "no-element" | "browser-error"
+  | "no-chrome" | "launch-failed" | "unreachable" | "http-error" | "timeout" | "script-error" | "busy" | "cancelled" | "no-element" | "browser-error" | "too-large" | "storage"
 
 /** Where the captured page was served from: the capturing task's own worktree, another process, or not knowable. */
 export type CaptureServedFrom = "worktree" | "elsewhere" | "unknown"
