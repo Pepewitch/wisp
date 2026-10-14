@@ -138,7 +138,8 @@ export async function sweepCaptureBrowsers(): Promise<number> {
       if (Number.isInteger(pid) && pid > 1) await stopChrome({ id: entry.slice(0, -".pgid".length), pid }, true)
       else rmSync(full, { force: true })
       swept++
-    } else if (statSync(full).isDirectory() && !existsSync(`${full}.pgid`)) {
+    } else if (existsSync(full) && statSync(full).isDirectory() && !existsSync(`${full}.pgid`)) {
+      // existsSync first: stopping a browser above already removed its profile, whatever order the listing came in
       rmSync(full, { recursive: true, force: true })
     }
   }
