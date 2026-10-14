@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import type { AutoReviewRound } from "../../../shared/api/auto-review"
+import type { AutoReviewReview, AutoReviewRound } from "../../../shared/api/auto-review"
 import type { AutopilotHistoryEntry, AutopilotStatus } from "../../../shared/autopilot"
 import { api } from "@/lib/api"
 import { AUTOPILOT_OFF_WORDS } from "@/lib/autopilot-words"
@@ -304,6 +304,76 @@ describe("auto-review in the Autopilot tab", () => {
     stub(REVIEW)
     mount(<AutopilotPane task={withStatus({ ...WAITING, autoReview: true, reviewRounds: 2 })} />)
     expect((await screen.findByRole("switch", { name: "Auto-review" })).parentElement).toHaveTextContent("On · round 2 of 3")
+  })
+})
+
+const review = (id: string, role: AutoReviewReview["role"], state: AutoReviewReview["state"], over: Partial<AutoReviewReview> = {}): AutoReviewReview => ({
+  id, role, agent: role === "primary" ? { harness: "claude", model: "opus-5" } : { harness: "codex", model: "gpt-5.6-luna" }, state,
+  summary: null, rationale: null, findings: [], reviewed: [], evidence: [], escalated: null, carried: false,
+  reviewerTaskId: state === "pending" ? null : `rev${id}`, createdAt: new Date(Date.now() - 5 * 60_000).toISOString(), finishedAt: null, ...over,
+})
+
+describe("auto-review's panel in the Autopilot tab", () => {
+  const PANEL_ROUNDS = [
+    round("3", 3, "running", {
+      tier: "deep",
+      signals: { lines: 412, files: 9, areas: 2, unmapped: 0, sensitive: ["db/migrations/0042.sql"], testsTouched: true, docsOnly: false },
+      reviews: [review("3b", "second", "pending"), review("3a", "primary", "pass")],
+    }),
+    round("2", 2, "fail", {
+      tier: "light", summary: "B rejected it",
+      reviews: [
+        review("1a", "primary", "pass", { carried: true, escalated: "touches the token refresh" }),
+        review("2b", "second", "fail", { summary: "The shortcut still saves twice" }),
+      ],
+    }),
+    round("1", 1, "fail", { legacy: true, summary: "Saved twice" }),
+  ]
+  const reviewing: AutopilotStatus = { ...WAITING, autoReview: true, by: "auto-review", reviewRounds: 3, reason: "Reviewing" }
+
+  it("with features.reviewPanel, a round says its tier and lists a row per reviewer, each with its own Open", async () => {
+    stub({ ...ALL, autoReview: true, reviewPanel: true }, [], PANEL_ROUNDS)
+    mount(<AutopilotPane task={withStatus(reviewing)} />)
+    await screen.findByRole("heading", { name: "Reviews" })
+    const rounds = [...document.querySelectorAll("[data-round]")] as HTMLElement[]
+    expect(rounds.map((row) => row.getAttribute("data-round"))).toEqual(["running", "fail", "fail"])
+
+    const deep = within(rounds[0]!)
+    expect(deep.getByText("deep review")).toHaveAttribute("title", expect.stringContaining("412 changed lines · 9 files · 2 areas · tests touched · sensitive: db/migrations/0042.sql"))
+    const rows = [...rounds[0]!.querySelectorAll("[data-reviewer]")] as HTMLElement[]
+    // A first, whatever order the daemon sent them in
+    expect(rows.map((row) => row.getAttribute("data-reviewer"))).toEqual(["A", "B"])
+    expect(rows[0]).toHaveTextContent("Aclaude · opus-5Passed")
+    expect(rows[1]).toHaveTextContent("Bcodex · gpt-5.6-lunaWaiting for a slot")
+    // a reviewer waiting for a slot has no task yet; the round's own Open gives way to the rows'
+    expect(within(rows[1]!).queryByRole("button")).toBeNull()
+    expect(deep.queryByRole("button", { name: "Open the reviewer task for round 3" })).toBeNull()
+    fireEvent.click(deep.getByRole("button", { name: "Open reviewer A for round 3" }))
+    expect(uiIntentsFor(CONNECTION).taskFocusRequest()).toMatchObject({ taskId: "rev3a" })
+
+    const kept = [...rounds[1]!.querySelectorAll("[data-reviewer]")] as HTMLElement[]
+    expect(kept[0]).toHaveAttribute("data-review", "carried")
+    expect(kept[0]).toHaveTextContent("Kept · escalated: touches the token refresh")
+    expect(kept[1]).toHaveTextContent("Rejected — The shortcut still saves twice")
+    expect(within(rounds[1]!).getByText("light review")).toBeInTheDocument()
+
+    // a round from before the panel keeps its one line, its Open, and a faint hint
+    expect(rounds[2]!.querySelectorAll("[data-reviewer]")).toHaveLength(0)
+    expect(rounds[2]).toHaveTextContent("before the panel")
+    expect(within(rounds[2]!).getByRole("button", { name: "Open the reviewer task for round 1" })).toBeInTheDocument()
+  })
+
+  it("without features.reviewPanel, the same rounds keep the phase-1 look", async () => {
+    stub({ ...ALL, autoReview: true }, [], PANEL_ROUNDS)
+    mount(<AutopilotPane task={withStatus(reviewing)} />)
+    await screen.findByRole("heading", { name: "Reviews" })
+    const rounds = [...document.querySelectorAll("[data-round]")] as HTMLElement[]
+    expect(rounds).toHaveLength(3)
+    expect(document.querySelectorAll("[data-reviewer]")).toHaveLength(0)
+    expect(screen.queryByText("deep review")).toBeNull()
+    expect(screen.queryByText("before the panel")).toBeNull()
+    expect(rounds[0]).toHaveTextContent("Round 3·3c41e07·Reviewing")
+    expect(within(rounds[0]!).getByRole("button", { name: "Open the reviewer task for round 3" })).toBeInTheDocument()
   })
 })
 

@@ -1,4 +1,13 @@
-import type { AutoReviewRound, AutoReviewRoundState, VerificationStatus } from "../../../shared/api/auto-review"
+import type {
+  AutoReviewFinding,
+  AutoReviewReview,
+  AutoReviewRole,
+  AutoReviewRound,
+  AutoReviewRoundState,
+  AutoReviewSignals,
+  AutoReviewTier,
+  VerificationStatus,
+} from "../../../shared/api/auto-review"
 import type { VerificationSummary } from "./types"
 
 /*
@@ -53,6 +62,108 @@ export function roundVerdict(round: AutoReviewRound): string {
 /** `Round 2`, or `Round 2 re-run` for one that does not spend the budget (after a recipe fix). */
 export function roundName(round: AutoReviewRound): string {
   return round.counted ? `Round ${round.round}` : `Round ${round.round} re-run`
+}
+
+/* ── the review panel ───────────────────────────────────────────────────── */
+
+/** A reviewer's state on a panel: a round's states, plus waiting for a task slot. */
+export type ReviewState = AutoReviewReview["state"]
+
+/** What became of one reviewer's part, as its row says it. */
+export const REVIEW_WORD: Record<ReviewState, string> = {
+  ...ROUND_WORD,
+  pending: "Waiting for a slot",
+}
+
+/** A reviewer's dot: a round's, and the faint neutral while it waits for a slot. */
+export const REVIEW_DOT: Record<ReviewState, string> = {
+  ...ROUND_DOT,
+  pending: "bg-border-strong",
+}
+
+/** A carried review passed on this head in an earlier round and was not run again. */
+export const KEPT_WORD = "Kept"
+
+/** On a panel A runs the app and reviews the code; B reviews the code only. */
+export const REVIEWER_LETTER: Record<AutoReviewRole, "A" | "B"> = { primary: "A", second: "B" }
+
+/** What each reviewer does, for the letter's title. */
+export const REVIEWER_ROLE_WORDS: Record<AutoReviewRole, string> = {
+  primary: "Reviewer A runs the app and reviews the code",
+  second: "Reviewer B reviews the code only",
+}
+
+/** `deep review`: how much a round covers, measured by Wisp from the diff. */
+export const TIER_WORD: Record<AutoReviewTier, string> = {
+  light: "light review",
+  standard: "standard review",
+  deep: "deep review",
+}
+
+/** `claude · opus-5`, or the harness alone when it runs its own default model. */
+export function reviewAgentWords(agent: AutoReviewReview["agent"]): string {
+  return agent.model ? `${agent.harness} · ${agent.model}` : agent.harness
+}
+
+/**
+ * What Wisp measured to choose the tier, for the tier's title:
+ * `412 changed lines · 9 files · 2 areas · sensitive: db/migrations/0042.sql`.
+ */
+export function signalsWords(signals: AutoReviewSignals): string {
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+  const parts = [
+    plural(signals.lines, "changed line", "changed lines"),
+    plural(signals.files, "file", "files"),
+    plural(signals.areas, "area", "areas"),
+  ]
+  if (signals.unmapped > 0) parts.push(`${plural(signals.unmapped, "file", "files")} in no area`)
+  if (signals.docsOnly) parts.push("docs only")
+  else if (signals.testsTouched) parts.push("tests touched")
+  if (signals.sensitive.length > 0) parts.push(`sensitive: ${signals.sensitive.join(", ")}`)
+  return parts.join(" · ")
+}
+
+/** The tier's title: what it means, then what Wisp measured. */
+export function tierTitle(round: AutoReviewRound): string | undefined {
+  if (!round.tier) return undefined
+  const word = TIER_WORD[round.tier]
+  const what = `${word[0]!.toUpperCase()}${word.slice(1)}, chosen by Wisp from the diff`
+  return round.signals ? `${what}\n${signalsWords(round.signals)}` : what
+}
+
+/** The reviewer's state word: `Kept` for a carried pass, otherwise what became of it. */
+export function reviewWord(review: AutoReviewReview): string {
+  return review.carried ? KEPT_WORD : REVIEW_WORD[review.state]
+}
+
+/**
+ * A reviewer row's words: the state, then why A asked for a second opinion
+ * when it did, then what it said — `Passed · escalated: touches the auth
+ * middleware`, `Rejected — the toast fires twice`. While the round runs, the
+ * daemon withholds the others' words, so a summary may be null.
+ */
+export function reviewVerdict(review: AutoReviewReview): string {
+  const word = reviewWord(review)
+  if (review.escalated) return `${word} · escalated: ${review.escalated}`
+  return review.summary ? `${word} — ${review.summary}` : word
+}
+
+/** The row's title: every word it may truncate, what kept means, and the findings, blocking first. */
+export function reviewTitle(review: AutoReviewReview): string {
+  const lines = [reviewVerdict(review)]
+  if (review.escalated && review.summary) lines.push(review.summary)
+  if (review.carried) lines.push("Passed on this head in an earlier round, so it was not run again")
+  // blocking first: the ones that stop the merge
+  const findings = [...review.findings].sort((a, b) => Number(b.severity === "blocking") - Number(a.severity === "blocking"))
+  for (const finding of findings) lines.push(`• ${findingLine(finding)}`)
+  return lines.join("\n")
+}
+
+/** One finding, severity first: `Blocking: Autosave races a manual save (web/src/store.ts:88)`. */
+export function findingLine(finding: AutoReviewFinding): string {
+  const lead = finding.severity === "blocking" ? "Blocking: " : finding.severity === "note" ? "Note: " : ""
+  const where = finding.file ? ` (${finding.file}${finding.line ? `:${finding.line}` : ""})` : ""
+  return `${lead}${finding.title}${where}`
 }
 
 /* ── verification recipes ───────────────────────────────────────────────── */

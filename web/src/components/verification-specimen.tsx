@@ -5,7 +5,7 @@ import { ProjectSettingsSpecimen } from "@/components/project-settings-dialog"
 import type { VerificationFieldsModel } from "@/components/project-verification"
 import { Eyebrow } from "@/components/primitives"
 import { REPOS } from "@/lib/fixtures"
-import type { HarnessInfo, ProjectVerifyAgent } from "@/lib/types"
+import type { HarnessInfo, ProjectVerifyAgent, ProjectVerifySecond } from "@/lib/types"
 
 /*
  * The project settings' Verification section, drawn by the real form from
@@ -45,20 +45,25 @@ const ACTIVE: VerificationStatus = {
   },
   task: { id: "tvr3ip", mode: "fix", area: "editor", state: "running", archived: false },
   reviewer: { harness: "claude", model: "opus-5", effort: null },
+  second: { harness: "codex", model: "gpt-5.6-luna", effort: null },
   attention: null,
 }
 
-function Specimen({ status, initial, busy = false, message = null }: {
+function Specimen({ status, initial, initialSecond, busy = false, message = null }: {
   status: VerificationStatus
   initial: ProjectVerifyAgent | null
+  /** the second reviewer, on a daemon with the review panel; undefined draws an older daemon's section */
+  initialSecond?: ProjectVerifySecond
   busy?: boolean
   message?: VerificationFieldsModel["message"]
 }) {
   const [agent, setAgent] = useState(initial)
+  const [second, setSecond] = useState<ProjectVerifySecond>(initialSecond ?? null)
   const [note, setNote] = useState("")
   const model: VerificationFieldsModel = {
     status, now: NOW, readError: null, harnesses: HARNESSES, hidden: {}, agent, onAgentChange: setAgent, note, onNoteChange: setNote,
     starting: null, activating: false, busy, message, onStart: () => {}, onActivate: () => {}, onOpenTask: () => {},
+    ...(initialSecond !== undefined ? { second, onSecondChange: setSecond } : {}),
   }
   return <ProjectSettingsSpecimen project={{ ...REPOS[0]!, verify: initial }} verification={model} />
 }
@@ -80,13 +85,24 @@ export function VerificationSpecimen() {
         <Specimen
           status={ACTIVE}
           initial={{ harness: "claude", model: "opus-5" }}
+          initialSecond={{ harness: "codex", model: "gpt-5.6-luna" }}
           busy
           message={{ tone: "error", text: "Task tvr3ip is already working on this project's verification recipe" }}
         />
         <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
           Dots carry the hue, words stay gray: green for a proven area, faint for one not proven yet, red where a
           reviewer reported the recipe failing (with Fix beside it). Activate draft is an outline button — Save stays
-          the dialog&apos;s one primary. A refusal from the daemon shows inline, in red.
+          the dialog&apos;s one primary. A refusal from the daemon shows inline, in red. On a daemon with the review
+          panel the Second reviewer sits under the Reviewer agent: a different agent here is a real second opinion.
+        </p>
+      </div>
+      <div data-frame="verification-second-off">
+        <Eyebrow>Verification — the second reviewer off: every round has one reviewer</Eyebrow>
+        <Specimen status={{ ...NONE, reviewer: { harness: "claude", model: "opus-5", effort: null }, second: "off" }} initial={{ harness: "claude", model: "opus-5" }} initialSecond="off" />
+        <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+          The Second reviewer offers Same agent as the reviewer (the default), Off — one reviewer, and the composer&apos;s
+          model list. It is saved with Save as its own key, sent only when it changed and never to a daemon without
+          the panel.
         </p>
       </div>
     </div>

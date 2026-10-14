@@ -164,7 +164,7 @@ function Form({
 
   const save = () => {
     saveProject.mutate(
-      { path: project.path, setupScript, archiveScript, copyFiles: patterns, baseBranch: baseBranch.trim(), ...(field.reviewable ? { verify: field.verify } : {}) },
+      { path: project.path, setupScript, archiveScript, copyFiles: patterns, baseBranch: baseBranch.trim(), ...field.patch },
       { onSuccess: onClose },
     )
   }
@@ -238,7 +238,7 @@ function Form({
             {verification ? (
               <VerificationFields {...verification} />
             ) : (
-              <VerificationSection project={project} agent={field.verify} onAgentChange={field.setVerify} />
+              <VerificationSection project={project} agent={field.verify} onAgentChange={field.setVerify} second={field.secondField} />
             )}
           </Section>
         )}

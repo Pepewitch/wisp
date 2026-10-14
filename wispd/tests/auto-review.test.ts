@@ -63,7 +63,6 @@ function setup(options: Parameters<typeof armed>[0] & { adapters?: Record<string
 }
 
 const primaryOf = (round: RoundRow): ReviewRow => reviewsOf(round.id).find((review) => review.role === "primary")!;
-const secondOf = (round: RoundRow): ReviewRow | undefined => reviewsOf(round.id).find((review) => review.role === "second");
 const reviewerOf = (round: RoundRow) => getTask(primaryOf(round).reviewer_task_id!)!;
 const latest = (taskId: string) => roundsOf(taskId)[0]!;
 
