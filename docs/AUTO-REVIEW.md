@@ -124,10 +124,15 @@ Reviewer A's pass is then refused until Wisp holds a
 [`wisp capture`](CAPTURE.md) of that area, tagged `--area <name>` and served
 from A's own worktree. Wisp checks its own records, not A's word.
 
-If Wisp could not capture (it recorded no Chrome, a launch failure, a busy
-browser or a timeout, or the page was served from elsewhere or unknowably), A
-can name the area in its verdict's `waivers` with a reason, beside an image it
-published with `wisp output add`. Waivers show on the round and in the bounce.
+If Wisp could not capture, A can name the area in its verdict's `waivers` with
+a reason, beside an image it published with `wisp output add`. Wisp must have
+recorded why:
+- a machine failure: no Chrome or a failed launch excuses every area, while a
+  busy or failing browser excuses only the area that attempt was for;
+- or a capture of that area served from elsewhere or unknowably.
+
+A page that never loads, an element that never appears, an error page or an
+oversized shot is the app's or the request's failure, never a waiver. Waivers show on the round and in the bounce.
 Reviewer B never captures and is never held to this. Reviews in flight across
 the upgrade and passes carried from an earlier round are exempt.
 

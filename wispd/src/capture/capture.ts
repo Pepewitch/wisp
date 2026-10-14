@@ -136,7 +136,19 @@ async function shoot(client: CdpClient, request: CaptureRequest): Promise<Captur
     // --wait-for and --wait describe the state to shoot: after the script when there is one
     let settled = await settle(send, page, request.script ? { waitFor: null, waitMs: 0 } : request)
     if (request.script) {
-      await runScript(send, request.script)
+      // counted from before the script runs: a fast navigation can load before anyone waits for it
+      let loads = 0
+      const counting = client.on((event) => { if (event.sessionId === sessionId && event.method === "Page.loadEventFired") loads++ })
+      try {
+        const navigated = await runScript(send, request.script)
+        // a script that navigates ends its own context; the page it went to is the one judged
+        if (navigated && loads === 0) {
+          await client.waitFor((event) => event.sessionId === sessionId && event.method === "Page.loadEventFired", PAGE_TIMEOUT_MS, "the new page to load")
+            .catch(() => { throw new CaptureFailure("timeout", `the page the --script went to did not finish loading within ${PAGE_TIMEOUT_MS / 1000}s`) })
+        }
+      } finally {
+        counting()
+      }
       settled = await settle(send, page, request) && settled
     }
     // what is on screen now, not what loaded first: a script or a timer may have navigated since
@@ -237,19 +249,23 @@ async function settle(send: Send, page: ReturnType<typeof watchPage>, request: P
   return true
 }
 
-async function runScript(send: Send, script: string): Promise<void> {
+/** Run the agent's script; true when it ended by navigating the page (its context goes with the old document). */
+async function runScript(send: Send, script: string): Promise<boolean> {
   // Runtime.evaluate's own timeout bounds only synchronous work; an awaited promise is bounded by the command's
   const result = await send("Runtime.evaluate", {
     expression: `(async () => {\n${script}\n})()`, awaitPromise: true, returnByValue: true, timeout: SCRIPT_TIMEOUT_MS,
   }, SCRIPT_TIMEOUT_MS).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error)
     if (/took longer/.test(message)) throw new CaptureFailure("script-error", `the --script did not finish within ${SCRIPT_TIMEOUT_MS / 1000}s`)
+    if (/context was destroyed|navigated|Cannot find context/i.test(message)) return { navigated: true }
     throw new CaptureFailure("browser-error", `the browser failed while the --script ran: ${message}`)
-  }) as { exceptionDetails?: { exception?: { description?: string }; text?: string } }
+  }) as { exceptionDetails?: { exception?: { description?: string }; text?: string }; navigated?: boolean }
+  if (result.navigated) return true
   if (result.exceptionDetails) {
     const said = result.exceptionDetails.exception?.description ?? result.exceptionDetails.text ?? "it threw"
     throw new CaptureFailure("script-error", `the --script failed: ${said.split("\n")[0]!.slice(0, 300)}`)
   }
+  return false
 }
 
 /** The scale every page renders at: crisp text without doubling the work. */

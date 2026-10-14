@@ -85,10 +85,15 @@ function privateV4Reason(four: number[]): string | null {
 }
 
 function privateV6Reason(lower: string): string | null {
+  // forms that carry or route to an IPv4 address are refused outright rather than reasoned about:
+  // IPv4-compatible (::a.b.c.d / ::/96), 6to4 (2002::/16), Teredo (2001:0::/32), NAT64 (64:ff9b::/96, 64:ff9b:1::/48)
+  if ((lower !== "::1" && /^::[0-9a-f]{1,4}(:[0-9a-f]{1,4})?$/.test(lower)) || /^::\d+\.\d+\.\d+\.\d+$/.test(lower)) return "an IPv4-compatible address"
+  if (lower.startsWith("2002:") || /^2001:0*:/.test(lower) || lower.startsWith("64:ff9b:")) return "a tunnel or translation address"
+  if (/^fe[c-f]/.test(lower)) return "a site-local address"
   if (lower === "::" || lower.startsWith("fe8") || lower.startsWith("fe9") || lower.startsWith("fea") || lower.startsWith("feb")) return "a link-local address"
   if (lower.startsWith("fc") || lower.startsWith("fd")) return "a private network"
   if (lower.startsWith("ff")) return "a multicast address"
-  if (lower.startsWith("64:ff9b:") || lower.startsWith("2001:db8")) return "a reserved network"
+  if (lower.startsWith("2001:db8")) return "a reserved network"
   return null
 }
 
@@ -115,6 +120,15 @@ export function mayReach(policy: ReachPolicy, address: string, port: number): Re
   return policy.publicAllowed ? { allow: true } : { allow: false, reason: "public hosts are off for this project" }
 }
 
+/** A fragment key as a page reads it (`%74oken` is `token`); one that cannot be decoded is treated as a credential. */
+function decodedKey(key: string): string {
+  try {
+    return decodeURIComponent(key.replace(/\+/g, " "))
+  } catch {
+    return "token"
+  }
+}
+
 /** Query and fragment keys that may hold a credential. */
 const CREDENTIAL = /token|key|secret|code|pass|session|auth|sig|cred/i
 
@@ -135,6 +149,6 @@ export function sanitizeUrl(raw: string | URL): string {
   const keys = [...new Set(url.searchParams.keys())]
   url.search = keys.length > 0 ? `?${keys.map((key) => `${encodeURIComponent(key)}=*`).join("&")}` : ""
   const pairs = url.hash.slice(1).split(/[&?]/).filter((pair) => pair.includes("="))
-  if (pairs.some((pair) => CREDENTIAL.test(pair.split("=")[0]!))) url.hash = "#redacted"
+  if (pairs.some((pair) => CREDENTIAL.test(decodedKey(pair.split("=")[0]!)))) url.hash = "#redacted"
   return url.toString()
 }

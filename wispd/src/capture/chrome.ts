@@ -68,18 +68,30 @@ export function chromeArgs(profile: string, proxyPort: number): string[] {
 /** Start Chrome in its own process group and wait for its DevTools endpoint. */
 export async function launchChrome(path: string, id: string, proxyPort: number, signal?: AbortSignal): Promise<LaunchedChrome> {
   const profile = join(BROWSER_DIR, id)
-  mkdirSync(profile, { recursive: true, mode: 0o700 })
-  // output ignored: an undrained pipe would stall a chatty Chrome
-  const child = Bun.spawn([path, ...chromeArgs(profile, proxyPort)], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true })
-  writeFileSync(join(BROWSER_DIR, `${id}.pgid`), String(child.pid))
-  const launched = { id, pid: child.pid, profile, endpoint: "" }
+  const launched = { id, pid: 0, profile, endpoint: "" }
   try {
+    mkdirSync(profile, { recursive: true, mode: 0o700 })
+    // output ignored: an undrained pipe would stall a chatty Chrome
+    const child = Bun.spawn([path, ...chromeArgs(profile, proxyPort)], { stdin: "ignore", stdout: "ignore", stderr: "ignore", detached: true })
+    launched.pid = child.pid
+    writeFileSync(join(BROWSER_DIR, `${id}.pgid`), String(child.pid))
     launched.endpoint = await devtoolsEndpoint(profile, child, signal)
     return launched
   } catch (error) {
+    // whatever was acquired goes: a started browser, its profile, its record
     await stopChrome(launched)
     throw error
   }
+}
+
+/**
+ * Whether a process is still the capture browser that profile belongs to. A
+ * recorded pid can be reused by anything after a crash and a reboot, so a
+ * process is signalled only while its own command line names that profile.
+ */
+export function isCaptureChrome(pid: number, profile: string): boolean {
+  const ps = Bun.spawnSync(["ps", "-o", "command=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" })
+  return ps.exitCode === 0 && ps.stdout.toString().includes(`--user-data-dir=${profile}`)
 }
 
 async function devtoolsEndpoint(profile: string, child: Bun.Subprocess, signal?: AbortSignal): Promise<string> {
@@ -100,11 +112,15 @@ async function devtoolsEndpoint(profile: string, child: Bun.Subprocess, signal?:
 }
 
 /** TERM the browser's group, KILL it after 3 s, then remove its profile and record. */
-export async function stopChrome(chrome: Pick<LaunchedChrome, "id" | "pid">): Promise<void> {
-  signalProcessGroup(chrome.pid, "SIGTERM")
-  if (!(await processGroupEnded(chrome.pid, 3_000))) {
-    signalProcessGroup(chrome.pid, "SIGKILL")
-    await processGroupEnded(chrome.pid, 2_000)
+export async function stopChrome(chrome: Pick<LaunchedChrome, "id" | "pid">, verify = false): Promise<void> {
+  // verified only for a record left by another daemon; this daemon's own child is known to be ours
+  const ours = () => !verify || isCaptureChrome(chrome.pid, join(BROWSER_DIR, chrome.id))
+  if (chrome.pid > 1 && ours()) {
+    signalProcessGroup(chrome.pid, "SIGTERM")
+    if (!(await processGroupEnded(chrome.pid, 3_000)) && ours()) {
+      signalProcessGroup(chrome.pid, "SIGKILL")
+      await processGroupEnded(chrome.pid, 2_000)
+    }
   }
   rmSync(join(BROWSER_DIR, chrome.id), { recursive: true, force: true })
   rmSync(join(BROWSER_DIR, `${chrome.id}.pgid`), { force: true })
@@ -118,7 +134,7 @@ export async function sweepCaptureBrowsers(): Promise<number> {
     const full = join(BROWSER_DIR, entry)
     if (entry.endsWith(".pgid")) {
       const pid = Number(readFileSync(full, "utf8").trim())
-      if (Number.isInteger(pid) && pid > 1) await stopChrome({ id: entry.slice(0, -".pgid".length), pid })
+      if (Number.isInteger(pid) && pid > 1) await stopChrome({ id: entry.slice(0, -".pgid".length), pid }, true)
       else rmSync(full, { force: true })
       swept++
     } else if (statSync(full).isDirectory() && !existsSync(`${full}.pgid`)) {

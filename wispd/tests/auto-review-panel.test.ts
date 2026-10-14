@@ -166,6 +166,20 @@ describe("who is on the panel", () => {
     expect(state.merges).toHaveLength(1);
   });
 
+  test("a pass carried twice still points at the review that earned it, captures and all", () => {
+    const author = doneTask();
+    const plan = (carried?: ReviewRow[]) => createPanelRound({
+      taskId: author.id, workflowId: "w-carry", pr: 9, head: "c".repeat(40), base: "main", round: 1, counted: true, recipeVersion: null,
+      tier: "standard", signals: null, agents: [{ role: "primary", harness: "fake", model: null, effort: null }], carried,
+    }).reviews;
+    const [origin] = plan();
+    db.run("UPDATE round_reviews SET state = 'pass' WHERE id = ?", [origin!.id]);
+    const [first] = plan([getReview(origin!.id)!]);
+    const [second] = plan([first!]);
+    expect(first!.carried_from).toBe(origin!.id);
+    expect(second!.carried_from).toBe(origin!.id);
+  });
+
   test("a round whose diff could not be read does not hold later rounds at deep", () => {
     const author = doneTask();
     const round = (tier: "deep" | "light", signals: boolean) => createPanelRound({

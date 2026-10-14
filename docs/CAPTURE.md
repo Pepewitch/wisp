@@ -38,18 +38,28 @@ The agent does not supply the bytes, and the metadata is Wisp's own. It does
 **not** prove the app works: whether the page shows the change is still the
 reviewer's judgement.
 
-Wisp records every attempt, failed ones included, with a reason:
-- `no-chrome`
-- `launch-failed`
-- `unreachable`
-- `http-error`
-- `timeout`
-- `script-error`
-- `busy`
-- `browser-error`
+Wisp records every attempt, failed ones included, with a reason. Some are the
+machine's:
+- `no-chrome`: no browser found;
+- `launch-failed`: Chrome would not start;
+- `busy`: every capture slot stayed busy for 60 s;
+- `browser-error`: Chrome failed mid-capture.
 
-A page that fails to load, answers 4xx/5xx, or lands on Chrome's error page is
-never stored as an image.
+The rest are the page's or the request's:
+- `unreachable`: nothing listening, or the page navigated somewhere that cannot be opened;
+- `http-error`: the page on screen answered 4xx or 5xx;
+- `timeout`: the page never finished loading;
+- `no-element`: `--wait-for` or `--selector` matched nothing;
+- `script-error`: the `--script` threw or did not finish;
+- `too-large`: the shot stays over the limits even as a small JPEG;
+- `storage`: the turn's image quota was full;
+- `cancelled`: the turn or the review ended first.
+
+The page is judged as it is when the shot is taken, after any script or
+redirect. A 4xx/5xx or Chrome's error page is never stored as an image, and
+"served from" is looked up for the page actually on screen; a page off this
+machine is never `worktree`. A second capture in the same task while one runs
+is refused outright, not recorded.
 
 **Served from.** For each capture, Wisp looks up the process listening on the
 page's port. If that process runs inside the capturing task's worktree, the
@@ -87,12 +97,14 @@ Only `http` and `https` pages on `localhost`, `*.localhost`, `127.0.0.0/8` and
 `[::1]` can be opened. To capture a static build, serve it on 127.0.0.1;
 `file://` is refused. URLs are stored without a user name or password, with
 every query value replaced by `*`, and without a fragment that looks like a
-credential.
+credential (keys are decoded first, so `#%74oken=` counts). Path segments are
+kept as they are: a page that carries a secret in its path (`/reset/<token>`)
+shows it in the record, so capture such a page with care.
 
 ## Limits
 
 - At most 2 captures at once across Wisp, 1 per task; others wait up to 60 s.
-- Chrome gets 60 s to start; the page, script and shot get 45 s together.
+- Chrome gets 60 s to start; the page, script and shot get 55 s together.
 - A shot is at most 7680 px on a side and 5 MiB. It is a PNG when that fits,
   and otherwise a JPEG. These limits let a shot reach any harness as an
   attachment.

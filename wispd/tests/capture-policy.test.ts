@@ -25,6 +25,11 @@ describe("what a capture may open", () => {
     expect(privateAddressReason("::ffff:10.0.0.1")).toContain("private");
     expect(privateAddressReason("fd00::1")).toContain("private");
     expect(privateAddressReason("8.8.8.8")).toBeNull();
+    // IPv6 forms that carry or route to an IPv4 address are never public
+    for (const address of ["::a00:1", "::10.0.0.1", "2002:a00:1::1", "2001:0:4136:e378::1", "64:ff9b::a00:1", "64:ff9b:1::1", "fec0::1"]) {
+      expect(privateAddressReason(address)).not.toBeNull();
+    }
+    expect(privateAddressReason("2606:4700::1111")).toBeNull();
   });
 
   test("the browser reaches its own ports and public hosts, never Wisp or another local service", () => {
@@ -42,6 +47,9 @@ describe("what a capture may open", () => {
     expect(sanitizeUrl("http://localhost:3000/settings?tab=billing&token=abc#/gallery")).toBe("http://localhost:3000/settings?tab=*&token=*#/gallery");
     expect(sanitizeUrl("http://localhost:3000/cb#access_token=abc&state=1")).toBe("http://localhost:3000/cb#redacted");
     expect(sanitizeUrl("http://u:p@localhost/")).toBe("http://localhost/");
+    // a key spelled in percent-escapes is still a credential, and one that will not decode is treated as one
+    expect(sanitizeUrl("http://localhost/#%74oken=secret")).toBe("http://localhost/#redacted");
+    expect(sanitizeUrl("http://localhost/#/route?%E0%A4%A=1")).toBe("http://localhost/#redacted");
   });
 });
 

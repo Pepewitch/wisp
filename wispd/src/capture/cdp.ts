@@ -23,6 +23,8 @@ export class CdpClient {
   private nextId = 1
   private readonly pending = new Map<number, Pending>()
   private readonly listeners = new Set<(event: CdpEvent) => void>()
+  /** waiters reject when the connection ends, rather than holding their timers until expiry */
+  private readonly waiters = new Set<(error: Error) => void>()
   private closedWith: Error | null = null
 
   private constructor(private readonly socket: WebSocket) {
@@ -50,14 +52,17 @@ export class CdpClient {
 
   /** The next event that matches, or a rejection after the time limit. */
   waitFor(match: (event: CdpEvent) => boolean, timeoutMs: number, what: string): Promise<CdpEvent> {
+    if (this.closedWith) return Promise.reject(this.closedWith)
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { off(); reject(new Error(`timed out after ${timeoutMs / 1000}s waiting for ${what}`)) }, timeoutMs)
+      const done = () => { clearTimeout(timer); off(); this.waiters.delete(fail) }
+      const fail = (error: Error) => { done(); reject(error) }
+      const timer = setTimeout(() => fail(new Error(`timed out after ${timeoutMs / 1000}s waiting for ${what}`)), timeoutMs)
       const off = this.on((event) => {
         if (!match(event)) return
-        clearTimeout(timer)
-        off()
+        done()
         resolve(event)
       })
+      this.waiters.add(fail)
     })
   }
 
@@ -115,5 +120,6 @@ export class CdpClient {
       pending.reject(error)
     }
     this.pending.clear()
+    for (const waiter of [...this.waiters]) waiter(error)
   }
 }

@@ -320,7 +320,11 @@ function bounceImages(look: ReviewLook, round: RoundRow, messageId: string): { j
   const skipped: string[] = []
   let bytes = 0
   for (const image of evidence) {
-    if (chosen.length >= BOUNCE_IMAGES || !image.reviewerTaskId) break
+    if (chosen.length >= BOUNCE_IMAGES) break
+    if (!image.reviewerTaskId) {
+      skipped.push(`${image.name}: its reviewer task is unknown`)
+      continue
+    }
     let data: Buffer
     try {
       data = readFileSync(outputImagePath(image.reviewerTaskId, image.turn, image.id))

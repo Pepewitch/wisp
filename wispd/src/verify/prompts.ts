@@ -289,8 +289,6 @@ export function recipePrompt(input: RecipePromptInput): string {
     "  ---",
     "  ```",
     "  `evidence: screenshot` (web UIs Wisp can open in a browser only) makes a reviewer's pass on a change here carry a capture of it; leave it out for CLIs, services and native apps.",
-    "  ```",
-    "  ```",
     "  Then these sections, with the real commands from this repo, never placeholders:",
     "  - Launch: the exact command, how to tell it is ready, how to stop it. Use the PORT environment variable when it is set, so two reviewers can run side by side.",
     "  - Health check: one quick read-only check that the instance is the right one and worth driving.",

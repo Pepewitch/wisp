@@ -86,7 +86,7 @@ export function createPanelRound(input: {
         db.run(`INSERT INTO round_reviews(id, round_id, role, protocol, reviewer_task_id, harness, model, effort, token, state, cause, summary,
           rationale, findings_json, reviewed_json, recipe_feedback, recipe_area, evidence_json, escalated, waivers_json, carried_from, launched_at, created_at, finished_at)
           SELECT ?, ?, role, protocol, reviewer_task_id, harness, model, effort, ?, state, cause, summary, rationale, findings_json, reviewed_json,
-          recipe_feedback, recipe_area, evidence_json, escalated, waivers_json, id, launched_at, ?, finished_at FROM round_reviews WHERE id = ?`, [randomId("v", 12), id, newToken(), at, carried.id])
+          recipe_feedback, recipe_area, evidence_json, escalated, waivers_json, COALESCE(carried_from, id), launched_at, ?, finished_at FROM round_reviews WHERE id = ?`, [randomId("v", 12), id, newToken(), at, carried.id])
         continue
       }
       // protocol 3: the panel's verdict shape plus captures and waivers

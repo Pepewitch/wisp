@@ -40,10 +40,15 @@ function describe(capture: CaptureRecord): string[] {
   return lines
 }
 
+/** Flags that take a value: one given bare (at the end, or before another flag) would quietly take a different shot. */
+const VALUE_OPTIONS = ["area", "name", "viewport", "selector", "wait-for", "wait", "script", "allow-port"]
+
 export async function captureCommand(positional: string[], flags: Flags): Promise<void> {
   const [url] = positional
   const task = process.env.WISP_TASK_ID
   if (!url) throw new Error(CAPTURE_USAGE)
+  const bare = VALUE_OPTIONS.find((key) => flags[key] === true)
+  if (bare) throw new Error(`--${bare} needs a value\n${CAPTURE_USAGE}`)
   if (!task) throw new Error("wisp capture runs inside a task's turn (WISP_TASK_ID is not set)")
   const script = typeof flags.script === "string" ? await Bun.file(flags.script).text().catch(() => { throw new Error(`cannot read --script ${flags.script}`) }) : null
   let result: CaptureResponse

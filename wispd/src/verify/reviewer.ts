@@ -81,6 +81,8 @@ export function secondAgent(cfg: WispConfig, adapters: Record<string, AdapterDef
 /** What a round's diff looks like: the snapshot its tier, its areas and its prompts all read. */
 export interface DiffSnapshot {
   changed: string[] | null
+  /** changed paths plus where renames came from: what areas are matched against */
+  touched: string[] | null
   signals: AutoReviewSignals | null
   matched: RecipeArea[]
   unmapped: string[]
@@ -101,15 +103,17 @@ export async function diffSnapshot(repoPath: string, pr: Pick<PrSnapshot, "numbe
   const recipe = activeRecipe(repoPath)
   const numstat = await numstatOf(repoPath, pr.baseRefName, pr.head)
   const changed = numstat ? numstat.map((entry) => entry.path) : null
+  // a rename belongs to the area it left as well as the one it joined
+  const touched = numstat ? numstat.flatMap((entry) => (entry.from ? [entry.from, entry.path] : [entry.path])) : null
   // an unreadable diff matches no areas: the reviewer is told so and reads the diff itself
-  const { matched, unmapped } = recipe && changed ? matchAreas(recipe.areas, changed) : { matched: [], unmapped: changed ?? [] }
+  const { matched, unmapped } = recipe && touched ? matchAreas(recipe.areas, touched) : { matched: [], unmapped: changed ?? [] }
   const settings = recipeSettings(repoPath)
   const signals = numstat
     ? signalsOf(numstat, {
       areas: matched.length, unmapped: recipe ? unmapped.length : 0, mapped: (recipe?.areas.length ?? 0) > 0, sensitive: settings.sensitive, docs: settings.docs,
     })
     : null
-  return { changed, signals, matched, unmapped: recipe ? unmapped : [] }
+  return { changed, touched, signals, matched, unmapped: recipe ? unmapped : [] }
 }
 
 /**
@@ -134,7 +138,10 @@ export async function planRound(start: ReviewerStart, input: {
   const { round } = createPanelRound({
     taskId: author.id, workflowId: input.workflowId, pr: pr.number, head: pr.head, base: pr.baseRefName, round: input.round, counted: input.counted,
     recipeVersion: recipe ? await recipeVersion(author.repo_path) : null, tier, signals: snapshot.signals, agents, carried: input.carried,
-    required: recipe ? requiredAreas(snapshot.matched, snapshot.changed, recipeSettings(author.repo_path).docs) : [],
+    // an unreadable diff keeps the floor: every area that asks for a capture needs one
+    required: !recipe ? [] : snapshot.touched === null
+      ? recipe.areas.filter((area) => area.evidence === "screenshot").map((area) => area.name)
+      : requiredAreas(snapshot.matched, snapshot.touched, recipeSettings(author.repo_path).docs),
   })
   roundSnapshots.set(round.id, snapshot)
   for (const id of roundSnapshots.keys()) if (roundSnapshots.size > KEPT_SNAPSHOTS) roundSnapshots.delete(id)

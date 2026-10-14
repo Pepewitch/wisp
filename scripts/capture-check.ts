@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { inflateSync } from "node:zlib";
 
 process.env.WISP_HOME = mkdtempSync(join(tmpdir(), "wisp-capture-check-"));
-const { capturePage, CaptureFailure, MAX_SIDE_PX, MAX_SHOT_BYTES, VIEWPORTS } = await import("../wispd/src/capture/capture");
+const { capturePage, CaptureFailure, imageSize, MAX_SIDE_PX, MAX_SHOT_BYTES, VIEWPORTS } = await import("../wispd/src/capture/capture");
 const { BROWSER_DIR, findChrome } = await import("../wispd/src/capture/chrome");
 
 const found = findChrome(process.env.CHROME_PATH);
@@ -41,6 +41,8 @@ const app = Bun.serve({
     if (path === "/missing") return new Response("gone", { status: 404 });
     if (path === "/redirect") return Response.redirect(`http://127.0.0.1:${outside.port}/`, 302);
     if (path === "/tall") return html(`<div style="height:20000px;background:linear-gradient(red,blue)"></div>`);
+    if (path === "/below") return html(`<div style="height:3000px"></div><div id="box" style="width:300px;height:200px;background:rgb(0,0,200)"></div>`);
+    if (path === "/timer") return html(`<p>soon gone</p><script>setTimeout(() => { location.href = "/missing" }, 200)</script>`);
     if (path === "/reach") {
       return html(`<iframe src="http://127.0.0.1:${outside.port}/frame"></iframe><img src="http://127.0.0.1:${outside.port}/i.png">
         <script>fetch("http://127.0.0.1:${outside.port}/f").catch(() => {}); try { new WebSocket("ws://127.0.0.1:${outside.port}/ws") } catch {}</script>`);
@@ -53,6 +55,14 @@ const context = { chromePath: found.path, daemonPort: 1, ports: [], publicAllowe
 const request = (path: string, extra: Partial<Parameters<typeof capturePage>[0]> = {}) => ({
   url: new URL(`${base}${path}`), viewport: VIEWPORTS.desktop, dark: false, selector: null, fullPage: false, waitFor: null, waitMs: 0, script: null, ...extra,
 });
+
+/** A shot's real size, from its encoded header: the limits are about the bytes, not what the engine reports. */
+function decoded(shot: { bytes: Uint8Array; width: number; height: number }): { width: number; height: number } {
+  const size = imageSize(shot.bytes);
+  if (!size) throw new Error("the shot's header could not be read");
+  if (size.width !== shot.width || size.height !== shot.height) throw new Error(`reported ${shot.width}×${shot.height}, but the image is ${size.width}×${size.height}`);
+  return size;
+}
 
 /** The first pixel of a PNG: its first row's first pixel is stored unfiltered whatever the row's filter. */
 function firstPixel(png: Uint8Array): [number, number, number] {
@@ -82,7 +92,8 @@ const checks: [string, () => Promise<void>][] = [
     const shot = await capturePage(request("/", { script: "document.getElementById('go').click()", waitFor: "#done:not([hidden])" }), context);
     const [r, g, b] = firstPixel(shot.bytes);
     if (!(r < 20 && g > 140 && b < 20)) throw new Error(`expected the page green after the click, got rgb(${r}, ${g}, ${b})`);
-    if (shot.width !== 2560 || shot.height !== 1800) throw new Error(`expected 2560×1800, got ${shot.width}×${shot.height}`);
+    const size = decoded(shot);
+    if (size.width !== 2560 || size.height !== 1800) throw new Error(`expected 2560×1800 (1280×900 at scale 2), got ${size.width}×${size.height}`);
   }],
   ["a redirect off the page's port is refused, and the other port sees nothing", async () => {
     const reason = await failure(capturePage(request("/redirect"), context));
@@ -99,13 +110,33 @@ const checks: [string, () => Promise<void>][] = [
   }],
   ["a tall page is cut to the size limits", async () => {
     const shot = await capturePage(request("/tall", { fullPage: true }), context);
-    if (shot.height > MAX_SIDE_PX || shot.width > MAX_SIDE_PX || shot.bytes.length > MAX_SHOT_BYTES || !shot.clipped) {
+    const size = decoded(shot);
+    if (size.height > MAX_SIDE_PX || size.width > MAX_SIDE_PX || shot.bytes.length > MAX_SHOT_BYTES || !shot.clipped) {
       throw new Error(`expected a clipped shot within limits, got ${shot.width}×${shot.height}, ${shot.bytes.length} bytes, clipped ${shot.clipped}`);
     }
   }],
   ["mobile is a phone-sized shot", async () => {
     const shot = await capturePage(request("/", { viewport: VIEWPORTS.mobile }), context);
-    if (shot.width !== 780) throw new Error(`expected 780 px wide, got ${shot.width}`);
+    if (decoded(shot).width !== 780) throw new Error(`expected 780 px wide, got ${decoded(shot).width}`);
+  }],
+  ["an element below the fold is shot as itself, not blank", async () => {
+    const shot = await capturePage(request("/below", { selector: "#box" }), context);
+    const [r, g, b] = firstPixel(shot.bytes);
+    if (!(r < 20 && g < 20 && b > 180)) throw new Error(`expected the blue box, got rgb(${r}, ${g}, ${b})`);
+  }],
+  ["a page that moves to a 404 after loading is not evidence, by script or by timer", async () => {
+    const scripted = await failure(capturePage(request("/", { script: "location.href = '/missing'; await new Promise((r) => setTimeout(r, 500))" }), context));
+    if (scripted !== "http-error") throw new Error(`a scripted move to a 404 gave ${scripted}`);
+    const timed = await failure(capturePage(request("/timer", { waitMs: 1500 }), context));
+    if (timed !== "http-error") throw new Error(`a timed move to a 404 gave ${timed}`);
+  }],
+  ["a page that moves somewhere unopenable is not evidence (Chrome's error page)", async () => {
+    const reason = await failure(capturePage(request("/", { script: "location.href = 'http://127.0.0.1:9/'; await new Promise((r) => setTimeout(r, 800))" }), context));
+    if (reason !== "unreachable" && reason !== "script-error") throw new Error(`a move to a dead port gave ${reason}`);
+  }],
+  ["a --wait-for that never matches is the page's failure, not the machine's", async () => {
+    const reason = await failure(capturePage(request("/", { waitFor: "#never" }), context));
+    if (reason !== "no-element") throw new Error(`expected no-element, got ${reason}`);
   }],
   ["a script that never ends is stopped, and no Chrome or profile is left", async () => {
     const reason = await failure(capturePage(request("/", { script: "await new Promise(() => {})" }), context));
