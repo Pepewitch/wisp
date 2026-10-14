@@ -19,7 +19,7 @@ import { outputImagePath } from "../outputs"
 import { startNextQueuedMessage } from "../runner"
 import { getTask, randomId } from "../store"
 import type { Task } from "../types"
-import { recordWorkflow, seenWake, getWorkflow, type WorkflowRow } from "../workflows/store"
+import { historySays, recordWorkflow, seenWake, getWorkflow, type WorkflowRow } from "../workflows/store"
 import { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
 import { checksGate } from "./gate"
 import type { PrSnapshot } from "./github"
@@ -224,9 +224,15 @@ function escalate(look: ReviewLook, round: RoundRow): void {
   const primary = reviews.find((review) => review.role === "primary")
   if (!primary?.escalated || reviews.some((review) => review.role === "second")) return
   const agent = secondAgent(look.start.cfg, look.start.adapters, look.task.repo_path, { harness: primary.harness, model: primary.model ?? undefined, effort: primary.effort ?? undefined })
-  if (!agent) return
+  // the reason stays with A's review, withheld like its verdict until the round settles
+  const meta = { pr: round.pr, sha: round.head }
+  if (!agent) {
+    const said = `Round ${round.round}: reviewer A asked for a second reviewer, but the second reviewer is off`
+    if (!historySays(look.row.id, said)) recordWorkflow(look.row.id, "review", said, look.now.toISOString(), null, meta)
+    return
+  }
   const added = addSecondReview(round.id, { harness: agent.harness, model: agent.model ?? null, effort: agent.effort ?? null }, look.now)
-  if (added) recordWorkflow(look.row.id, "review", `Round ${round.round}: reviewer A asked for a second reviewer — ${primary.escalated}`, look.now.toISOString(), null, { pr: round.pr, sha: round.head })
+  if (added) recordWorkflow(look.row.id, "review", `Round ${round.round}: reviewer A asked for a second reviewer`, look.now.toISOString(), null, meta)
 }
 
 async function launchPending(look: ReviewLook, round: RoundRow, review: ReviewRow): Promise<string> {

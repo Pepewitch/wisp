@@ -60,11 +60,15 @@ is matched by both its old and its new path. Within one PR a tier only goes up.
    author's branch, and it never commits, pushes or comments on the PR.
 4. **Each reviewer submits its verdict** with `wisp review submit`. Images A
    published with `wisp output add` are attached as evidence. While the round
-   is open, neither reviewer can read the other's verdict.
+   is open, neither reviewer can read the other's verdict: not its words, not
+   even whether it passed (it shows as "Verdict in"), nor why A asked for a
+   second reviewer. Wisp cannot tell a person from a reviewer, so the same holds
+   in the Autopilot tab: A's findings appear once B has ended too.
 5. **Wisp settles the round** once every reviewer has ended, and archives each
    reviewer once its turn ends, or five minutes after its verdict if the turn
-   has not (its transcript stays readable under archived tasks). A reviewer whose round no longer matters (auto-review switched off,
-   the PR closed, the task archived) is stopped and archived the same way.
+   has not (its transcript stays readable under archived tasks). A reviewer
+   whose round no longer matters (auto-review switched off, the PR closed, the
+   task archived) is stopped and archived the same way.
 
 A push while a round runs makes it moot: its reviewers are stopped at once,
 even while the author is still working, and the new head gets a fresh round.
@@ -145,7 +149,8 @@ a security boundary against a hostile agent on the same machine, which already
 holds the daemon's token.
 
 Rounds from before the panel stay as they were: one reviewer, no tier, shown as
-such.
+such. A phase-1 reviewer still at work across the upgrade keeps its token and
+can submit, under the standard 60-minute limit counted from its round's start.
 
 ## The verification recipe
 

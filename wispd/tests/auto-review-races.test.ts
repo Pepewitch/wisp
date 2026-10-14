@@ -139,6 +139,30 @@ describe("a held review goes again on the person's word", () => {
     expect(latest(task.id)).toMatchObject({ round: 1, counted: 0, state: "running" });
   });
 
+  test("with a panel, the re-run after a recipe fix runs only A again: B's pass is kept", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "wisp-review-hold-panel-"));
+    const files = [{ path: "RECIPE.md", content: "# r" }, { path: "areas/web/AREA.md", content: "---\npaths: web/**\nstatus: proven\n---" }];
+    saveDraft(repo, "tfirst", files);
+    await activateDraft(repo, "test");
+    const { clock, launched, ids, task, rt } = setup({ repo, realClock: true, cfg: { ...loadConfig(), repos: [{ path: repo }] } });
+    await pass(rt, task.id, clock);
+    const round = latest(task.id);
+    const second = reviewsOf(round.id).find((review) => review.role === "second")!;
+    verdict(round, { verdict: "inconclusive", cause: "recipe", recipeFeedback: "the dev server was down", recipeArea: "web" });
+    submitVerdict(second.reviewer_task_id!, { token: second.token, verdict: "pass", summary: "Read it all" } as never);
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(3);
+    transition(ids[2]!, "done");
+    saveDraft(repo, ids[2]!, [...files, { path: "areas/web/NOTES.md", content: "start the dev server first" }]);
+    await activateDraft(repo, "web");
+    await pass(rt, task.id, clock);
+    const rerun = latest(task.id);
+    expect(rerun.id).not.toBe(round.id);
+    expect(reviewsOf(rerun.id).map((review) => [review.role, review.state, review.carried_from !== null]))
+      .toEqual([["primary", "running", false], ["second", "pass", true]]);
+    expect(launched).toHaveLength(4);
+  });
+
   test("Resume re-reviews a recipe-held head without a recipe change", async () => {
     const { clock, launched, ids, task, rt } = await held();
     transition(ids[1]!, "done");

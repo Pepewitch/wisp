@@ -70,6 +70,7 @@ export function createPanelRound(input: {
     const id = randomId("r", 12)
     const at = now.toISOString()
     const roles = input.agents.map((agent) => agent.role)
+    // the round's own token is a phase-1 column (NOT NULL): no route accepts it any more, each review carries its own
     db.run(`INSERT INTO auto_review_rounds(id, task_id, workflow_id, pr, head, base, round, counted, token, recipe_version, state,
       tier, signals_json, roles, protocol, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, 2, ?)`,
     [id, input.taskId, input.workflowId, input.pr, input.head, input.base, input.round, input.counted ? 1 : 0, newToken(), input.recipeVersion,
@@ -78,9 +79,9 @@ export function createPanelRound(input: {
       const carried = input.carried?.find((review) => review.role === agent.role && review.state === "pass")
       if (carried) {
         db.run(`INSERT INTO round_reviews(id, round_id, role, protocol, reviewer_task_id, harness, model, effort, token, state, cause, summary,
-          rationale, findings_json, reviewed_json, evidence_json, carried_from, launched_at, created_at, finished_at)
+          rationale, findings_json, reviewed_json, recipe_feedback, recipe_area, evidence_json, escalated, carried_from, launched_at, created_at, finished_at)
           SELECT ?, ?, role, protocol, reviewer_task_id, harness, model, effort, ?, state, cause, summary, rationale, findings_json, reviewed_json,
-          evidence_json, id, launched_at, ?, finished_at FROM round_reviews WHERE id = ?`, [randomId("v", 12), id, newToken(), at, carried.id])
+          recipe_feedback, recipe_area, evidence_json, escalated, id, launched_at, ?, finished_at FROM round_reviews WHERE id = ?`, [randomId("v", 12), id, newToken(), at, carried.id])
         continue
       }
       db.run(`INSERT INTO round_reviews(id, round_id, role, protocol, harness, model, effort, token, state, created_at)
@@ -120,8 +121,10 @@ export function reviewOfTask(taskId: string): ReviewRow | null {
 /** A pending review now has its task: it runs. */
 export function launchedReview(id: string, taskId: string, now = new Date()): boolean {
   return db.transaction(() => {
-    const launched = db.run("UPDATE round_reviews SET reviewer_task_id = ?, state = 'running', launched_at = ? WHERE id = ? AND state = 'pending'",
-      [taskId, now.toISOString(), id]).changes === 1
+    // the task is linked even when the review ended while it was being created, so the sweep still retires it
+    db.run("UPDATE round_reviews SET reviewer_task_id = ? WHERE id = ? AND reviewer_task_id IS NULL", [taskId, id])
+    const launched = db.run("UPDATE round_reviews SET state = 'running', launched_at = ? WHERE id = ? AND state = 'pending'",
+      [now.toISOString(), id]).changes === 1
     // reviewer A's task on the round too, where a client from before the panel looks for it
     if (launched) {
       db.run(`UPDATE auto_review_rounds SET reviewer_task_id = ?
@@ -258,18 +261,23 @@ export function supersedeRound(roundId: string, why: string, now = new Date()): 
   })()
 }
 
+/** The verdicts a reviewer gives; while its round is open, each shows only as "submitted". */
+const VERDICTS = new Set<string>(["pass", "fail", "inconclusive", "recipe"])
+
 /**
- * A review as the API shows it. While its round is still open, a finished
- * review's words are withheld: the other reviewer must not read them before
- * it has spoken.
+ * A review as the API shows it. While its round is still open, a verdict of
+ * this round is withheld, its kind as well as its words (and so is an
+ * escalation's reason): the other reviewer must not read any of it before it
+ * has spoken. A review carried from a settled round is already public.
  */
 export function reviewView(review: ReviewRow, roundOpen: boolean): AutoReviewReview {
-  const withhold = roundOpen
+  const withhold = roundOpen && review.carried_from === null
+  const sealed = withhold && VERDICTS.has(review.state)
   return {
-    id: review.id, role: review.role, agent: { harness: review.harness, model: review.model }, state: review.state,
+    id: review.id, role: review.role, agent: { harness: review.harness, model: review.model }, state: sealed ? "submitted" : review.state,
     summary: withhold ? null : review.summary, rationale: withhold ? null : review.rationale,
     findings: withhold ? [] : findingsOf(review), reviewed: withhold ? [] : parsed<string[]>(review.reviewed_json, []),
-    evidence: withhold ? [] : evidenceOf(review), escalated: review.escalated, carried: review.carried_from !== null,
+    evidence: withhold ? [] : evidenceOf(review), escalated: withhold ? null : review.escalated, carried: review.carried_from !== null,
     reviewerTaskId: review.reviewer_task_id, createdAt: review.created_at, finishedAt: review.finished_at,
   }
 }

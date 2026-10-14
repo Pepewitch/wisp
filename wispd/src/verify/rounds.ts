@@ -71,7 +71,9 @@ export function roundOfReviewer(reviewerTaskId: string): RoundRow | null {
 
 /** The highest tier this PR's rounds have had: within one PR a tier only goes up. */
 export function highestTier(workflowId: string, pr: number): AutoReviewTier | null {
-  const rows = db.query("SELECT DISTINCT tier FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND tier IS NOT NULL").all(workflowId, pr) as { tier: AutoReviewTier }[]
+  // a round whose diff could not be read was deep by default, not by measure: it does not hold later rounds up
+  const rows = db.query("SELECT DISTINCT tier FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND tier IS NOT NULL AND signals_json IS NOT NULL")
+    .all(workflowId, pr) as { tier: AutoReviewTier }[]
   const order: AutoReviewTier[] = ["deep", "standard", "light"]
   return order.find((tier) => rows.some((row) => row.tier === tier)) ?? null
 }

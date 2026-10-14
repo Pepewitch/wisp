@@ -4,6 +4,12 @@ import { maxTier, parseNumstat, signalsOf, tierOf } from "../src/verify/depth";
 const file = (path: string, added = 1, removed = 0) => ({ path, added, removed });
 
 describe("review depth", () => {
+  test("auth and token files are sensitive; words that merely contain them are not", () => {
+    const deep = (path: string) => tierOf(signalsOf([{ path, added: 1, removed: 0 }], { areas: 0 })) === "deep";
+    for (const path of ["src/auth.ts", "lib/auth/index.ts", "src/user-auth.ts", "src/oauth2.ts", "src/api-token.ts", "src/token.ts"]) expect(deep(path)).toBe(true);
+    for (const path of ["src/author.ts", "src/authoring.ts", "src/tokenizer.ts"]) expect(deep(path)).toBe(false);
+  });
+
   test("docs-only and tiny changes are light", () => {
     expect(tierOf(signalsOf([file("README.md", 400, 10), file("docs/guide.md", 50)], { areas: 0 }))).toBe("light");
     expect(tierOf(signalsOf([file("src/a.ts", 10, 5), file("src/b.ts", 3, 1)], { areas: 1 }))).toBe("light");

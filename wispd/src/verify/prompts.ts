@@ -26,7 +26,7 @@ export function relayed(text: string, max = 600): string[] {
 
 const clip = (text: string): string => text.length > INLINE_MAX ? `${text.slice(0, INLINE_MAX)}\n…(cut; run ${COMMAND} verify show to read the rest)` : text
 
-/** The verdict rules, word for word the same for the author's note and the reviewers. */
+/** The verdict rules, word for word the same for every reviewer (the author's note carries the rubric summary instead). */
 export const VERDICT_RULES = [
   "pass: nothing you found should block a merge (notes are fine). The reviewer who verifies also observed every behaviour the change touches working, the way a user would meet it.",
   "fail: at least one blocking finding. Each says what you did, what you saw, and what you expected.",
@@ -167,7 +167,7 @@ const VERDICT_SHAPE = (role: AutoReviewRole): string => JSON.stringify({
   rationale: "why your verdict, in a few sentences",
   reviewed: ["the areas, files and behaviours you reviewed"],
   findings: [{ title: "…", severity: "blocking | note", lens: "correctness | architecture | slop | security | performance | tests | docs" + (role === "primary" ? " | verification" : ""), detail: "what you did, saw, expected", file: "path", line: 1 }],
-  ...(role === "primary" ? { recipeFeedback: "what the recipe got wrong or lacks (optional)", escalate: { reason: "light rounds only: why a second reviewer should look (optional)" } } : {}),
+  ...(role === "primary" ? { recipeFeedback: "what the recipe got wrong or lacks (optional)", escalate: { reason: "only on a light round, where you are the only reviewer: why a second reviewer should look (optional; ignored on other rounds)" } } : {}),
 })
 
 /** A reviewer's first message: who it is, what to review, how to judge, and how to answer. */
@@ -290,7 +290,7 @@ export function authorReviewNote(input: { which: string; hasRecipe: boolean; pro
     ? `It verifies against this project's verification recipe (read it with \`${COMMAND} verify show\`). Verify your change the same way before you finish, and publish screenshots of changed screens with \`${COMMAND} output add\`.`
     : "This project has no verification recipe yet, so the reviewer works out how to run the app from the repository. Verify your change by running it, and publish screenshots of changed screens."
   return [
-    `Auto-review is on for this task: before ${input.which} can merge, a separate reviewer agent runs and checks its head. When the work is ready, commit it, push the branch, and open a pull request if there is not one yet.`,
+    `Auto-review is on for this task: before ${input.which} can merge, separate reviewer agents check its head. When the work is ready, commit it, push the branch, and open a pull request if there is not one yet.`,
     recipe,
     rubricSummary(input.projectRules ?? null),
     "A reviewer's rejection comes back to you with its findings.",

@@ -9,7 +9,7 @@ import { runBounded, READ_TIMEOUT_MS } from "../subprocess"
 export type ReviewTier = "light" | "standard" | "deep"
 
 export interface DiffSignals {
-  /** lines added plus removed, lockfiles and generated files left out; binary files count as one each */
+  /** lines added plus removed, lockfiles left out; binary files count as one each */
   lines: number
   files: number
   /** recipe areas the changed files fall in */
@@ -32,7 +32,8 @@ export interface DiffSignals {
  */
 export const SENSITIVE_GLOBS = [
   "**/migrations/**", "**/*migration*", "**/*.sql",
-  "**/auth/**", "**/*auth*", "**/security/**", "**/*crypto*", "**/*secret*", "**/*token*", "**/*permission*",
+  "**/auth/**", "**/auth.*", "**/auth[-_.]*", "**/*[-_]auth.*", "**/*[-_]auth[-_]*", "**/*oauth*",
+  "**/security/**", "**/*crypto*", "**/*secret*", "**/token.*", "**/tokens.*", "**/*[-_]token*", "**/*permission*",
   ".github/workflows/**", "**/.gitlab-ci.yml", "**/Dockerfile", "**/docker-compose*.yml",
   "**/package.json", "**/Cargo.toml", "**/go.mod", "**/requirements*.txt", "**/pyproject.toml", "**/Gemfile",
   "**/terraform/**", "**/*.tf", "**/infra/**",
@@ -70,14 +71,12 @@ export interface SignalOptions {
   /** the project's own globs (recipe frontmatter `sensitive:` and `docs:`) */
   sensitive?: string[]
   docs?: string[]
-  /** linguist-generated paths (.gitattributes): their lines are not counted */
-  generated?: string[]
 }
 
 /** The signals from one diff's numstat and the areas matched. */
 export function signalsOf(numstat: NumstatEntry[], options: SignalOptions): DiffSignals {
   const sensitiveGlobs = globsOf([...SENSITIVE_GLOBS, ...(options.sensitive ?? [])])
-  const uncounted = globsOf([...LOCKFILES, ...(options.generated ?? [])])
+  const uncounted = globsOf(LOCKFILES)
   const docGlobs = globsOf([...DOC_GLOBS, ...(options.docs ?? [])])
   // a rename is judged by both of its names: moving a migration out of its directory is still a migration change
   const sensitive = numstat.flatMap((entry) => (entry.from ? [entry.from, entry.path] : [entry.path])).filter((path) => matches(sensitiveGlobs, path))

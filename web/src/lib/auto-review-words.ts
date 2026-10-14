@@ -73,12 +73,14 @@ export type ReviewState = AutoReviewReview["state"]
 export const REVIEW_WORD: Record<ReviewState, string> = {
   ...ROUND_WORD,
   pending: "Waiting for a slot",
+  submitted: "Verdict in",
 }
 
 /** A reviewer's dot: a round's, and the faint neutral while it waits for a slot. */
 export const REVIEW_DOT: Record<ReviewState, string> = {
   ...ROUND_DOT,
   pending: "bg-border-strong",
+  submitted: "bg-border-strong",
 }
 
 /** A carried review passed on this head in an earlier round and was not run again. */

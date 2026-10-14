@@ -8,15 +8,15 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { autopilotStatus, autopilotTurnNotes, resumeAutopilot, setAutopilot } from "../src/autopilot/store";
+import { autopilotHistory, autopilotStatus, autopilotTurnNotes, resumeAutopilot, setAutopilot } from "../src/autopilot/store";
 import { loadConfig } from "../src/config";
 import type { NewTaskInput } from "../src/domain/task-create";
 import { AUTO_REVIEW } from "../src/migration-auto-review";
 import { REVIEW_PANEL } from "../src/migration-review-panel";
 import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
 import { submitVerdict, verdictError } from "../src/verify/reviewer";
-import { reviewsOf, reviewTokenFor, reviewView, type ReviewRow } from "../src/verify/reviews";
-import { roundsOf, type RoundRow } from "../src/verify/rounds";
+import { createPanelRound, getReview, launchedReview, reviewsOf, reviewTokenFor, reviewView, supersedeRound, unretiredReviews, type ReviewRow } from "../src/verify/reviews";
+import { highestTier, roundsOf, type RoundRow } from "../src/verify/rounds";
 import { START, created, doneTask, fakeGitHub, forgetTasks, pass, runtime, seed, snapshot } from "./autopilot-harness";
 
 afterEach(forgetTasks);
@@ -113,6 +113,9 @@ describe("who is on the panel", () => {
     submit(roleOf(round, "primary"), { verdict: "pass", escalate: { reason: "it touches session expiry" } });
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(2);
+    // B joins without hearing A's reason, or A's verdict, from the history or the round
+    expect(autopilotHistory(task.id).some((entry) => entry.detail.includes("session expiry"))).toBe(false);
+    expect(reviewView(roleOf(round, "primary"), true).escalated).toBeNull();
     expect(latest(task.id)).toMatchObject({ id: round.id, tier: "standard" });
     expect(state.merges).toHaveLength(0);
     submit(roleOf(round, "second"), { verdict: "pass" });
@@ -141,6 +144,30 @@ describe("who is on the panel", () => {
     const { clock, task, rt } = setup({ second: "off" });
     await pass(rt, task.id, clock);
     expect(reviewsOf(latest(task.id).id).map((review) => review.role)).toEqual(["primary"]);
+  });
+
+  test("an escalation with the second reviewer off is noted once, not dropped in silence", async () => {
+    const { repo, head } = smallRepo();
+    const { clock, task, rt, state } = setup({ repo, head, second: "off" });
+    await pass(rt, task.id, clock);
+    submit(roleOf(latest(task.id), "primary"), { verdict: "pass", escalate: { reason: "it touches session expiry" } });
+    await pass(rt, task.id, clock);
+    await pass(rt, task.id, clock);
+    expect(autopilotHistory(task.id).filter((entry) => entry.detail.includes("the second reviewer is off"))).toHaveLength(1);
+    expect(state.merges).toHaveLength(1);
+  });
+
+  test("a round whose diff could not be read does not hold later rounds at deep", () => {
+    const author = doneTask();
+    const round = (tier: "deep" | "light", signals: boolean) => createPanelRound({
+      taskId: author.id, workflowId: "w-ratchet", pr: 7, head: "b".repeat(40), base: "main", round: 1, counted: true, recipeVersion: null, tier,
+      signals: signals ? { lines: 2, files: 1, areas: 0, unmapped: 0, sensitive: [], testsTouched: false, docsOnly: false } : null,
+      agents: [{ role: "primary", harness: "fake", model: null, effort: null }],
+    })
+    round("deep", false);
+    expect(highestTier("w-ratchet", 7)).toBeNull();
+    round("light", true);
+    expect(highestTier("w-ratchet", 7)).toBe("light");
   });
 });
 
@@ -231,8 +258,23 @@ describe("tokens and independence", () => {
     submit(a, { verdict: "fail", findings: [blocker("Secret in the log")] });
     expect(reviewTokenFor(a.reviewer_task_id!)).toBeNull();
     expect(() => submit(roleOf(round, "second"), { verdict: "pass", token: a.token })).toThrow("does not match");
-    const seen = reviewView(roleOf(round, "primary"), true);
-    expect(seen).toMatchObject({ state: "fail", summary: null, findings: [] });
+    // not even the kind of verdict: "A: fail" would anchor B as surely as its words
+    expect(reviewView(roleOf(round, "primary"), true)).toMatchObject({ state: "submitted", summary: null, findings: [], finishedAt: expect.any(String) });
+    expect(reviewView(roleOf(round, "primary"), false)).toMatchObject({ state: "fail", summary: "Checked it" });
+  });
+
+  test("a review that ended while its task was being created still has its task linked, so the sweep retires it", () => {
+    const author = doneTask();
+    const { round, reviews } = createPanelRound({
+      taskId: author.id, workflowId: "w-race", pr: 1, head: "a".repeat(40), base: "main", round: 1, counted: true, recipeVersion: null,
+      tier: "standard", signals: null, agents: [{ role: "primary", harness: "fake", model: null, effort: null }],
+    });
+    supersedeRound(round.id, "auto-review stopped for this task");
+    const reviewer = createTask({ id: newTaskId(), title: "late reviewer", repo_path: "/fixture/repo", harness: "fake", model: null, slot: freeSlot() });
+    created.push(reviewer.id);
+    expect(launchedReview(reviews[0]!.id, reviewer.id)).toBe(false);
+    expect(getReview(reviews[0]!.id)).toMatchObject({ state: "superseded", reviewer_task_id: reviewer.id });
+    expect(unretiredReviews(new Date().toISOString()).map((review) => review.id)).toContain(reviews[0]!.id);
   });
 });
 

@@ -73,8 +73,8 @@ export interface AutoReviewReview {
   id: string
   role: AutoReviewRole
   agent: { harness: string; model: string | null }
-  /** pending: waiting for a task slot to start; running; or how it ended */
-  state: AutoReviewRoundState | "pending"
+  /** pending: waiting for a task slot to start; running; submitted: it gave a verdict this still-open round withholds; or how it ended */
+  state: AutoReviewRoundState | "pending" | "submitted"
   summary: string | null
   rationale: string | null
   findings: AutoReviewFinding[]
