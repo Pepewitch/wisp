@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BROWSER_DIR, isCaptureChrome, sweepCaptureBrowsers } from "../src/capture/chrome";
+import { servedFrom } from "../src/capture/served-from";
 import { processGroupAlive } from "../src/process-tree";
 
 /** A disposable process group leader; `profile` puts the capture browser's flag on its command line. */
@@ -37,5 +39,20 @@ describe("the boot sweep of capture browsers", () => {
       stranger.kill();
       await stranger.exited;
     }
+  });
+});
+
+describe("where a captured page was served from", () => {
+  test("a listener running in the worktree is the worktree's; anywhere else is elsewhere; a closed port is unknown", async () => {
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("ok") });
+    try {
+      // this test process is the listener: its working directory decides
+      expect(await servedFrom(server.port, process.cwd())).toBe("worktree");
+      expect(await servedFrom(server.port, mkdtempSync(join(tmpdir(), "wisp-not-the-worktree-")))).toBe("elsewhere");
+      expect(await servedFrom(server.port, null)).toBe("unknown");
+    } finally {
+      server.stop(true);
+    }
+    expect(await servedFrom(server.port, process.cwd())).toBe("unknown");
   });
 });

@@ -124,7 +124,10 @@ async function serve(client: Socket, policy: ReachPolicy, resolve: Resolve, refu
       client.write("HTTP/1.1 200 Connection Established\r\n\r\n")
     } else {
       // origin-form to the server, and one request per connection: a later
-      // request on a reused connection could name another host
+      // request on a reused connection could name another host. An upstream
+      // that ignores Connection: close could still be sent such a request,
+      // but only that already-allowed upstream: nothing reaches a refused one,
+      // so the client side is not cut (that would mean parsing request bodies)
       upstream.write(originForm(request.head, target.path))
     }
     if (request.rest.length > 0) upstream.write(request.rest)
