@@ -8,7 +8,7 @@ import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
-import type { ApiTask, ConversationDetail, ProjectVerifyAgent, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SendWhen, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
+import type { ApiTask, ConversationDetail, ProjectVerifyAgent, ProjectVerifySecond, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SendWhen, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
 
 /**
  * Every WRITE the app makes, one hook each — the mirror of queries.ts.
@@ -436,6 +436,12 @@ export interface SaveProjectBody {
    * Sent only to a daemon that advertises `features.autoReview`.
    */
   verify?: ProjectVerifyAgent | null;
+  /**
+   * The second reviewer: an agent, "off", or null (the same agent as the
+   * reviewer). Its own patch key, sent only when it changed and only to a
+   * daemon that advertises `features.reviewPanel`.
+   */
+  verifySecond?: ProjectVerifySecond;
 }
 
 /**

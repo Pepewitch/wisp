@@ -62,6 +62,11 @@ export function recordWorkflow(id: string, kind: string, detail: string, at: str
     SELECT id FROM workflow_history WHERE workflow_id = ? AND kind ${bucket} ORDER BY id DESC LIMIT ?)`,
   [id, id, bucket.startsWith("IN") ? DURABLE_HISTORY_LIMIT : HISTORY_LIMIT]);
 }
+/** Whether a workflow's history already says this, word for word: for a note that should appear once. */
+export function historySays(id: string, detail: string): boolean {
+  return db.query("SELECT 1 FROM workflow_history WHERE workflow_id = ? AND detail = ? LIMIT 1").get(id, detail) !== null;
+}
+
 export function announceWorkflow(taskId: string): void { emit({ type: "workflow", taskId }); }
 
 export function createWorkflow(taskId: string, def: WorkflowDefinition, params: WorkflowParams, now = new Date()): Workflow {

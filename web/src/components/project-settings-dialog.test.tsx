@@ -253,6 +253,65 @@ describe("project settings verification", () => {
     expect(calls.find((call) => call.path === "/api/projects")!.body).toMatchObject({ verify: { harness: "claude", model: "sonnet-5" } })
   })
 
+  describe("the second reviewer", () => {
+    const PANEL = { autoReview: true, reviewPanel: true }
+    const saved = async (calls: Call[]) => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }))
+      await waitFor(() => expect(calls.some((call) => call.path === "/api/projects" && call.method === "POST")).toBe(true))
+      return calls.find((call) => call.path === "/api/projects")!.body
+    }
+
+    it("is absent without features.reviewPanel, and Save never sends verifySecond", async () => {
+      const calls = stubVerification({ ...STATUS_NONE, second: "off" })
+      mount(<ProjectSettingsSpecimen project={{ ...REVIEWABLE, verifySecond: "off" }} />)
+      expect(await screen.findByRole("button", { name: "Reviewer agent" })).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Second reviewer" })).toBeNull()
+      const body = await saved(calls)
+      expect(body).toHaveProperty("verify")
+      expect(body).not.toHaveProperty("verifySecond")
+    })
+
+    it("shows the daemon's choice, and Save leaves it alone until a person picks one", async () => {
+      const calls = stubVerification({ ...STATUS_NONE, second: { harness: "claude", model: "sonnet-5", effort: null } }, PANEL)
+      mount(<ProjectSettingsSpecimen project={REVIEWABLE} />)
+      expect(await screen.findByRole("button", { name: "Second reviewer" })).toHaveTextContent("claude · sonnet-5")
+      expect(await saved(calls)).not.toHaveProperty("verifySecond")
+    })
+
+    it("saves Off as \"off\"", async () => {
+      const calls = stubVerification(STATUS_NONE, PANEL)
+      mount(<ProjectSettingsSpecimen project={{ ...REVIEWABLE, verifySecond: null }} />)
+      const picker = await screen.findByRole("button", { name: "Second reviewer" })
+      expect(picker).toHaveTextContent("Same agent as the reviewer")
+      fireEvent.click(picker)
+      fireEvent.click(await screen.findByRole("menuitemradio", { name: "Off — one reviewer" }))
+      await waitFor(() => expect(screen.getByRole("button", { name: "Second reviewer" })).toHaveTextContent("Off — one reviewer"))
+      expect(await saved(calls)).toMatchObject({ verifySecond: "off" })
+    })
+
+    it("saves a chosen agent", async () => {
+      const calls = stubVerification({ ...STATUS_NONE, second: "off" }, PANEL)
+      mount(<ProjectSettingsSpecimen project={{ ...REVIEWABLE, verifySecond: "off" }} />)
+      const picker = await screen.findByRole("button", { name: "Second reviewer" })
+      await waitFor(() => expect(picker).toHaveTextContent("Off — one reviewer"))
+      fireEvent.click(picker)
+      fireEvent.click(await screen.findByRole("menuitemradio", { name: /sonnet-5/ }))
+      await waitFor(() => expect(screen.getByRole("button", { name: "Second reviewer" })).toHaveTextContent("claude · sonnet-5"))
+      expect(await saved(calls)).toMatchObject({ verifySecond: { harness: "claude", model: "sonnet-5" } })
+    })
+
+    it("saves Same agent as the reviewer as null, which clears the choice", async () => {
+      const calls = stubVerification({ ...STATUS_NONE, second: "off" }, PANEL)
+      mount(<ProjectSettingsSpecimen project={{ ...REVIEWABLE, verifySecond: "off" }} />)
+      const picker = await screen.findByRole("button", { name: "Second reviewer" })
+      await waitFor(() => expect(picker).toHaveTextContent("Off — one reviewer"))
+      fireEvent.click(picker)
+      fireEvent.click(await screen.findByRole("menuitemradio", { name: "Same agent as the reviewer" }))
+      await waitFor(() => expect(screen.getByRole("button", { name: "Second reviewer" })).toHaveTextContent("Same agent as the reviewer"))
+      expect(await saved(calls)).toMatchObject({ verifySecond: null })
+    })
+  })
+
   it("Activate draft activates it, and a refused recipe task says why inline", async () => {
     const calls = stubVerification(STATUS_DRAFT, { autoReview: true }, 409)
     mount(<ProjectSettingsSpecimen project={REVIEWABLE} />)

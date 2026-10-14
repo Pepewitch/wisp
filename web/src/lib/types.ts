@@ -294,6 +294,12 @@ export interface RepoInfo {
    * agent. Absent from a daemon older than auto-review.
    */
   verify?: ProjectVerifyAgent | null;
+  /**
+   * The second reviewer on auto-review's panel: an agent, "off" (one reviewer
+   * always), or null for the same agent as the reviewer. Absent from a daemon
+   * without `features.reviewPanel`.
+   */
+  verifySecond?: ProjectVerifySecond;
   /** The sidebar's summary of the project's verification recipe. Absent from a daemon older than auto-review. */
   verification?: VerificationSummary;
 }
@@ -304,6 +310,9 @@ export interface ProjectVerifyAgent {
   model?: string;
   effort?: string;
 }
+
+/** The second reviewer as POST /api/projects saves it: an agent, "off", or null (the same agent as the reviewer). */
+export type ProjectVerifySecond = ProjectVerifyAgent | "off" | null;
 
 /** `verification` on a GET /api/repos entry: enough for the sidebar; the full status is GET /api/projects/verification. */
 export interface VerificationSummary {
@@ -419,6 +428,12 @@ export interface HarnessesResponse {
      * `autoReview` on the autopilot routes, and /api/projects/verification.
      */
     autoReview?: boolean;
+    /**
+     * Auto-review's panel: rounds carry a tier, its signals and one review per
+     * reviewer (A runs the app, B reads the code), and a project saves a
+     * second reviewer (`verifySecond`). Absent: rounds are drawn as phase 1.
+     */
+    reviewPanel?: boolean;
   };
 }
 

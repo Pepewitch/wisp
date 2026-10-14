@@ -4,6 +4,9 @@
  */
 import type { Migration } from "./migrations";
 
+// migration 24, listed beside its parent so the ledger stays inside its size limit
+export { REVIEW_PANEL } from "./migration-review-panel";
+
 export const AUTO_REVIEW: Migration = {
   id: 23,
   name: "auto-review",

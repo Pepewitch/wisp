@@ -4,7 +4,7 @@
  * `submit` is what a reviewer agent runs, so every answer is one short line,
  * and a mistake in its JSON names the field so it can fix it once.
  */
-import type { AutoReviewRound, AutoReviewRoundsResponse } from "../../shared/api/auto-review"
+import type { AutoReviewReview, AutoReviewRound, AutoReviewRoundsResponse } from "../../shared/api/auto-review"
 import type { Flags } from "./cli-args"
 import { api, CliApiError, daemonRequest, exitApi } from "./cli-api"
 import { boundedStdin } from "./cli-brief"
@@ -12,11 +12,12 @@ import { print, printError, printJson } from "./cli-print"
 import { wispCommand } from "./command"
 import { controlFree } from "./control-free"
 import { REVIEW_SUBMIT_HELP } from "./cli-review-help"
+import { resolve } from "node:path"
 import { REVIEW_TOKEN_ENV } from "./turn-input"
 
 const COMMAND = wispCommand()
 
-export const REVIEW_USAGE = `usage: ${COMMAND} review show <task> [--round <n>] [--pr <n> | --all] [--json] | ${COMMAND} review submit --stdin`
+export const REVIEW_USAGE = `usage: ${COMMAND} review show <task> [--round <n>] [--pr <n> | --all] [--json] | ${COMMAND} review rubric [--project <path>] | ${COMMAND} review submit --stdin`
 
 
 const STDIN_LIMIT_BYTES = 64 * 1024
@@ -36,10 +37,16 @@ const oneLine = (text: string, max: number): string => {
 export function formatRound(round: AutoReviewRound, full: boolean): string {
   const head = `round ${round.round}${round.counted ? "" : " (re-run)"} · PR #${round.pr} · ${round.head.slice(0, 7)} · ${round.state}`
   const lines = [head]
-  if (round.summary) lines.push(`  ${full ? controlFree(round.summary) : oneLine(round.summary, 160)}`)
+  if (round.tier) lines[0] += ` · ${round.tier}${round.legacy ? "" : " review"}`
+  for (const review of round.reviews ?? []) {
+    const who = review.role === "primary" ? "A" : "B"
+    lines.push(`  ${who} ${controlFree(review.agent.harness)}${review.agent.model ? ` ${controlFree(review.agent.model)}` : ""}: ${review.state}${review.carried ? " (kept)" : ""}${review.summary ? ` — ${oneLine(review.summary, 140)}` : ""}`)
+  }
+  if (round.summary && !round.reviews?.length) lines.push(`  ${full ? controlFree(round.summary) : oneLine(round.summary, 160)}`)
   if (full) {
     for (const [index, finding] of round.findings.entries()) {
-      lines.push(`  ${index + 1}. ${oneLine(finding.title, 200)}${finding.file ? ` (${controlFree(finding.file)}${finding.line ? `:${finding.line}` : ""})` : ""}`)
+      const tag = [finding.severity, finding.lens, finding.by ? `reviewer ${finding.by === "primary" ? "A" : "B"}` : null].filter(Boolean).join(", ")
+      lines.push(`  ${index + 1}. ${tag ? `[${tag}] ` : ""}${oneLine(finding.title, 200)}${finding.file ? ` (${controlFree(finding.file)}${finding.line ? `:${finding.line}` : ""})` : ""}`)
       if (finding.detail) lines.push(...controlFree(finding.detail).split("\n").map((line) => `     ${line}`))
     }
     if (round.recipeFeedback) lines.push(`  recipe${round.recipeArea ? ` (${round.recipeArea})` : ""}: ${controlFree(round.recipeFeedback)}`)
@@ -83,8 +90,8 @@ async function submit(flags: Flags): Promise<never> {
   }
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) say("Verdict not sent: stdin must be one JSON object.", 1)
   try {
-    const round = await daemonRequest(`/api/tasks/${task}/auto-review/verdict`, "POST", JSON.stringify({ ...payload as object, token })) as AutoReviewRound
-    say(`Verdict recorded: round ${round.round} ${round.state}, ${round.evidence.length} image${round.evidence.length === 1 ? "" : "s"} attached. End your turn now.`, 0)
+    const review = await daemonRequest(`/api/tasks/${task}/auto-review/verdict`, "POST", JSON.stringify({ ...payload as object, token })) as AutoReviewReview
+    say(`Verdict recorded: ${review.state}, ${review.evidence.length} image${review.evidence.length === 1 ? "" : "s"} attached. End your turn now.`, 0)
   } catch (error) {
     if (error instanceof CliApiError && error.status === 400) say(`Verdict not sent: ${error.message}. See \`${COMMAND} review submit --help\`, fix it, and submit once more.`, 1)
     if (error instanceof CliApiError && error.status === 409) say(`Verdict not recorded: ${error.message}. Stop here.`, 0)
@@ -92,9 +99,18 @@ async function submit(flags: Flags): Promise<never> {
   }
 }
 
+async function rubric(flags: Flags): Promise<void> {
+  const named = typeof flags.project === "string" ? flags.project : process.env.WISP_REPO
+  const top = named ? null : Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], { stderr: "ignore" })
+  const project = resolve(named ?? (top && top.exitCode === 0 ? top.stdout.toString().trim() : process.cwd()))
+  const { text } = await api(`/api/projects/verification/rubric?${new URLSearchParams({ path: project })}`) as { text: string }
+  print(controlFree(text))
+}
+
 export async function reviewCommand(positional: string[], flags: Flags): Promise<void> {
   const [verb] = positional
   if (verb === "show") return show(positional, flags)
+  if (verb === "rubric") return rubric(flags)
   if (verb === "submit") return submit(flags)
   say(REVIEW_USAGE, 2)
 }

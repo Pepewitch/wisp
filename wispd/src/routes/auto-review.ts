@@ -7,6 +7,7 @@
  * POST /api/projects/verification/activate        make the newest draft the active recipe: { path }
  * GET  /api/projects/verification/files?path=[&file=][&draft=<task>]
  *                                                 one recipe file, or the list (active, or a task's draft)
+ * GET  /api/projects/verification/rubric?path=     the review rubric with the project's own rules
  * GET  /api/projects/verification/checkout?path=[&draft=<task>]
  *                                                 every file, for `wisp verify checkout`
  * POST /api/projects/verification/draft           a recipe task saves its proposal: { task, files }
@@ -24,17 +25,15 @@ import { getTask, listTasks } from "../store"
 import { requestActor, TASK_HEADER } from "../task-audit"
 import { announceWorkflow, recordWorkflow } from "../workflows/store"
 import { projectName } from "../verify/project"
-import { activateDraft, readRecipeFile, recipeFiles, RecipeError, saveDraft, type RecipeFile } from "../verify/recipe"
-import { startRecipeTask, submitVerdict, VerdictError, verdictError } from "../verify/reviewer"
+import { activateDraft, readRecipeFile, RECIPE_INDEX, recipeFiles, RecipeError, reviewRulesSection, saveDraft, type RecipeFile } from "../verify/recipe"
+import { rubricText } from "../verify/rubric"
+import { startRecipeTask, submitVerdict, VerdictError, verdictContextOf, verdictError } from "../verify/reviewer"
+import { reviewsOf, reviewView } from "../verify/reviews"
 import { recipeComplaints, roundsOf, roundView } from "../verify/rounds"
 import { busyVerifyTask, draftTaskExists, verificationStatus, verifyTaskOf } from "../verify/status"
 import { err, json, jsonObjectBody } from "./http"
 
 export const AUTO_REVIEW_PATH = /^\/api\/tasks\/([a-z0-9]+)\/auto-review(?:\/(verdict))?$/
-
-const VERDICT_WORDS: Record<string, string> = {
-  pass: "passed", fail: "rejected", inconclusive: "could not verify", recipe: "could not follow the recipe",
-}
 
 export async function autoReviewRoute(req: Request, path: string): Promise<Response> {
   const match = path.match(AUTO_REVIEW_PATH)!
@@ -42,25 +41,31 @@ export async function autoReviewRoute(req: Request, path: string): Promise<Respo
   if (!getTask(taskId)) return err("Task not found", 404)
   if (!match[2]) {
     if (req.method !== "GET") return err("Method not allowed", 405)
-    return json<AutoReviewRoundsResponse>({ rounds: roundsOf(taskId).map(roundView) })
+    return json<AutoReviewRoundsResponse>({
+      // while a round runs, a reviewer's words are withheld: the other reviewer must not read them first
+      rounds: roundsOf(taskId).map((round) => roundView(round, reviewsOf(round.id).map((review) => reviewView(review, round.state === "running")))),
+    })
   }
   if (req.method !== "POST") return err("Method not allowed", 405)
   const body = await jsonObjectBody(req)
   if (body instanceof Response) return body
-  const invalid = verdictError(body)
+  // a reviewer answers in the shape its prompt taught it: phase-1 reviewers still running keep theirs
+  const invalid = verdictError(body, verdictContextOf(taskId) ?? undefined)
   if (invalid) return err(invalid, 400)
   try {
-    const round = submitVerdict(taskId, body as unknown as AutoReviewVerdictBody)
-    const at = round.finished_at ?? new Date().toISOString()
-    recordWorkflow(round.workflow_id, "review", `Round ${round.round}: the reviewer ${VERDICT_WORDS[round.state] ?? round.state} — ${round.summary ?? ""}`, at, null, { pr: round.pr, sha: round.head })
+    const { round, review } = submitVerdict(taskId, body as unknown as AutoReviewVerdictBody)
+    const at = review.finished_at ?? new Date().toISOString()
+    const who = review.role === "primary" ? "A" : "B"
+    // only that it arrived: what a reviewer found stays out of shared history until the round settles
+    recordWorkflow(round.workflow_id, "review", `Round ${round.round}: reviewer ${who} gave its verdict`, at, null, { pr: round.pr, sha: round.head })
     announceWorkflow(round.task_id)
     checkAutopilotSoon(round.task_id)
     // a recipe complaint changes the project's verification state
-    if (round.state === "recipe") {
+    if (review.state === "recipe") {
       const author = getTask(round.task_id)
       if (author) emit({ type: "project", action: "update", path: resolve(author.repo_path) })
     }
-    return json(roundView(round))
+    return json(reviewView(review, false))
   } catch (error) {
     if (error instanceof VerdictError) return err(error.message, error.status)
     throw error
@@ -123,6 +128,11 @@ export function verificationRoute(
     return verificationStatus(project, cfg).then((status) => json(status))
   }
   if (sub === "/files" && method === "GET") return fileRoute(url)
+  if (sub === "/rubric" && method === "GET") {
+    const project = projectPath(url.searchParams.get("path"))
+    if (project instanceof Response) return project
+    return json({ text: rubricText(reviewRulesSection(readRecipeFile(project, RECIPE_INDEX))) })
+  }
   if (sub === "/checkout" && method === "GET") {
     const project = projectPath(url.searchParams.get("path"))
     if (project instanceof Response) return project

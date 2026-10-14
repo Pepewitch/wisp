@@ -128,6 +128,75 @@ export function parseAreaFrontmatter(text: string): { paths: string[]; status: "
 
 const unquote = (value: string): string => value.trim().replace(/^["']|["']$/g, "").trim()
 
+/** A glob list from frontmatter, or the reason it cannot be used. */
+function globList(lines: string[], key: string): string[] | string {
+  const out: string[] = []
+  let listing = false
+  for (const raw of lines) {
+    const line = raw.trimEnd()
+    const item = line.match(/^\s*-\s+(.+)$/)
+    if (listing && item) { out.push(unquote(item[1]!)); continue }
+    listing = false
+    const pair = line.match(/^([A-Za-z]+):\s*(.*)$/)
+    if (!pair || pair[1] !== key) continue
+    if (pair[2]!.trim() === "") listing = true
+    else out.push(...pair[2]!.replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean))
+  }
+  const bad = out.find((glob) => glob.startsWith("/") || glob.split("/").includes(".."))
+  return bad ? `${key}: ${bad} is outside the repository` : out
+}
+
+export interface RecipeSettings {
+  /** globs whose changes always get a deep review */
+  sensitive: string[]
+  /** globs that count as documentation (a docs-only change is light) */
+  docs: string[]
+}
+
+/** RECIPE.md's optional frontmatter: `sensitive:` and `docs:` glob lists. */
+export function parseRecipeFrontmatter(text: string): RecipeSettings | string {
+  const lines = text.replace(/\r\n/g, "\n").split("\n")
+  if (lines[0]?.trim() !== "---") return { sensitive: [], docs: [] }
+  const closing = lines.findIndex((line, index) => index > 0 && line.trim() === "---")
+  if (closing < 0) return "has frontmatter with no closing '---' line"
+  const body = lines.slice(1, closing)
+  const sensitive = globList(body, "sensitive")
+  if (typeof sensitive === "string") return sensitive
+  const docs = globList(body, "docs")
+  if (typeof docs === "string") return docs
+  return { sensitive, docs }
+}
+
+/** The project's settings from the active recipe; none when it has no recipe or they cannot be read. */
+export function recipeSettings(repoPath: string): RecipeSettings {
+  const index = readRecipeFile(repoPath, RECIPE_INDEX)
+  const parsed = index ? parseRecipeFrontmatter(index) : null
+  return parsed && typeof parsed !== "string" ? parsed : { sensitive: [], docs: [] }
+}
+
+/** How large a `## Review rules` section may be: the rules ride in every reviewer's prompt. */
+export const REVIEW_RULES_MAX_BYTES = 8 * 1024
+
+/** A `## Review rules` section (the first one, to the next `## ` heading), or null. */
+export function reviewRulesSection(text: string | null): string | null {
+  if (!text) return null
+  const lines = text.replace(/\r\n/g, "\n").split("\n")
+  const start = lines.findIndex((line) => /^##\s+review rules\s*$/i.test(line.trim()))
+  if (start < 0) return null
+  const end = lines.findIndex((line, index) => index > start && /^##\s/.test(line))
+  const body = lines.slice(start + 1, end < 0 ? undefined : end).join("\n").trim()
+  return body === "" ? null : body
+}
+
+/** The text with its `## Review rules` section taken out (it is given to reviewers once, on its own). */
+export function withoutReviewRules(text: string): string {
+  const lines = text.replace(/\r\n/g, "\n").split("\n")
+  const start = lines.findIndex((line) => /^##\s+review rules\s*$/i.test(line.trim()))
+  if (start < 0) return text
+  const end = lines.findIndex((line, index) => index > start && /^##\s/.test(line))
+  return [...lines.slice(0, start), ...(end < 0 ? [] : lines.slice(end))].join("\n").trimEnd()
+}
+
 /** Every problem with a set of files, or null when they make a recipe. */
 export function recipeFilesError(files: RecipeFile[]): string | null {
   if (!Array.isArray(files) || files.length === 0) return "a recipe needs at least RECIPE.md"
@@ -157,9 +226,12 @@ export function recipeFilesError(files: RecipeFile[]): string | null {
   }
   for (const file of files) {
     const parts = file.path.split("/")
-    if (parts.length !== 3 || parts[0] !== "areas" || parts[2] !== AREA_INDEX) continue
-    const parsed = parseAreaFrontmatter(file.content)
+    const index = file.path === RECIPE_INDEX
+    if (!index && (parts.length !== 3 || parts[0] !== "areas" || parts[2] !== AREA_INDEX)) continue
+    const parsed = index ? parseRecipeFrontmatter(file.content) : parseAreaFrontmatter(file.content)
     if (typeof parsed === "string") return `${file.path} ${parsed}`
+    const rules = reviewRulesSection(file.content)
+    if (rules && Buffer.byteLength(rules) > REVIEW_RULES_MAX_BYTES) return `${file.path}: its Review rules section is over ${REVIEW_RULES_MAX_BYTES / 1024} KiB`
   }
   return null
 }
@@ -458,6 +530,15 @@ export function matchAreas(areas: RecipeArea[], files: string[]): { matched: Rec
 export async function fetchPullHead(repoPath: string, pr: number): Promise<void> {
   if (!Number.isSafeInteger(pr) || pr < 1) return
   await git(["fetch", "--no-tags", "--quiet", "origin", `+refs/pull/${pr}/head`], repoPath, true).catch(() => {})
+}
+
+/**
+ * Bring the PR's base up to date: a local origin/<base> that lags would put
+ * main's newer commits into the PR's three-dot diff. Best effort.
+ */
+export async function fetchBase(repoPath: string, base: string): Promise<void> {
+  if (base === "" || base.startsWith("-") || base.includes("..") || /\s/.test(base)) return
+  await git(["fetch", "--no-tags", "--quiet", "origin", `+refs/heads/${base}:refs/remotes/origin/${base}`], repoPath, true).catch(() => {})
 }
 
 /**

@@ -112,14 +112,17 @@ push) goes back to the idle agent as a round, at most five per PR; the agent
 signs its GitHub posts so Wisp never feeds them back. See
 [Auto-merge and auto-fix](../../../docs/PR-AUTOPILOT.md).
 
-With auto-review on, each green head of the PR gets a fresh reviewer task in its
-own worktree at that head. It verifies the change against the project's
-verification recipe and submits pass, fail or inconclusive. Nothing merges past
-a head it has not passed. A rejection goes back to the author (with auto-fix) at
+With auto-review on, each green head of the PR gets a review round: reviewer A
+runs the change (the project's verification recipe) and reviews its code;
+on a standard or deep change, reviewer B reviews the code too. Each submits
+pass, fail or inconclusive; nothing merges past a head every reviewer on its
+panel has not passed. Wisp measures the diff to pick the depth (light, standard,
+deep) and reviewers never ask how deep to go. A rejection goes back to the author (with auto-fix) at
 most three rounds per PR. See [Auto-review](../../../docs/AUTO-REVIEW.md).
 
 ```
 wisp review show <task> [--round <n>] [--pr <n> | --all] [--json]   # the current PR's rounds; one in full
+wisp review rubric [--project <path>]            # the rubric reviewers judge by, with the project's rules
 wisp review submit --stdin                       # a reviewer's verdict (wisp review submit --help)
 wisp verify status [project] [--json]            # the project's recipe, a draft, the recipe task
 wisp verify setup|improve|fix [project] [--area <name>] [--note "…"] [--harness <h>] [--model <m>]

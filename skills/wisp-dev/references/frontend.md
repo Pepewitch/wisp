@@ -613,6 +613,10 @@ and the modal says so once at the top rather than four times.
   areas (proven or not, and what a reviewer reported), a waiting draft with
   **Activate draft** (outline: the modal's one primary stays Save), the recipe
   task at work with Open, the **Reviewer agent** (saved with Save as `verify`),
+  the **Second reviewer** under it (only with `features.reviewPanel`: *Same
+  agent as the reviewer* = null, *Off — one reviewer* = `"off"`, or a model
+  from the same list; saved with Save as `verifySecond`, sent only once a
+  person picked one and never to a daemon without the panel),
   and a note with **Set up verification** / **Improve** and a per-area **Fix**.
   A recipe task needs a named agent, so those buttons stay disabled while the
   reviewer is "Each task's own agent", and a muted line beside them says why
@@ -1297,7 +1301,17 @@ PR. Two sections share ONE scroller:
    Auto-fix and Auto-review switch rows (Auto-review only where the daemon
    advertises `features.autoReview`), the current PR's review rounds while
    Auto-review is on (`auto-review-view.tsx`: a dot, the round and its
-   verdict, and an Open action for the reviewer task), then History.
+   verdict, and an Open action for the reviewer task), then History. With
+   `features.reviewPanel` a round also says its tier (`deep review`, muted;
+   its `title` is what Wisp measured from the diff) and lists one row per
+   reviewer under it, A then B: the letter, the agent (`harness · model`), a
+   dot and its words (`Waiting for a slot`, `Kept` for a pass carried from an
+   earlier round on the head, `escalated: <reason>` when a light round's A
+   asked for B), and Open for that reviewer's task, which replaces the
+   round's own. The row's `title` holds the findings, blocking first; there
+   is no red text, because a rejection's dot already carries it. A round from
+   before the panel (`legacy`) keeps its one line and a faint `before the
+   panel`. Without the flag every round is drawn exactly as phase 1.
 
 - **Section headers are 12.5 / 600**, the §4 row size at a heavier weight, so
   they outrank the `Auto-merge` row under them without an eyebrow.

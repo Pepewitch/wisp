@@ -11,6 +11,8 @@ import { taskAudit } from "../src/task-audit";
 import { conversationDetail } from "../src/routes/task-conversation";
 import { hasRunningTurn, interruptTurn, startTurn } from "../src/runner";
 import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
+import { nudgeReviewer } from "../src/verify/reviewer";
+import type { ReviewRow } from "../src/verify/reviews";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000",
@@ -155,6 +157,22 @@ describe("Droid live AskUser and interrupt", () => {
     // ...and the SAME turn carried on to its conclusion — no second turn.
     expect(turnsFor(task.id)).toHaveLength(1);
     expect(turnsFor(task.id)[0]).toMatchObject({ n: 1, status: "done", result: "BOOKED_JAPAN" });
+  });
+
+  test("an auto-review reviewer's question is answered in-protocol: the same turn resumes, nothing queued", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-droid-askuser-"));
+    const answerPath = join(dir, "answers.json");
+    const def = fakeDroid(dir, answerPath);
+    const task = makeTask();
+    startTurn(task, "review this", def, cfg);
+    await until(() => getTask(task.id)?.state === "needs-input");
+    const review = { id: "no-such-review", reviewer_task_id: task.id, nudged: 0 } as ReviewRow;
+    expect(await nudgeReviewer(review, { fake: def }, cfg, true)).toBe(true);
+    await until(() => getTask(task.id)?.state === "done");
+    const reply = JSON.parse(readFileSync(answerPath, "utf8")) as { result: { answers: { answer: string }[] } };
+    expect(reply.result.answers[0]!.answer).toContain("do not ask");
+    expect(turnsFor(task.id)).toHaveLength(1);
+    expect(db.query("SELECT COUNT(*) AS n FROM task_messages WHERE task_id = ?").get(task.id)).toEqual({ n: 0 });
   });
 
   test("the answer route refuses an incomplete answer before recording it, and records a complete one while briefs are off", async () => {

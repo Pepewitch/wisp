@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react"
 
-import type { AutoReviewRound } from "../../../shared/api/auto-review"
+import type { AutoReviewReview, AutoReviewRound, AutoReviewSignals } from "../../../shared/api/auto-review"
 import type { AutopilotHistoryEntry, AutopilotStatus } from "../../../shared/autopilot"
 import { AutopilotView, type AutomationModel, type HistoryLinks } from "@/components/autopilot-pane"
 import { Section } from "@/components/gallery-chrome"
@@ -170,11 +170,11 @@ const H_RICH: AutopilotHistoryEntry[] = [
   e(60 * 26 + 2, "armed", "Auto-merge on, Auto-fix on", null),
 ]
 
-function automationOf(status: AutopilotStatus, history: AutopilotHistoryEntry[] | null, rounds?: AutoReviewRound[]): AutomationModel {
+function automationOf(status: AutopilotStatus, history: AutopilotHistoryEntry[] | null, rounds?: AutoReviewRound[], panel = false): AutomationModel {
   return {
     status, locked: null, pending: false, error: null,
     history: history ? { entries: history, error: null } : null,
-    reviews: rounds ? { rounds, error: null, onOpenTask: noop } : null,
+    reviews: rounds ? { rounds, error: null, onOpenTask: noop, panel } : null,
     onSet: noop, onAct: noop,
   }
 }
@@ -200,6 +200,69 @@ const ROUNDS_SPENT: AutoReviewRound[] = [
   round("8", 3, "b7e1d52ffe", "inconclusive", 4, { summary: "The save toast never appeared, so the change could not be observed." }),
   round("7", 2, "2ac9f10de9", "fail", 30, { summary: "Autosave still races a manual save when the network is slow." }),
   round("6", 1, "4e5f6a7b8c", "error", 70, { summary: null }),
+]
+
+/* ── the review panel: a reviewer per row, A runs the app, B reads the code ── */
+
+const AGENT_A = { harness: "claude", model: "opus-5" }
+const AGENT_B = { harness: "codex", model: "gpt-5.6-luna" }
+
+const review = (id: string, role: AutoReviewReview["role"], state: AutoReviewReview["state"], min: number, over: Partial<AutoReviewReview> = {}): AutoReviewReview => ({
+  id, role, agent: role === "primary" ? AGENT_A : AGENT_B, state, summary: null, rationale: null, findings: [], reviewed: [], evidence: [],
+  escalated: null, carried: false, reviewerTaskId: state === "pending" ? null : `tr${id}`, createdAt: ago(min + 9),
+  finishedAt: state === "pending" || state === "running" ? null : ago(min), ...over,
+})
+
+const DEEP: AutoReviewSignals = {
+  lines: 412, files: 9, areas: 2, unmapped: 0, sensitive: ["db/migrations/0042_save_queue.sql"], testsTouched: true, docsOnly: false,
+}
+const STANDARD: AutoReviewSignals = { lines: 138, files: 5, areas: 1, unmapped: 1, sensitive: [], testsTouched: true, docsOnly: false }
+const LIGHT: AutoReviewSignals = { lines: 22, files: 2, areas: 1, unmapped: 0, sensitive: [], testsTouched: false, docsOnly: false }
+
+/** A deep round under way: A has passed (its words withheld until B speaks), B still reviewing; under it a round from before the panel. */
+const PANEL_DEEP: AutoReviewRound[] = [
+  round("p2", 2, "e1f2a3b4c5d", "running", 1, {
+    tier: "deep", signals: DEEP,
+    reviews: [review("p2a", "primary", "pass", 2), review("p2b", "second", "running", 1)],
+  }),
+  round("p1", 1, "5d2b8aa0c3", "fail", 40, {
+    legacy: true, reviews: [], summary: "Saving twice in one frame still sends two PUTs: the shortcut bypasses the store.",
+  }),
+]
+
+/** B ended without a verdict; the next round on the same head kept A's pass and ran B again, which rejected it. */
+const PANEL_KEPT: AutoReviewRound[] = [
+  round("k2", 2, "9c41e07aa11", "fail", 3, {
+    tier: "standard", signals: STANDARD, summary: "The shortcut path still bypasses the store's guard.",
+    reviews: [
+      review("k1a", "primary", "pass", 20, { carried: true, summary: "Saved by button, shortcut and autosave: one PUT each time." }),
+      review("k2b", "second", "fail", 3, {
+        summary: "The shortcut path still bypasses the store's guard.",
+        findings: [
+          { title: "The shortcut handler calls api.save() directly", file: "web/src/keys.ts", line: 41, severity: "blocking", lens: "correctness", by: "second" },
+          { title: "guardSave() reads like a getter", severity: "note", lens: "slop", by: "second" },
+        ],
+      }),
+    ],
+  }),
+  round("k1", 1, "9c41e07aa11", "error", 20, {
+    tier: "standard", signals: STANDARD,
+    reviews: [
+      review("k1a", "primary", "pass", 20, { summary: "Saved by button, shortcut and autosave: one PUT each time." }),
+      review("k1b", "second", "error", 22),
+    ],
+  }),
+]
+
+/** A light round: A asked for a second opinion, and B waits for a task slot. */
+const PANEL_ESCALATED: AutoReviewRound[] = [
+  round("e1", 1, "4e5f6a7b8c9", "running", 1, {
+    tier: "light", signals: LIGHT,
+    reviews: [
+      review("e1a", "primary", "pass", 1, { escalated: "the two lines change how the session token is refreshed" }),
+      review("e1b", "second", "pending", 0),
+    ],
+  }),
 ]
 
 const REVIEW_OFF: AutopilotStatus = { ...WAITING, autoReview: false, reviewRounds: 0 }
@@ -389,6 +452,25 @@ export function AutopilotTabSpecimen() {
           <div>
             <Caption>Touch</Caption>
             <Panel touch width={390} height={520}><TabPane touch brief={null} automation={automationOf(REVIEWING, null, ROUNDS)} /></Panel>
+          </div>
+        </Frame>
+        <Frame id="autopilot-review-panel" title="Auto-review's panel: a row per reviewer, and the tier"
+          note="On a daemon with features.reviewPanel each round says its tier (deep, standard or light; its title is what Wisp measured from the diff) and lists its reviewers under it: the letter (A runs the app and reviews the code, B reads the code only), the agent, a dot and its words, and Open for that reviewer's task. Kept is a pass carried from an earlier round on the same head; a light round's A may escalate, and a reviewer waiting for a task slot says so. A round from before the panel keeps its one line and a faint hint.">
+          <div>
+            <Caption>A deep round under way, over a round from before the panel</Caption>
+            <Panel height={420}><TabPane brief={null} automation={automationOf(REVIEWING, null, PANEL_DEEP, true)} /></Panel>
+          </div>
+          <div>
+            <Caption>A kept review, and a rejection with findings</Caption>
+            <Panel height={460}><TabPane brief={null} automation={automationOf(REVIEW_QUIET, null, PANEL_KEPT, true)} /></Panel>
+          </div>
+          <div>
+            <Caption>A light round, escalated: B waits for a slot</Caption>
+            <Panel height={360}><TabPane brief={null} automation={automationOf(REVIEWING, null, PANEL_ESCALATED, true)} /></Panel>
+          </div>
+          <div>
+            <Caption>Touch</Caption>
+            <Panel touch width={390} height={560}><TabPane touch brief={null} automation={automationOf(REVIEWING, null, PANEL_DEEP, true)} /></Panel>
           </div>
         </Frame>
         <BriefLines />

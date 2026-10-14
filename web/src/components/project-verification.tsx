@@ -15,7 +15,7 @@ import type { HiddenModels } from "@/lib/model-visibility"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { STATE_DOT, STATE_LABEL } from "@/lib/state"
 import { fromNow } from "@/lib/time"
-import type { HarnessInfo, ProjectVerifyAgent, RepoInfo, TaskState } from "@/lib/types"
+import type { HarnessInfo, ProjectVerifyAgent, ProjectVerifySecond, RepoInfo, TaskState } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 
@@ -41,6 +41,14 @@ export interface VerificationFieldsModel {
   /** the reviewer agent as the form holds it (saved with Save); null = each task's own */
   agent: ProjectVerifyAgent | null
   onAgentChange: (agent: ProjectVerifyAgent | null) => void
+  /**
+   * The second reviewer on auto-review's panel as the form shows it: an
+   * agent, "off", or null (the same agent as the reviewer). Saved with Save.
+   * The picker is drawn only with `onSecondChange`, i.e. on a daemon with
+   * `features.reviewPanel`.
+   */
+  second?: ProjectVerifySecond
+  onSecondChange?: (second: ProjectVerifySecond) => void
   note: string
   onNoteChange: (note: string) => void
   /** the action in flight: `setup`, `improve`, or `fix:<area>` (`fix:` for the whole recipe) */
@@ -66,10 +74,13 @@ export function VerificationSection({
   project,
   agent,
   onAgentChange,
+  second = null,
 }: {
   project: RepoInfo
   agent: ProjectVerifyAgent | null
   onAgentChange: (agent: ProjectVerifyAgent | null) => void
+  /** the second reviewer, on a daemon with the review panel: undefined until a person picks one */
+  second?: { value: ProjectVerifySecond | undefined; onChange: (second: ProjectVerifySecond) => void } | null
 }) {
   const { connectionId } = useDaemonRuntime()
   const status = useProjectVerification(project.path, true)
@@ -122,6 +133,15 @@ export function VerificationSection({
     )
   }
   const pendingStart = start.isPending ? start.variables : undefined
+  // until a person picks one, show what the daemon has: the status's, else the repo entry's
+  const secondShown =
+    second === null
+      ? undefined
+      : second.value !== undefined
+        ? second.value
+        : status.data?.second !== undefined
+          ? secondFromStatus(status.data.second)
+          : project.verifySecond ?? null
 
   return (
     <VerificationFields
@@ -132,6 +152,7 @@ export function VerificationSection({
       hidden={hidden}
       agent={agent}
       onAgentChange={onAgentChange}
+      {...(second ? { second: secondShown, onSecondChange: second.onChange } : {})}
       note={note}
       onNoteChange={setNote}
       starting={pendingStart ? (pendingStart.mode === "fix" ? `fix:${pendingStart.area ?? ""}` : pendingStart.mode) : null}
@@ -143,6 +164,12 @@ export function VerificationSection({
       onOpenTask={openTask}
     />
   )
+}
+
+/** The status's second reviewer (nulls for "its default") as the form holds one. */
+function secondFromStatus(second: VerificationStatus["second"]): ProjectVerifySecond {
+  if (!second || second === "off") return second ?? null
+  return { harness: second.harness, ...(second.model ? { model: second.model } : {}), ...(second.effort ? { effort: second.effort } : {}) }
 }
 
 const AREA_DOT = { attention: "bg-destructive", proven: "bg-state-done", unproven: "bg-border-strong" } as const
@@ -261,12 +288,41 @@ export function VerificationFields(model: VerificationFieldsModel) {
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-3">
           <span className="w-[96px] shrink-0 text-[12px] text-fg-secondary">Reviewer agent</span>
-          <AgentPicker harnesses={model.harnesses} hidden={model.hidden} agent={agent} onChange={model.onAgentChange} />
+          <AgentPicker
+            harnesses={model.harnesses}
+            hidden={model.hidden}
+            agent={agent}
+            fixed={REVIEWER_FIXED}
+            aria-label="Reviewer agent"
+            onChange={(next) => model.onAgentChange(next === "off" ? null : next)}
+          />
         </div>
         <p className="pl-[108px] text-[11px] leading-relaxed text-faint">
-          Reviews each PR head under auto-review, and runs the recipe tasks below. Saved with Save.
+          {model.onSecondChange
+            ? "Reviewer A runs the app and reviews each PR head under auto-review; it also runs the recipe tasks below. Saved with Save."
+            : "Reviews each PR head under auto-review, and runs the recipe tasks below. Saved with Save."}
         </p>
       </div>
+
+      {model.onSecondChange && (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-3">
+            <span className="w-[96px] shrink-0 text-[12px] text-fg-secondary">Second reviewer</span>
+            <AgentPicker
+              harnesses={model.harnesses}
+              hidden={model.hidden}
+              agent={model.second ?? null}
+              fixed={SECOND_FIXED}
+              aria-label="Second reviewer"
+              onChange={model.onSecondChange}
+            />
+          </div>
+          <p className="pl-[108px] text-[11px] leading-relaxed text-faint">
+            Reviewer B reads the code only, beside A on standard and deep rounds. A different agent gives a real
+            second opinion; Off makes every round single-reviewer. Saved with Save.
+          </p>
+        </div>
+      )}
 
       <textarea
         value={model.note}
@@ -318,42 +374,69 @@ function StateLine({ dot, text, after }: { dot: string; text: string; after: str
 }
 
 const encode = (harness: string, model: string) => `${harness}\t${model}`
-const OWN = "@@own"
 
-/** Who reviews: "Each task's own agent" (null), or one harness and model, from the composer's model list. */
+/** A choice above the model list: the one that names no agent of its own. */
+interface FixedChoice {
+  key: string
+  value: "off" | null
+  label: string
+}
+
+const REVIEWER_FIXED: FixedChoice[] = [{ key: "@@own", value: null, label: "Each task's own agent" }]
+const SECOND_FIXED: FixedChoice[] = [
+  { key: "@@same", value: null, label: "Same agent as the reviewer" },
+  { key: "@@off", value: "off", label: "Off — one reviewer" },
+]
+
+/**
+ * Who reviews: one of the fixed choices ("Each task's own agent"; for the
+ * second reviewer "Same agent as the reviewer" and "Off"), or one harness and
+ * model from the composer's model list.
+ */
 function AgentPicker({
   harnesses,
   hidden,
   agent,
+  fixed,
   onChange,
+  "aria-label": ariaLabel,
 }: {
   harnesses: HarnessInfo[]
   hidden: HiddenModels
-  agent: ProjectVerifyAgent | null
-  onChange: (agent: ProjectVerifyAgent | null) => void
+  agent: ProjectVerifySecond
+  fixed: FixedChoice[]
+  onChange: (agent: ProjectVerifySecond) => void
+  "aria-label": string
 }) {
-  const selected = agent?.model ? { harness: agent.harness, model: agent.model } : null
-  const label = agent ? (
+  const named = agent && agent !== "off" ? agent : null
+  const choice = named ? null : fixed.find((option) => option.value === agent) ?? fixed[0]!
+  const selected = named?.model ? { harness: named.harness, model: named.model } : null
+  const label = named ? (
     <>
-      {agent.harness}
-      {agent.model && <span className="font-mono text-muted-foreground"> · {agent.model}</span>}
+      {named.harness}
+      {named.model && <span className="font-mono text-muted-foreground"> · {named.model}</span>}
     </>
   ) : (
-    "Each task's own agent"
+    choice!.label
   )
   return (
-    <Menu icon={<Bot />} label={label} aria-label="Reviewer agent">
+    <Menu icon={<Bot />} label={label} aria-label={ariaLabel}>
       <MenuRadioGroup
-        value={agent ? (agent.model ? encode(agent.harness, agent.model) : agent.harness) : OWN}
+        value={named ? (named.model ? encode(named.harness, named.model) : named.harness) : choice!.key}
         onValueChange={(value) => {
-          if (value === OWN) return onChange(null)
+          const pick = fixed.find((option) => option.key === value)
+          if (pick) return onChange(pick.value)
           const [harness = "", model = ""] = value.split("\t")
           // an effort chosen for this harness elsewhere (the CLI) survives a model change
-          const effort = agent?.harness === harness ? agent.effort : undefined
+          const effort = named?.harness === harness ? named.effort : undefined
           onChange({ harness, ...(model ? { model } : {}), ...(effort ? { effort } : {}) })
         }}
       >
-        <MenuRadioItem value={OWN}>Each task&apos;s own agent</MenuRadioItem>
+        {fixed.map((option) => (
+          <MenuRadioItem key={option.key} value={option.key}>
+            {option.label}
+          </MenuRadioItem>
+        ))}
         <MenuSeparator />
         {harnesses.length === 0 ? (
           <MenuNote>No harnesses reported by the daemon.</MenuNote>

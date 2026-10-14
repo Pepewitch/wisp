@@ -88,7 +88,7 @@ import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
 import { pendingBriefRun, recordBriefRun } from "./brief-store";
-import { reviewTurnEnv } from "./verify/rounds";
+import { reviewTurnEnv } from "./verify/reviews";
 import { markPendingAnswersUncertain } from "./brief-inputs";
 import {
   AGENT_TURN_ENV,

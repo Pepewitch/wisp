@@ -14,6 +14,7 @@ import { createTask, freeSlot, getTask, newTaskId, setTaskFields, transition } f
 import { activateDraft, saveDraft } from "../src/verify/recipe";
 import { startRecipeTask, submitVerdict } from "../src/verify/reviewer";
 import { getRound, roundsOf, type RoundRow } from "../src/verify/rounds";
+import { reviewsOf } from "../src/verify/reviews";
 import { HEAD, START, created, doneTask, fakeGitHub, forgetTasks, pass, runtime, seed, snapshot } from "./autopilot-harness";
 
 afterEach(forgetTasks);
@@ -37,23 +38,28 @@ function launcher(state: "running" | "creating" = "running") {
 }
 
 const latest = (taskId: string) => roundsOf(taskId)[0]!;
+const primaryOf = (round: RoundRow) => reviewsOf(round.id).find((review) => review.role === "primary")!;
+/** The primary reviewer's verdict, in the panel's shape. */
 const verdict = (round: RoundRow, body: Record<string, unknown>) =>
-  submitVerdict(round.reviewer_task_id!, { token: round.token, summary: "Checked it", ...body } as never);
+  submitVerdict(primaryOf(round).reviewer_task_id!, { token: primaryOf(round).token, summary: "Checked it", ...body } as never);
 
-function setup(options: { autoFix?: boolean; repo?: string; cfg?: ReturnType<typeof loadConfig> } = {}) {
-  const clock = { now: START + 10 * 60_000 };
+function setup(options: { autoFix?: boolean; repo?: string; cfg?: ReturnType<typeof loadConfig>; realClock?: boolean } = {}) {
+  // a recipe activation is stamped with the real time: a test that activates one runs on it too
+  const clock = { now: options.realClock ? Date.now() : START + 10 * 60_000 };
   const { state, github } = fakeGitHub();
   const { launched, ids, launch } = launcher();
   const task = doneTask(options.repo ? { repo_path: options.repo } : {});
   setAutopilot(task.id, { autoMerge: true, autoFix: options.autoFix ?? false, autoReview: true });
   seed(task.id, clock);
-  const rt = runtime(github, clock, {}, options.cfg, undefined, { launch });
+  // one reviewer, unless a test's own config says otherwise
+  const cfg = options.cfg ?? { ...loadConfig(), repos: [{ path: options.repo ?? "/fixture/repo", verifySecond: "off" as const }] };
+  const rt = runtime(github, clock, {}, cfg, undefined, { launch });
   return { clock, state, launched, ids, task, rt };
 }
 
 describe("a pass belongs to the base it was reviewed against", () => {
   test("retargeting the same head to another allowed base asks for a new review before anything merges", async () => {
-    const cfg = { ...loadConfig(), repos: [{ path: "/fixture/repo", baseBranch: "release" }] };
+    const cfg = { ...loadConfig(), repos: [{ path: "/fixture/repo", baseBranch: "release", verifySecond: "off" as const }] };
     const { clock, state, launched, task, rt } = setup({ cfg });
     state.merges.length = 0;
     // reviewed against main, but before the merge the PR is retargeted to release
@@ -114,7 +120,7 @@ describe("a held review goes again on the person's word", () => {
     const files = [{ path: "RECIPE.md", content: "# r" }, { path: "areas/web/AREA.md", content: "---\npaths: web/**\nstatus: proven\n---" }];
     saveDraft(repo, "tfirst", files);
     await activateDraft(repo, "test");
-    const ctx = setup({ repo });
+    const ctx = setup({ repo, realClock: true });
     await pass(ctx.rt, ctx.task.id, ctx.clock);
     verdict(latest(ctx.task.id), { verdict: "inconclusive", cause: "recipe", recipeFeedback: "the dev server was down", recipeArea: "web" });
     await pass(ctx.rt, ctx.task.id, ctx.clock);
@@ -131,6 +137,30 @@ describe("a held review goes again on the person's word", () => {
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(3);
     expect(latest(task.id)).toMatchObject({ round: 1, counted: 0, state: "running" });
+  });
+
+  test("with a panel, the re-run after a recipe fix runs only A again: B's pass is kept", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "wisp-review-hold-panel-"));
+    const files = [{ path: "RECIPE.md", content: "# r" }, { path: "areas/web/AREA.md", content: "---\npaths: web/**\nstatus: proven\n---" }];
+    saveDraft(repo, "tfirst", files);
+    await activateDraft(repo, "test");
+    const { clock, launched, ids, task, rt } = setup({ repo, realClock: true, cfg: { ...loadConfig(), repos: [{ path: repo }] } });
+    await pass(rt, task.id, clock);
+    const round = latest(task.id);
+    const second = reviewsOf(round.id).find((review) => review.role === "second")!;
+    verdict(round, { verdict: "inconclusive", cause: "recipe", recipeFeedback: "the dev server was down", recipeArea: "web" });
+    submitVerdict(second.reviewer_task_id!, { token: second.token, verdict: "pass", summary: "Read it all" } as never);
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(3);
+    transition(ids[2]!, "done");
+    saveDraft(repo, ids[2]!, [...files, { path: "areas/web/NOTES.md", content: "start the dev server first" }]);
+    await activateDraft(repo, "web");
+    await pass(rt, task.id, clock);
+    const rerun = latest(task.id);
+    expect(rerun.id).not.toBe(round.id);
+    expect(reviewsOf(rerun.id).map((review) => [review.role, review.state, review.carried_from !== null]))
+      .toEqual([["primary", "running", false], ["second", "pass", true]]);
+    expect(launched).toHaveLength(4);
   });
 
   test("Resume re-reviews a recipe-held head without a recipe change", async () => {
