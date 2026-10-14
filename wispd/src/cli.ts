@@ -1,4 +1,5 @@
 import { outputCommand, saveCommand } from "./cli-output";
+import { captureCommand } from "./cli-capture";
 import { type CommandName, offlineAnswer, respond, resolveCommand } from "./cli-help";
 import { print, printError, printRaw } from "./cli-print";
 import {
@@ -562,6 +563,7 @@ export const COMMANDS = {
   purge: (positional, flags) => retentionCommand("purge", positional[0], flags, api),
   project: (positional, flags) => projectCommand(positional, flags),
   output: (positional, flags) => outputCommand(positional, flags),
+  capture: (positional, flags) => captureCommand(positional, flags),
   attach: (positional) => attachCommand(positional[0]),
   token: (_positional, flags) => tokenCommand(flags),
   init: (_positional, flags) => initCommand(flags),

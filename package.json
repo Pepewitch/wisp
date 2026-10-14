@@ -38,6 +38,7 @@
     "smoke": "bun run build:web && bash wispd/scripts/smoke.sh",
     "bench": "bun run build:all-ui && bun bench/run.ts",
     "check:browser-security": "bun run build:web && bun run scripts/browser-security-check.ts",
+    "check:capture": "bun run scripts/capture-check.ts",
     "harness:check": "bun run wispd/scripts/harness/check.ts",
     "harness:snapshot": "bun run wispd/scripts/harness/snapshot.ts",
     "build": "bun run build:web && bun run build:binary",

@@ -11,6 +11,19 @@ export interface VerifyAgent {
   effort?: string;
 }
 
+/** A project's `capturePublic`: true, false, or unset (true). */
+export function validateCapturePublic(raw: unknown, label: string): boolean | undefined {
+  if (raw !== undefined && typeof raw !== "boolean") throw new Error(`${label}.capturePublic must be true or false, got ${typeName(raw)}`);
+  return raw;
+}
+
+/** `chromePath`: an absolute path, or nothing at all (never written as a default). */
+export function chromePathConfig(raw: unknown): { chromePath?: string } {
+  if (raw === undefined || raw === "") return {};
+  if (typeof raw !== "string" || !raw.startsWith("/")) throw new Error(`config.json: chromePath must be an absolute path, got ${JSON.stringify(raw)}`);
+  return { chromePath: raw };
+}
+
 /** The agent, normalized; undefined when unset or blank. Throws on a wrong shape, like every repos entry. */
 export function validateVerifyAgent(raw: unknown, label: string): VerifyAgent | undefined {
   if (raw === undefined) return undefined;

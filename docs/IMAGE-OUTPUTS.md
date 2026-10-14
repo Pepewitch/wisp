@@ -39,6 +39,10 @@ return a file path instead of image bytes, use `wisp output add`. These
 payloads are not inferred from arbitrary tool JSON. HTTP(S) Markdown images
 retain their existing click-to-load behavior.
 
+To screenshot an app the agent launched, `wisp capture <url>` has Wisp take
+the shot in its own headless Chrome and store it here as a published image,
+with a record of what it saw ([wisp capture](CAPTURE.md)).
+
 Native capture remains subject to the harness protocol's 16 MiB frame limit.
 For a tool result containing several large images, publish the individual
 files instead.

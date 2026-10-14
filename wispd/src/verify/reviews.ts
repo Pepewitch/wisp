@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto"
 import type {
   AutoReviewEvidence, AutoReviewFinding, AutoReviewReview, AutoReviewRole, AutoReviewRoundState, AutoReviewSignals, AutoReviewTier,
 } from "../../../shared/api/auto-review"
+import { capturesOfReview } from "../capture/store"
 import { db } from "../store-database"
 import { randomId } from "../store"
 import { REVIEW_TOKEN_ENV } from "../turn-input"
@@ -38,6 +39,8 @@ export interface ReviewRow {
   evidence_json: string | null
   escalated: string | null
   carried_from: string | null
+  /** the verifying reviewer's waivers of a required screenshot (protocol 3) */
+  waivers_json?: string | null
   nudged: number
   launched_at: string | null
   created_at: string
@@ -65,6 +68,8 @@ export function createPanelRound(input: {
   taskId: string; workflowId: string; pr: number; head: string; base: string; round: number; counted: boolean
   recipeVersion: string | null; tier: AutoReviewTier; signals: AutoReviewSignals | null; agents: PanelAgent[]
   carried?: ReviewRow[]
+  /** recipe areas whose change needs reviewer A to show a capture (verify/evidence.ts) */
+  required?: string[]
 }, now = new Date()): { round: RoundRow; reviews: ReviewRow[] } {
   return db.transaction(() => {
     const id = randomId("r", 12)
@@ -72,20 +77,21 @@ export function createPanelRound(input: {
     const roles = input.agents.map((agent) => agent.role)
     // the round's own token is a phase-1 column (NOT NULL): no route accepts it any more, each review carries its own
     db.run(`INSERT INTO auto_review_rounds(id, task_id, workflow_id, pr, head, base, round, counted, token, recipe_version, state,
-      tier, signals_json, roles, protocol, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, 2, ?)`,
+      tier, signals_json, roles, protocol, required_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, 2, ?, ?)`,
     [id, input.taskId, input.workflowId, input.pr, input.head, input.base, input.round, input.counted ? 1 : 0, newToken(), input.recipeVersion,
-      input.tier, input.signals ? JSON.stringify(input.signals) : null, JSON.stringify(roles), at])
+      input.tier, input.signals ? JSON.stringify(input.signals) : null, JSON.stringify(roles), JSON.stringify(input.required ?? []), at])
     for (const agent of input.agents) {
       const carried = input.carried?.find((review) => review.role === agent.role && review.state === "pass")
       if (carried) {
         db.run(`INSERT INTO round_reviews(id, round_id, role, protocol, reviewer_task_id, harness, model, effort, token, state, cause, summary,
-          rationale, findings_json, reviewed_json, recipe_feedback, recipe_area, evidence_json, escalated, carried_from, launched_at, created_at, finished_at)
+          rationale, findings_json, reviewed_json, recipe_feedback, recipe_area, evidence_json, escalated, waivers_json, carried_from, launched_at, created_at, finished_at)
           SELECT ?, ?, role, protocol, reviewer_task_id, harness, model, effort, ?, state, cause, summary, rationale, findings_json, reviewed_json,
-          recipe_feedback, recipe_area, evidence_json, escalated, id, launched_at, ?, finished_at FROM round_reviews WHERE id = ?`, [randomId("v", 12), id, newToken(), at, carried.id])
+          recipe_feedback, recipe_area, evidence_json, escalated, waivers_json, COALESCE(carried_from, id), launched_at, ?, finished_at FROM round_reviews WHERE id = ?`, [randomId("v", 12), id, newToken(), at, carried.id])
         continue
       }
+      // protocol 3: the panel's verdict shape plus captures and waivers
       db.run(`INSERT INTO round_reviews(id, round_id, role, protocol, harness, model, effort, token, state, created_at)
-        VALUES (?, ?, ?, 2, ?, ?, ?, ?, 'pending', ?)`, [randomId("v", 12), id, agent.role, agent.harness, agent.model, agent.effort, newToken(), at])
+        VALUES (?, ?, ?, 3, ?, ?, ?, ?, 'pending', ?)`, [randomId("v", 12), id, agent.role, agent.harness, agent.model, agent.effort, newToken(), at])
     }
     return { round: getRound(id)!, reviews: reviewsOf(id) }
   })()
@@ -98,7 +104,7 @@ export function addSecondReview(roundId: string, agent: Omit<PanelAgent, "role">
     if (!round || round.state !== "running" || reviewsOf(roundId).some((review) => review.role === "second")) return null
     const id = randomId("v", 12)
     db.run(`INSERT INTO round_reviews(id, round_id, role, protocol, harness, model, effort, token, state, created_at)
-      VALUES (?, ?, 'second', 2, ?, ?, ?, ?, 'pending', ?)`, [id, roundId, agent.harness, agent.model, agent.effort, newToken(), now.toISOString()])
+      VALUES (?, ?, 'second', 3, ?, ?, ?, ?, 'pending', ?)`, [id, roundId, agent.harness, agent.model, agent.effort, newToken(), now.toISOString()])
     db.run("UPDATE auto_review_rounds SET roles = ?, tier = 'standard' WHERE id = ?", [JSON.stringify(["primary", "second"]), roundId])
     return getReview(id)
   })()
@@ -138,12 +144,13 @@ export function launchedReview(id: string, taskId: string, now = new Date()): bo
 export function finishReview(id: string, verdict: {
   state: AutoReviewRoundState; cause?: string | null; summary?: string | null; rationale?: string | null; findings?: AutoReviewFinding[]
   reviewed?: string[]; recipeFeedback?: string | null; recipeArea?: string | null; evidence?: AutoReviewEvidence[]; escalated?: string | null
+  waivers?: { area: string; reason: string }[]
 }, now = new Date()): boolean {
   return db.run(`UPDATE round_reviews SET state = ?, cause = ?, summary = ?, rationale = ?, findings_json = ?, reviewed_json = ?,
-    recipe_feedback = ?, recipe_area = ?, evidence_json = ?, escalated = ?, finished_at = ? WHERE id = ? AND state = 'running'`, [
+    recipe_feedback = ?, recipe_area = ?, evidence_json = ?, escalated = ?, waivers_json = ?, finished_at = ? WHERE id = ? AND state = 'running'`, [
     verdict.state, verdict.cause ?? null, verdict.summary ?? null, verdict.rationale ?? null, JSON.stringify(verdict.findings ?? []),
     JSON.stringify(verdict.reviewed ?? []), verdict.recipeFeedback ?? null, verdict.recipeArea ?? null, JSON.stringify(verdict.evidence ?? []),
-    verdict.escalated ?? null, now.toISOString(), id,
+    verdict.escalated ?? null, verdict.waivers && verdict.waivers.length > 0 ? JSON.stringify(verdict.waivers) : null, now.toISOString(), id,
   ]).changes === 1
 }
 
@@ -199,6 +206,21 @@ export function severityOf(finding: AutoReviewFinding, reviewState: ReviewState)
 
 export function findingsOf(review: ReviewRow): AutoReviewFinding[] {
   return parsed<AutoReviewFinding[]>(review.findings_json, []).map((finding) => ({ ...finding, severity: severityOf(finding, review.state), by: review.role }))
+}
+
+/** A review's images, each marked with what Wisp saw when it took it (a carried review's captures are its origin's). */
+function withCaptures(review: ReviewRow): AutoReviewEvidence[] {
+  const captures = new Map(capturesOfReview(review.carried_from ?? review.id)
+    .filter((capture) => capture.status === "ok" && capture.image_id).map((capture) => [capture.image_id!, capture]))
+  return evidenceOf(review).map((image) => {
+    const capture = captures.get(image.id)
+    return capture ? {
+      ...image, capture: {
+        id: capture.id, area: capture.area, url: capture.final_url ?? capture.requested_url, servedFrom: capture.served_from, viewport: capture.viewport,
+        scriptUsed: capture.script_used === 1, settled: capture.settled === 1,
+      },
+    } : image
+  })
 }
 
 export function evidenceOf(review: ReviewRow): AutoReviewEvidence[] {
@@ -277,7 +299,8 @@ export function reviewView(review: ReviewRow, roundOpen: boolean): AutoReviewRev
     id: review.id, role: review.role, agent: { harness: review.harness, model: review.model }, state: sealed ? "submitted" : review.state,
     summary: withhold ? null : review.summary, rationale: withhold ? null : review.rationale,
     findings: withhold ? [] : findingsOf(review), reviewed: withhold ? [] : parsed<string[]>(review.reviewed_json, []),
-    evidence: withhold ? [] : evidenceOf(review), escalated: withhold ? null : review.escalated, carried: review.carried_from !== null,
+    evidence: withhold ? [] : withCaptures(review), escalated: withhold ? null : review.escalated, carried: review.carried_from !== null,
+    waivers: withhold ? [] : parsed<{ area: string; reason: string }[]>(review.waivers_json ?? null, []),
     reviewerTaskId: review.reviewer_task_id, createdAt: review.created_at, finishedAt: review.finished_at,
   }
 }

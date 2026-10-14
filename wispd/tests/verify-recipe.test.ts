@@ -50,10 +50,16 @@ describe("what a recipe may hold", () => {
   });
 
   test("an area's paths may be a comma list or a YAML list, and must stay inside the repository", () => {
-    expect(parseAreaFrontmatter("---\npaths: apps/web/**, packages/ui/**\nstatus: proven\n---")).toEqual({ paths: ["apps/web/**", "packages/ui/**"], status: "proven" });
-    expect(parseAreaFrontmatter("---\npaths:\n  - \"apps/api/**\"\n  - libs/**\n---")).toEqual({ paths: ["apps/api/**", "libs/**"], status: "unproven" });
+    expect(parseAreaFrontmatter("---\npaths: apps/web/**, packages/ui/**\nstatus: proven\n---")).toEqual({ paths: ["apps/web/**", "packages/ui/**"], status: "proven", evidence: "none" });
+    expect(parseAreaFrontmatter("---\npaths:\n  - \"apps/api/**\"\n  - libs/**\n---")).toEqual({ paths: ["apps/api/**", "libs/**"], status: "unproven", evidence: "none" });
     expect(parseAreaFrontmatter("---\npaths: ../outside/**\n---")).toContain("outside");
     expect(parseAreaFrontmatter("---\nstatus: proven\n---")).toContain("names no paths");
+  });
+
+  test("an area may require a screenshot, and a misspelt requirement is refused rather than ignored", () => {
+    expect(parseAreaFrontmatter("---\npaths: web/**\nevidence: screenshot\n---")).toMatchObject({ evidence: "screenshot" });
+    expect(parseAreaFrontmatter("---\npaths: web/**\nevidence: screenshots\n---")).toContain("'screenshot' or 'none'");
+    expect(recipeFilesError(recipe({ path: "areas/web/AREA.md", content: "---\npaths: web/**\nevidence: screen\n---" }))).toContain("evidence: screen");
   });
 });
 
@@ -68,7 +74,7 @@ describe("drafts and activation", () => {
     const first = await activateDraft(path, "web");
     expect(first.changed).toBe(true);
     expect(latestDraft(path)).toBeNull();
-    expect(activeRecipe(path)?.areas).toEqual([{ name: "web", paths: ["apps/web/**"], status: "proven" }]);
+    expect(activeRecipe(path)?.areas).toEqual([{ name: "web", paths: ["apps/web/**"], status: "proven", evidence: "none" }]);
     expect(await recipeVersion(path)).toBe(first.version);
     expect(readRecipeFile(path, "areas/web/AREA.md")).toContain("bun run dev");
 
@@ -153,9 +159,9 @@ describe("drafts and activation", () => {
 describe("matching a diff to areas", () => {
   test("a file can be in several areas, and one in none is reported", () => {
     const areas = [
-      { name: "web", paths: ["apps/web/**", "packages/ui/**"], status: "proven" as const },
-      { name: "ui", paths: ["packages/ui/**"], status: "unproven" as const },
-      { name: "api", paths: ["apps/api/**"], status: "proven" as const },
+      { name: "web", paths: ["apps/web/**", "packages/ui/**"], status: "proven" as const, evidence: "none" as const },
+      { name: "ui", paths: ["packages/ui/**"], status: "unproven" as const, evidence: "none" as const },
+      { name: "api", paths: ["apps/api/**"], status: "proven" as const, evidence: "none" as const },
     ];
     const { matched, unmapped } = matchAreas(areas, ["packages/ui/button.tsx", "README.md"]);
     expect(matched.map((a) => a.name)).toEqual(["web", "ui"]);

@@ -50,6 +50,11 @@ const LOCKFILES = [
 const DOC_GLOBS = ["docs/**", "*.md"]
 const TEST = /(^|\/)(tests?|__tests__|spec)\/|\.(test|spec)\.[a-z0-9]+$/i
 
+/** A changed file that is documentation (by place, or the recipe's `docs:`) or a test: no screen to show. */
+export function docOrTest(path: string, docs: string[] = []): boolean {
+  return TEST.test(path) || globsOf([...DOC_GLOBS, ...docs]).some((glob) => glob.match(path))
+}
+
 export const LIGHT_MAX_LINES = 40
 export const LIGHT_MAX_FILES = 3
 export const DEEP_MIN_LINES = 600

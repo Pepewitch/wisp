@@ -27,8 +27,11 @@ import type { TurnAttachment } from "@/lib/types"
  * is the one that shows without this component syncing state in an effect.
  */
 type AttachmentViewerProps = {
-  /** Stored attachments, or a composer's pending ones (any sniffed media type). */
-  files: (Omit<TurnAttachment, "mediaType"> & { mediaType: string })[]
+  /**
+   * Stored attachments, or a composer's pending ones (any sniffed media type).
+   * A review's evidence carries no size, so its caption is the name alone.
+   */
+  files: (Omit<TurnAttachment, "mediaType" | "size"> & { mediaType: string; size?: number })[]
   /** which file is showing; null = closed */
   index: number | null
   onIndex: (next: number) => void
@@ -96,8 +99,12 @@ export function AttachmentViewer({
                 )}
                 <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
                   <span className="truncate font-mono">{current.name}</span>
-                  <span className="shrink-0 text-faint">·</span>
-                  <span className="shrink-0">{formatBytes(current.size)}</span>
+                  {current.size !== undefined && (
+                    <>
+                      <span className="shrink-0 text-faint">·</span>
+                      <span className="shrink-0">{formatBytes(current.size)}</span>
+                    </>
+                  )}
                   {files.length > 1 && (
                     <span className="ml-auto shrink-0 text-faint">
                       {index! + 1} of {files.length}

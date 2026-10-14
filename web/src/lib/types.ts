@@ -434,6 +434,12 @@ export interface HarnessesResponse {
      * second reviewer (`verifySecond`). Absent: rounds are drawn as phase 1.
      */
     reviewPanel?: boolean;
+    /**
+     * `wisp capture`: Wisp screenshots a page itself and records where it was
+     * served from. Reviews carry each image's provenance and A's waivers, and
+     * a round names the areas that need a capture. Absent: no evidence strip.
+     */
+    capture?: boolean;
   };
 }
 

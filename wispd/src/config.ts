@@ -15,7 +15,7 @@ import type { AdapterDef } from "./adapters";
 import { wispCommand } from "./command";
 import { isInstanceId, loadOrCreateInstanceId } from "./instance-id";
 import { isRecord, readUserJson, stringArray, typeName } from "./validate";
-import { validateVerifyAgent } from "./config-verify";
+import { chromePathConfig, validateCapturePublic, validateVerifyAgent } from "./config-verify";
 import type { WispPreferences } from "../../shared/api/settings";
 import type { ModelTaskDefaultsMap } from "../../shared/model-task-defaults";
 import { validateModelTaskDefaults } from "./model-task-defaults";
@@ -73,6 +73,8 @@ export interface RepoConfig {
    * in its own independent session.
    */
   verifySecond?: { harness: string; model?: string; effort?: string } | "off";
+  /** whether a `wisp capture` page may load public internet hosts (fonts, CDNs); default true */
+  capturePublic?: boolean;
 }
 
 /** The configured entry for a repo path, if it has one. Paths are compared resolved. */
@@ -167,6 +169,8 @@ export interface WispConfig {
    * back over HTTP.
    */
   factoryApiKey?: string;
+  /** the Chrome `wisp capture` runs; unset finds one (capture/chrome.ts). Never defaulted. */
+  chromePath?: string;
 }
 
 /**
@@ -503,8 +507,7 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = warnO
   num("diagnosticRetentionDays");
   optionalBooleanConfig(raw, out, "turnLogRetentionEnabled");
   optionalBooleanConfig(raw, out, "autoRenameTasksFromPullRequests");
-  num("turnLogMaxBytes");
-  num("turnLogRetentionDays");
+  for (const key of ["turnLogMaxBytes", "turnLogRetentionDays"] as const) num(key);
   for (const key of ["diagnosticMaxBytes", "diagnosticRetentionDays", "turnLogMaxBytes", "turnLogRetentionDays"] as const) {
     const value = out[key];
     if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
@@ -534,6 +537,7 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = warnO
     const defaults = validateHarnessDefaults(raw.harnessDefaults, warn);
     if (defaults) out.harnessDefaults = defaults;
   }
+  Object.assign(out, chromePathConfig(raw.chromePath));
   return out;
 }
 
@@ -594,6 +598,7 @@ function validateRepos(raw: unknown): (string | RepoConfig)[] {
     if (verify) out.verify = verify;
     const second = entry.verifySecond === "off" ? "off" : validateVerifyAgent(entry.verifySecond, `${label}.verifySecond`);
     if (second) out.verifySecond = second;
+    if (validateCapturePublic(entry.capturePublic, label) === false) out.capturePublic = false;
     return out;
   });
 }

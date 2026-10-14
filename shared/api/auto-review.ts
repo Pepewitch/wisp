@@ -53,6 +53,8 @@ export interface AutoReviewEvidence {
   mediaType: string
   /** the reviewer task that published it; absent on phase-1 rounds (it was the round's reviewer) */
   reviewerTaskId?: string
+  /** present when Wisp took it (`wisp capture`): what it opened, and where the page was served from */
+  capture?: { id: string; area: string | null; url: string; servedFrom: "worktree" | "elsewhere" | "unknown" | null; viewport: string; scriptUsed: boolean; settled: boolean }
 }
 
 /** What Wisp measured about a round's diff to choose its tier. */
@@ -85,6 +87,8 @@ export interface AutoReviewReview {
   escalated: string | null
   /** carried over from an earlier round on the same head: it passed, and was not run again */
   carried: boolean
+  /** areas whose required screenshot the verifying reviewer waived, and why (Wisp recorded a reason it could not capture) */
+  waivers?: { area: string; reason: string }[]
   reviewerTaskId: string | null
   createdAt: string
   finishedAt: string | null
@@ -118,6 +122,8 @@ export interface AutoReviewRound {
   legacy?: boolean
   /** each reviewer's part; while the round runs, a reviewer's words are withheld until all have spoken */
   reviews?: AutoReviewReview[]
+  /** recipe areas whose change needs reviewer A to show a capture (absent before captures) */
+  required?: string[]
 }
 
 /** GET /api/tasks/:id/auto-review, advertised by `features.autoReview`: the task's rounds, newest first. */
@@ -143,6 +149,8 @@ export interface AutoReviewVerdictBody {
   rationale?: string
   /** the primary reviewer, on a light round, asks for a second reviewer */
   escalate?: { reason: string }
+  /** the verifying reviewer's word for a required screenshot Wisp could not take (protocol 3) */
+  waivers?: { area: string; reason: string }[]
 }
 
 export interface VerificationArea {

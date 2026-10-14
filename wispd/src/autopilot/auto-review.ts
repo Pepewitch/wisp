@@ -13,7 +13,10 @@ import { join, resolve } from "node:path"
 import { emit } from "../events"
 import type { AutopilotState } from "../../../shared/autopilot"
 import type { AutoReviewFinding, AutoReviewTier } from "../../../shared/api/auto-review"
-import { AttachError, attachmentManifest, decodeAttachments, taskMessageAttachmentsFingerprintV2, writeMessageAttachments, removeMessageAttachments } from "../attachments"
+import {
+  AttachError, attachmentManifest, decodeAttachments, MAX_TURN_ATTACHMENT_BYTES, removeMessageAttachments, taskMessageAttachmentsFingerprintV2,
+  writeMessageAttachments, type DecodedAttachment,
+} from "../attachments"
 import { TASKS_DIR } from "../config"
 import { outputImagePath } from "../outputs"
 import { startNextQueuedMessage } from "../runner"
@@ -283,9 +286,10 @@ function bounce(look: ReviewLook, round: RoundRow): null {
     return look.say("needs-you", `Still ${verb(round)} after review round ${round.round}, with no new push`, WAITING_ON_YOU_MS)
   }
   if (!look.hasSlot(task)) return look.say("waiting", "Waiting for a free task slot", MOVING_MS)
-  const file = writeReviewFeedback(task, row, round)
   const messageId = randomId("m", 12)
+  // the images first: the feedback file says which ones could not travel, and why
   const attachments = bounceImages(look, round, messageId)
+  const file = writeReviewFeedback(task, row, round, attachments.skipped)
   const id = reserveRound(row, {
     key, prompt: bounceMessage(pr, round, file, attachments.count, budgetOf(look.checkpoint), blocking.length), by: "auto-review",
     reason: `Sent auto-review findings (round ${round.round} of ${budgetOf(look.checkpoint)})`,
@@ -300,33 +304,51 @@ function bounce(look: ReviewLook, round: RoundRow): null {
   return null
 }
 
-function bounceImages(look: ReviewLook, round: RoundRow, messageId: string): { json: string | null; hash: string; count: number } {
+/**
+ * The reviewers' images the author's harness can take, A's first, up to
+ * BOUNCE_IMAGES and the turn's attachment budget. Each is decoded on its own,
+ * so one the harness refuses (a gif, an oversized shot) is skipped and named
+ * rather than taking the rest down with it.
+ */
+function bounceImages(look: ReviewLook, round: RoundRow, messageId: string): { json: string | null; hash: string; count: number; skipped: string[] } {
   const def = look.start.adapters[look.task.harness]
-  // reviewer A's first: it is the one that ran the app
-  const evidence = reviewsOf(round.id).flatMap(evidenceOf).slice(0, BOUNCE_IMAGES)
-  if (!def || evidence.length === 0) return { json: null, hash: "", count: 0 }
+  const evidence = reviewsOf(round.id).flatMap(evidenceOf)
+  const none = { json: null, hash: "", count: 0, skipped: [] as string[] }
+  if (!def || evidence.length === 0) return none
   const extension: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp" }
-  const wire = evidence.flatMap((image) => {
-    if (!image.reviewerTaskId) return []
-    try {
-      const data = readFileSync(outputImagePath(image.reviewerTaskId, image.turn, image.id))
-      const ext = extension[image.mediaType] ?? "png"
-      const name = image.name.toLowerCase().endsWith(`.${ext}`) ? image.name : `${image.name}.${ext}`
-      return [{ name, dataBase64: data.toString("base64") }]
-    } catch {
-      return []
+  const chosen: DecodedAttachment[] = []
+  const skipped: string[] = []
+  let bytes = 0
+  for (const image of evidence) {
+    if (chosen.length >= BOUNCE_IMAGES) break
+    if (!image.reviewerTaskId) {
+      skipped.push(`${image.name}: its reviewer task is unknown`)
+      continue
     }
-  })
-  try {
-    // the author's harness decides what it can take: images it cannot see stay in the evidence file
-    const decoded = decodeAttachments(look.task.harness, def, wire)
-    if (decoded.length === 0) return { json: null, hash: "", count: 0 }
-    const stored = writeMessageAttachments(look.task.id, messageId, decoded)
-    return { json: attachmentManifest(stored), hash: taskMessageAttachmentsFingerprintV2(decoded), count: stored.length }
-  } catch (error) {
-    if (error instanceof AttachError) return { json: null, hash: "", count: 0 }
-    throw error
+    let data: Buffer
+    try {
+      data = readFileSync(outputImagePath(image.reviewerTaskId, image.turn, image.id))
+    } catch {
+      skipped.push(`${image.name}: its file is gone`)
+      continue
+    }
+    if (bytes + data.length > MAX_TURN_ATTACHMENT_BYTES) {
+      skipped.push(`${image.name}: over this turn's attachment budget`)
+      continue
+    }
+    const ext = extension[image.mediaType] ?? "png"
+    const name = image.name.toLowerCase().endsWith(`.${ext}`) ? image.name : `${image.name}.${ext}`
+    try {
+      chosen.push(...decodeAttachments(look.task.harness, def, [{ name, dataBase64: data.toString("base64") }]))
+      bytes += data.length
+    } catch (error) {
+      if (!(error instanceof AttachError)) throw error
+      skipped.push(`${image.name}: ${error.message}`)
+    }
   }
+  if (chosen.length === 0) return { ...none, skipped }
+  const stored = writeMessageAttachments(look.task.id, messageId, chosen)
+  return { json: attachmentManifest(stored), hash: taskMessageAttachmentsFingerprintV2(chosen), count: stored.length, skipped }
 }
 
 const where = (finding: AutoReviewFinding): string => (finding.file ? `${finding.file}${finding.line ? `:${finding.line}` : ""}` : "(no file named)")
@@ -336,7 +358,7 @@ const where = (finding: AutoReviewFinding): string => (finding.file ? `${finding
  * auto-fix's PR-FEEDBACK.md: grouped by file, blockers first, each saying
  * which reviewer found it, and where both did.
  */
-export function writeReviewFeedback(task: Task, row: WorkflowRow, round: RoundRow): string {
+export function writeReviewFeedback(task: Task, row: WorkflowRow, round: RoundRow, skipped: string[] = []): string {
   const dir = join(TASKS_DIR, task.id, "autopilot", row.id, `review-${round.id}`)
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   const reviews = reviewsOf(round.id)
@@ -367,6 +389,7 @@ export function writeReviewFeedback(task: Task, row: WorkflowRow, round: RoundRo
     ...(round.recipe_feedback ? ["## The recipe", `Reviewer A could not follow the verification recipe${round.recipe_area ? ` (${round.recipe_area})` : ""}: ${round.recipe_feedback}`, "That part is not yours to fix; Wisp is repairing the recipe.", ""] : []),
     ...(evidence.length > 0 ? ["## Evidence the reviewers published", ...evidence.map((image) => `- ${image.name} (task ${image.reviewerTaskId ?? "?"}, turn ${image.turn})`), "",
       "Open them in the reviewer's task, or with: wisp output list <task> --turn <n>"] : []),
+    ...(skipped.length > 0 ? ["", "Not attached to Wisp's message (open them as above):", ...skipped.map((line) => `- ${line}`)] : []),
   ]
   const file = join(dir, "REVIEW-FEEDBACK.md")
   writeFileSync(file, `${lines.join("\n")}\n`, { mode: 0o600 })

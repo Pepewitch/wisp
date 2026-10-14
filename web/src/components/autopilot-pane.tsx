@@ -190,6 +190,7 @@ function useReviewsModel(
     // a reviewer is a task like any other: selecting it is the desktop's focus request
     onOpenTask: (id) => uiIntentsFor(connectionId).focusTask(id),
     panel: features?.reviewPanel === true,
+    capture: features?.capture === true,
   }
 }
 

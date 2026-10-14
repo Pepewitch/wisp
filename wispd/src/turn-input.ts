@@ -9,7 +9,25 @@ export function taskEnv(task: Task): Record<string, string> {
     WISP_TASK_SLOT: String(task.slot),
     WISP_WORKTREE: task.worktree_path ?? "",
     WISP_REPO: task.repo_path,
+    ...portEnv(task),
   }
+}
+
+/**
+ * A reviewer or recipe task's preferred ports, ten from 20000 + slot × 10 (below
+ * Linux's ephemeral range), so parallel reviewers never fight over :3000.
+ * A preference, not a lease: the prompt says to check, and to stay inside it.
+ * An author task's app is left alone, since an app that reads PORT would change.
+ */
+export function portRange(task: Pick<Task, "slot" | "verify_role">): [number, number] | null {
+  if (!task.verify_role) return null
+  const base = 20_000 + task.slot * 10
+  return [base, base + 9]
+}
+
+function portEnv(task: Task): Record<string, string> {
+  const range = portRange(task)
+  return range ? { PORT: String(range[0]), WISP_PORT_RANGE: `${range[0]}-${range[1]}` } : {}
 }
 
 /**

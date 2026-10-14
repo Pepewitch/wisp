@@ -1312,6 +1312,21 @@ PR. Two sections share ONE scroller:
    is no red text, because a rejection's dot already carries it. A round from
    before the panel (`legacy`) keeps its one line and a faint `before the
    panel`. Without the flag every round is drawn exactly as phase 1.
+   With `features.capture` a **settled** reviewer's row is followed by its
+   evidence (`ReviewEvidence`): A's waived captures first, as a notice
+   (`Capture waived`, then `area — the reason Wisp recorded`, in the
+   needs-input amber), then small thumbnails that wrap — six, then
+   `+N more`, which shows the rest. Each loads through the output route with
+   `useAssetStatus` and expands in `AttachmentViewer`, as a turn's outputs do,
+   and says who made it: `Captured by Wisp` with `area · viewport · path`, or
+   `Published by the reviewer`. A capture served from outside the reviewer's
+   worktree says so in amber (the page may not be this change); an unknown
+   source and `after a script` are faint; the `title` holds the full URL.
+   Nothing says *verified* — a capture proves only what Wisp saw. A round
+   whose areas need a capture says `Needs a capture: web, admin` under its
+   line. While a round runs (`running`, `pending`, a withheld `submitted`)
+   no evidence is drawn, and without the flag none of this is. Words live in
+   `lib/auto-review-words.ts`.
 
 - **Section headers are 12.5 / 600**, the §4 row size at a heavier weight, so
   they outrank the `Auto-merge` row under them without an eyebrow.

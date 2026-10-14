@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, type ReactNode } from "react"
 
-import type { AutoReviewReview, AutoReviewRound, AutoReviewSignals } from "../../../shared/api/auto-review"
+import type { AutoReviewEvidence, AutoReviewReview, AutoReviewRound, AutoReviewSignals } from "../../../shared/api/auto-review"
 import type { AutopilotHistoryEntry, AutopilotStatus } from "../../../shared/autopilot"
 import { AutopilotView, type AutomationModel, type HistoryLinks } from "@/components/autopilot-pane"
 import { Section } from "@/components/gallery-chrome"
@@ -170,11 +170,11 @@ const H_RICH: AutopilotHistoryEntry[] = [
   e(60 * 26 + 2, "armed", "Auto-merge on, Auto-fix on", null),
 ]
 
-function automationOf(status: AutopilotStatus, history: AutopilotHistoryEntry[] | null, rounds?: AutoReviewRound[], panel = false): AutomationModel {
+function automationOf(status: AutopilotStatus, history: AutopilotHistoryEntry[] | null, rounds?: AutoReviewRound[], panel = false, capture = false): AutomationModel {
   return {
     status, locked: null, pending: false, error: null,
     history: history ? { entries: history, error: null } : null,
-    reviews: rounds ? { rounds, error: null, onOpenTask: noop, panel } : null,
+    reviews: rounds ? { rounds, error: null, onOpenTask: noop, panel, capture, evidenceSrc: capture ? shotOf : undefined } : null,
     onSet: noop, onAct: noop,
   }
 }
@@ -261,6 +261,74 @@ const PANEL_ESCALATED: AutoReviewRound[] = [
     reviews: [
       review("e1a", "primary", "pass", 1, { escalated: "the two lines change how the session token is refreshed" }),
       review("e1b", "second", "pending", 0),
+    ],
+  }),
+]
+
+/* ── captures: what Wisp itself saw, and what A waived ──────────────────── */
+
+/** A stand-in page for a thumbnail: a header, a sidebar (not on mobile) and two cards; a reviewer's own image is dark. */
+function shotOf(image: AutoReviewEvidence): string {
+  const mobile = image.capture?.viewport === "mobile"
+  const [page, bar, card] = image.capture ? ["#f6f6f4", "#e4e4e0", "#ffffff"] : ["#1d1d20", "#2b2b30", "#34343a"]
+  const side = mobile ? "" : `<rect x="0" y="14" width="34" height="86" fill="${bar}"/>`
+  const left = mobile ? 6 : 42
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="100" viewBox="0 0 160 100"><rect width="160" height="100" fill="${page}"/><rect width="160" height="14" fill="${bar}"/>${side}<rect x="${left}" y="22" width="${150 - left}" height="30" rx="3" fill="${card}"/><rect x="${left}" y="58" width="${(150 - left) / 2}" height="24" rx="3" fill="${card}"/><rect x="${left + 6}" y="30" width="44" height="5" rx="2" fill="#AF87F1"/></svg>`
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`
+}
+
+const shot = (id: string, name: string, capture?: Partial<NonNullable<AutoReviewEvidence["capture"]>>): AutoReviewEvidence => ({
+  turn: 3, id, name, mediaType: "image/png",
+  capture: capture && {
+    id: `cap${id}`, area: null, url: "http://127.0.0.1:5173/", servedFrom: "worktree", viewport: "desktop", scriptUsed: false, settled: true, ...capture,
+  },
+})
+
+/** A passed with three captures — one of a page served from outside its worktree — and one image of its own. */
+const CAPTURED_EVIDENCE: AutoReviewEvidence[] = [
+  shot("s1", "settings-saved.png", { area: "web", url: "http://127.0.0.1:5173/settings/profile" }),
+  shot("s2", "admin-users.png", { area: "admin", url: "http://127.0.0.1:3000/admin/users", servedFrom: "elsewhere", viewport: "mobile" }),
+  shot("s3", "settings-toast.png", { area: "web", url: "http://127.0.0.1:5173/settings/profile#saved", viewport: "1440x900", scriptUsed: true, servedFrom: "unknown" }),
+  shot("s4", "network-tab.png"),
+]
+
+const PANEL_CAPTURED: AutoReviewRound[] = [
+  round("c2", 2, "a71c3e9d02f", "pass", 2, {
+    tier: "standard", signals: STANDARD, required: ["web", "admin"],
+    summary: "One PUT per save on every path; the toast shows once.",
+    reviews: [
+      review("c2a", "primary", "pass", 3, { summary: "Saved by button, shortcut and autosave: one PUT each time.", evidence: CAPTURED_EVIDENCE }),
+      review("c2b", "second", "pass", 2, { summary: "The store's guard covers every caller." }),
+    ],
+  }),
+]
+
+/** A could not capture the admin area, and said why; the web area it did capture. */
+const PANEL_WAIVED: AutoReviewRound[] = [
+  round("w1", 1, "6b0d9e4c71a", "pass", 4, {
+    tier: "standard", signals: STANDARD, required: ["web", "admin"],
+    reviews: [
+      review("w1a", "primary", "pass", 5, {
+        summary: "The settings page saves once; the admin page could not be opened.",
+        evidence: [CAPTURED_EVIDENCE[0]!],
+        waivers: [{ area: "admin", reason: "the admin app needs a VPN login Wisp's browser does not have (refused: 401 at /admin/login)" }],
+      }),
+      review("w1b", "second", "pass", 4, { summary: "No concerns in the diff." }),
+    ],
+  }),
+]
+
+/** More than six images: the strip folds the rest behind `+N more`. */
+const PANEL_MANY: AutoReviewRound[] = [
+  round("m1", 2, "c0ffee12ab3", "pass", 2, {
+    tier: "deep", signals: DEEP, required: ["web"],
+    reviews: [
+      review("m1a", "primary", "pass", 3, {
+        summary: "Every settings tab saves once.",
+        evidence: ["profile", "billing", "team", "tokens", "webhooks", "danger", "audit", "export"].map((tab, i) =>
+          shot(`m${i}`, `${tab}.png`, { area: "web", url: `http://127.0.0.1:5173/settings/${tab}` })),
+      }),
+      review("m1b", "second", "pass", 2),
     ],
   }),
 ]
@@ -471,6 +539,21 @@ export function AutopilotTabSpecimen() {
           <div>
             <Caption>Touch</Caption>
             <Panel touch width={390} height={560}><TabPane touch brief={null} automation={automationOf(REVIEWING, null, PANEL_DEEP, true)} /></Panel>
+          </div>
+        </Frame>
+        <Frame id="autopilot-review-captures" title="Auto-review's evidence: what each reviewer showed, and who made it"
+          note="On a daemon with features.capture a settled reviewer's row is followed by its images: small thumbnails that expand in the viewer, each saying who made it. Captured by Wisp carries the area, viewport and path Wisp opened; a page served from outside the reviewer's worktree is amber (it may not be this change), an unknown source and a script are quiet. Published by the reviewer is the reviewer's own image. Nothing says verified: a capture proves only what Wisp saw. A's waived captures are a notice, and a round whose areas need a capture says which. While a round runs nothing is drawn.">
+          <div>
+            <Caption>Captures from the worktree, one from elsewhere, and one the reviewer published</Caption>
+            <Panel height={480}><TabPane brief={null} automation={automationOf(REVIEW_QUIET, null, PANEL_CAPTURED, true, true)} /></Panel>
+          </div>
+          <div>
+            <Caption>A waived a capture, and said why</Caption>
+            <Panel height={420}><TabPane brief={null} automation={automationOf(REVIEW_QUIET, null, PANEL_WAIVED, true, true)} /></Panel>
+          </div>
+          <div>
+            <Caption>Touch, with more than six images</Caption>
+            <Panel touch width={390} height={600}><TabPane touch brief={null} automation={automationOf(REVIEW_QUIET, null, PANEL_MANY, true, true)} /></Panel>
           </div>
         </Frame>
         <BriefLines />

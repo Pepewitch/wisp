@@ -52,6 +52,7 @@ import { UpdateManager } from "./update";
 import { pullRequestTitleSync } from "./task-update";
 import { pwaResponse } from "./pwa";
 import { BRIEF_RUN_ENV } from "./turn-input";
+import { sweepCaptureBrowsers } from "./capture/chrome";
 // The generated web app is loaded only when the daemon starts. That keeps
 // source-only CLI commands usable before a checkout has built web-dist;
 // supported serve/test/build entry points generate it first. Bun embeds the
@@ -644,6 +645,8 @@ async function serveOwned(
   resetAttachmentUploads();
   // awaited before the port opens: a request must never observe a half-finished sweep
   await recoverOrphanedTurns(adapters, cfg);
+  // a capture browser a dead daemon left running, and its profile, go before anything new starts
+  await sweepCaptureBrowsers().catch((error: unknown) => console.error(`[wisp] capture sweep: ${error instanceof Error ? error.message : String(error)}`));
   failStaleCreatingTasks(); // a 'creating' row at boot belongs to a dead daemon (a prior audit)
   settleStrandedTasks(); // a 'running'/'stuck' task with no running turn left is settled from its latest turn
   recoverCleanupProgress(); // classify interrupted scripts; slow work starts after listening

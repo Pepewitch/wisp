@@ -5,18 +5,24 @@
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { samplePng } from "../scripts/harness/image-output-probe";
+import { BUILTIN_ADAPTERS } from "../src/adapters";
+import { LOG_DIR, TASKS_DIR } from "../src/config";
+import { publishOutputImage } from "../src/outputs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { autopilotHistory, autopilotStatus, autopilotTurnNotes, resumeAutopilot, setAutopilot } from "../src/autopilot/store";
 import { loadConfig } from "../src/config";
 import type { NewTaskInput } from "../src/domain/task-create";
 import { AUTO_REVIEW } from "../src/migration-auto-review";
 import { REVIEW_PANEL } from "../src/migration-review-panel";
-import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
+import { createTask, createTurn, db, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
 import { submitVerdict, verdictError } from "../src/verify/reviewer";
 import { createPanelRound, getReview, launchedReview, reviewsOf, reviewTokenFor, reviewView, supersedeRound, unretiredReviews, type ReviewRow } from "../src/verify/reviews";
-import { highestTier, roundsOf, type RoundRow } from "../src/verify/rounds";
+import { highestTier, roundsOf, roundView, type RoundRow } from "../src/verify/rounds";
+import { activateDraft, saveDraft } from "../src/verify/recipe";
+import { recordCapture } from "../src/capture/store";
 import { START, created, doneTask, fakeGitHub, forgetTasks, pass, runtime, seed, snapshot } from "./autopilot-harness";
 
 afterEach(forgetTasks);
@@ -39,7 +45,7 @@ function launcher() {
 }
 
 /** A real repository whose PR head changes a few lines: a light round. */
-function smallRepo(): { repo: string; head: string } {
+function smallRepo(changes: Record<string, string> = { "app.ts": "export const a = 2\n" }): { repo: string; head: string } {
   const repo = mkdtempSync(join(tmpdir(), "wisp-panel-repo-"));
   const git = (...args: string[]) => {
     const run = Bun.spawnSync(["git", "-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: repo });
@@ -51,13 +57,16 @@ function smallRepo(): { repo: string; head: string } {
   git("add", "-A");
   git("commit", "-q", "-m", "base");
   git("checkout", "-q", "-b", "feature");
-  writeFileSync(join(repo, "app.ts"), "export const a = 2\n");
+  for (const [path, content] of Object.entries(changes)) {
+    mkdirSync(dirname(join(repo, path)), { recursive: true });
+    writeFileSync(join(repo, path), content);
+  }
   git("add", "-A");
   git("commit", "-q", "-m", "change");
   return { repo, head: git("rev-parse", "HEAD") };
 }
 
-function setup(options: { autoFix?: boolean; repo?: string; head?: string; second?: "off" | null } = {}) {
+function setup(options: { autoFix?: boolean; repo?: string; head?: string; second?: "off" | null; adapters?: Record<string, unknown> } = {}) {
   const clock = { now: START + 10 * 60_000 };
   const { state, github } = fakeGitHub();
   if (options.head) state.pr = snapshot({ head: options.head });
@@ -67,7 +76,7 @@ function setup(options: { autoFix?: boolean; repo?: string; head?: string; secon
   seed(task.id, clock, options.head ? { heads: { [options.head]: new Date(START).toISOString() } } : {});
   const repo = options.repo ?? "/fixture/repo";
   const cfg = { ...loadConfig(), repos: [{ path: repo, ...(options.second === "off" ? { verifySecond: "off" as const } : {}) }] };
-  const rt = runtime(github, clock, {}, cfg, undefined, { launch: ctl.launch });
+  const rt = runtime(github, clock, options.adapters ?? {}, cfg, undefined, { launch: ctl.launch });
   return { clock, state, task, rt, ...ctl };
 }
 
@@ -155,6 +164,20 @@ describe("who is on the panel", () => {
     await pass(rt, task.id, clock);
     expect(autopilotHistory(task.id).filter((entry) => entry.detail.includes("the second reviewer is off"))).toHaveLength(1);
     expect(state.merges).toHaveLength(1);
+  });
+
+  test("a pass carried twice still points at the review that earned it, captures and all", () => {
+    const author = doneTask();
+    const plan = (carried?: ReviewRow[]) => createPanelRound({
+      taskId: author.id, workflowId: "w-carry", pr: 9, head: "c".repeat(40), base: "main", round: 1, counted: true, recipeVersion: null,
+      tier: "standard", signals: null, agents: [{ role: "primary", harness: "fake", model: null, effort: null }], carried,
+    }).reviews;
+    const [origin] = plan();
+    db.run("UPDATE round_reviews SET state = 'pass' WHERE id = ?", [origin!.id]);
+    const [first] = plan([getReview(origin!.id)!]);
+    const [second] = plan([first!]);
+    expect(first!.carried_from).toBe(origin!.id);
+    expect(second!.carried_from).toBe(origin!.id);
   });
 
   test("a round whose diff could not be read does not hold later rounds at deep", () => {
@@ -245,6 +268,47 @@ describe("a reviewer never waits on a person", () => {
     db.run("UPDATE round_reviews SET launched_at = ? WHERE round_id = ?", [new Date(clock.now - 3 * 60 * 60_000).toISOString(), latest(task.id).id]);
     await pass(rt, task.id, clock);
     expect(roleOf(latest(task.id), "primary")).toMatchObject({ state: "error", summary: "ran past 120 minutes" });
+  });
+});
+
+describe("a recipe that requires a screenshot", () => {
+  test("A's pass on a UI area is refused until Wisp holds a capture of it from A's own worktree", async () => {
+    const { repo, head } = smallRepo({ "web/page.tsx": "export const title = 'new'\n" });
+    saveDraft(repo, "tsetup", [{ path: "RECIPE.md", content: "# r" }, { path: "areas/web/AREA.md", content: "---\npaths: web/**\nstatus: proven\nevidence: screenshot\n---" }]);
+    await activateDraft(repo, "test");
+    const { clock, task, rt, state } = setup({ repo, head, second: "off" });
+    await pass(rt, task.id, clock);
+    const round = latest(task.id);
+    expect(roundView(round).required).toEqual(["web"]);
+    const review = roleOf(round, "primary");
+    expect(() => submit(review, { verdict: "pass" })).toThrow("area web needs a screenshot");
+    const base = { task_id: review.reviewer_task_id!, turn: 1, image_id: null, review_id: review.id, area: "web", status: "ok" as const, reason: null, message: null,
+      requested_url: "http://127.0.0.1:20010/", final_url: null, http_status: 200, viewport: "desktop", dpr: 2, width: 1, height: 1, media_type: "image/png",
+      full_page: 0, clipped: 0, selector_used: 0, script_used: 0, settled: 1, errors_json: null, blocked_json: null };
+    recordCapture({ ...base, served_from: "elsewhere" });
+    expect(() => submit(review, { verdict: "pass" })).toThrow("area web needs a screenshot");
+    recordCapture({ ...base, served_from: "worktree" });
+    submit(review, { verdict: "pass" });
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(1);
+  });
+});
+
+describe("a rejection's images", () => {
+  test("each image travels on its own: one the author's harness refuses is named, the rest arrive", async () => {
+    const { clock, task, rt } = setup({ autoFix: true, second: "off", adapters: { fake: BUILTIN_ADAPTERS.cursor } });
+    await pass(rt, task.id, clock);
+    const review = roleOf(latest(task.id), "primary");
+    const turnId = createTurn(review.reviewer_task_id!, 1, "review", null, join(LOG_DIR, `${review.reviewer_task_id}-1.log`), null);
+    const gif = new Uint8Array([...Buffer.from("GIF89a"), 1, 0, 1, 0, 0, 0, 0, 0x3b]);
+    publishOutputImage(turnId, gif, "spinner.gif", "published");
+    publishOutputImage(turnId, samplePng(), "page.png", "published");
+    submit(review, { verdict: "fail", findings: [blocker("The total is wrong")] });
+    await pass(rt, task.id, clock);
+    const message = db.query("SELECT attachments_json FROM task_messages WHERE task_id = ? ORDER BY created_at DESC LIMIT 1").get(task.id) as { attachments_json: string | null };
+    expect((JSON.parse(message.attachments_json ?? "[]") as { name: string }[]).map((file) => file.name)).toEqual(["page.png"]);
+    const feedback = readdirSync(join(TASKS_DIR, task.id, "autopilot"), { recursive: true }).find((path) => String(path).endsWith("REVIEW-FEEDBACK.md"))!;
+    expect(readFileSync(join(TASKS_DIR, task.id, "autopilot", String(feedback)), "utf8")).toContain("- spinner.gif:");
   });
 });
 
