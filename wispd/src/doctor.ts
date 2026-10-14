@@ -11,6 +11,7 @@ import { ALLOWED_ORIGINS_ENV, MIN_TOKEN_LENGTH } from "./routes/auth";
 import { trunc } from "./text";
 import { readUserJson } from "./validate";
 import { BUILD_COMMIT, BUILD_DIRTY, VERSION } from "./version";
+import { findChrome, type ChromeFound } from "./capture/chrome";
 
 const COMMAND = wispCommand();
 
@@ -479,6 +480,13 @@ export interface DoctorDeps {
   currentArch?: string;
   config?: WispConfig;
   adapters?: Record<string, AdapterDef>;
+  /** where `wisp capture` finds Chrome; the real discovery by default */
+  chrome?: (configured: string | undefined) => ChromeFound;
+}
+
+/** `wisp capture` is optional: a missing Chrome is a warning that names the fix, never a failure. */
+export function checkCapture(found: ChromeFound): DoctorCheck {
+  return "path" in found ? ok("capture", `wisp capture uses ${found.path}`) : warn("capture", `wisp capture is unavailable: ${found.reason}`);
 }
 
 function repoPath(entry: WispConfig["repos"][number] | undefined): string | undefined {
@@ -621,6 +629,7 @@ export async function runDoctor(deps: DoctorDeps = {}): Promise<DoctorCheck[]> {
     }
   } else checks.push(fail("daemon", "skipped — config.json is invalid (see above)"));
 
+  checks.push(checkCapture((deps.chrome ?? findChrome)(cfg?.chromePath)));
   checks.push(activationReceipt(checks, ready, selected, project));
   return checks;
 }

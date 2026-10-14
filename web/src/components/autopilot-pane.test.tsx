@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import type { AutoReviewReview, AutoReviewRound } from "../../../shared/api/auto-review"
+import type { AutoReviewEvidence, AutoReviewReview, AutoReviewRound } from "../../../shared/api/auto-review"
 import type { AutopilotHistoryEntry, AutopilotStatus } from "../../../shared/autopilot"
 import { api } from "@/lib/api"
 import { AUTOPILOT_OFF_WORDS } from "@/lib/autopilot-words"
@@ -374,6 +374,113 @@ describe("auto-review's panel in the Autopilot tab", () => {
     expect(screen.queryByText("before the panel")).toBeNull()
     expect(rounds[0]).toHaveTextContent("Round 3·3c41e07·Reviewing")
     expect(within(rounds[0]!).getByRole("button", { name: "Open the reviewer task for round 3" })).toBeInTheDocument()
+  })
+})
+
+const shot = (id: string, capture?: Partial<NonNullable<AutoReviewEvidence["capture"]>>, over: Partial<AutoReviewEvidence> = {}): AutoReviewEvidence => ({
+  turn: 2, id: id.padEnd(64, "0"), name: `${id}.png`, mediaType: "image/png", ...over,
+  capture: capture && { id: `cap-${id}`, area: null, url: "http://127.0.0.1:5173/", servedFrom: "worktree", viewport: "desktop", scriptUsed: false, settled: true, ...capture },
+})
+
+describe("auto-review's evidence in the Autopilot tab", () => {
+  const CAPTURE = { ...ALL, autoReview: true, reviewPanel: true, capture: true }
+  const reviewing: AutopilotStatus = { ...WAITING, autoReview: true, by: "auto-review", reviewRounds: 2, reason: "Reviewing" }
+  const EVIDENCE_ROUNDS = [
+    round("2", 2, "running", {
+      tier: "standard", required: ["web", "admin"],
+      // a verdict the open round withholds: its evidence is not drawn yet, even if the daemon sent some
+      reviews: [review("2a", "primary", "submitted", { evidence: [shot("early")] }), review("2b", "second", "running")],
+    }),
+    round("1", 1, "pass", {
+      tier: "standard", required: ["web", "admin"],
+      reviews: [
+        review("1a", "primary", "pass", {
+          evidence: [
+            shot("home", { area: "web", url: "http://127.0.0.1:5173/settings/profile?tab=a" }),
+            shot("admin", { area: "admin", url: "http://127.0.0.1:3000/admin/users", servedFrom: "elsewhere", viewport: "mobile", scriptUsed: true }),
+            shot("unsure", { servedFrom: "unknown", viewport: "1440x900" }),
+            shot("own", undefined, { reviewerTaskId: "revother" }),
+          ],
+          waivers: [{ area: "billing", reason: "Chrome refused the page: 401 at /billing/login" }],
+        }),
+        review("1b", "second", "pass"),
+      ],
+    }),
+  ]
+
+  it("a settled review shows its images, each saying who made it; a running round shows none", async () => {
+    stub(CAPTURE, [], EVIDENCE_ROUNDS)
+    mount(<AutopilotPane task={withStatus(reviewing)} />)
+    await screen.findByRole("heading", { name: "Reviews" })
+    const rounds = [...document.querySelectorAll("[data-round]")] as HTMLElement[]
+    // the open round's withheld verdict draws no evidence
+    expect(rounds[0]!.querySelectorAll("[data-evidence]")).toHaveLength(0)
+    expect(within(rounds[0]!).queryByRole("list", { name: /^Evidence/ })).toBeNull()
+
+    const strip = within(rounds[1]!).getByRole("list", { name: "Evidence from reviewer A" })
+    const items = [...strip.querySelectorAll("[data-evidence]")] as HTMLElement[]
+    expect(items.map((item) => item.getAttribute("data-evidence"))).toEqual(["captured", "captured", "captured", "published"])
+    expect(items[0]).toHaveTextContent("Captured by Wisp")
+    expect(items[0]).toHaveTextContent("web · desktop · /settings/profile")
+    expect(items[0]).not.toHaveTextContent("outside")
+    expect(items[3]).toHaveTextContent("Published by the reviewer")
+    expect(items[3]).not.toHaveTextContent("Captured by Wisp")
+    // nothing claims more than Wisp saw
+    expect(rounds[1]).not.toHaveTextContent(/verified/i)
+    // bytes come through the output route of the task that published each image
+    expect(within(items[0]!).getByRole("img")).toHaveAttribute("src", `/api/tasks/rev1a/outputs/2/${"home".padEnd(64, "0")}`)
+    expect(within(items[3]!).getByRole("img")).toHaveAttribute("src", `/api/tasks/revother/outputs/2/${"own".padEnd(64, "0")}`)
+    fireEvent.click(within(items[0]!).getByRole("button", { name: "Expand home.png" }))
+    expect(screen.getByTestId("attachment-viewer").querySelector("img")).toHaveAttribute("src", `/api/tasks/rev1a/outputs/2/${"home".padEnd(64, "0")}`)
+    // B published nothing: no strip under its row
+    expect(within(rounds[1]!).queryByRole("list", { name: "Evidence from reviewer B" })).toBeNull()
+  })
+
+  it("marks a page served from elsewhere as a warning, an unknown source and a script quietly", async () => {
+    stub(CAPTURE, [], EVIDENCE_ROUNDS)
+    mount(<AutopilotPane task={withStatus(reviewing)} />)
+    const strip = await screen.findByRole("list", { name: "Evidence from reviewer A" })
+    const elsewhere = strip.querySelector("[data-served=elsewhere]") as HTMLElement
+    const warning = within(elsewhere).getByText("served from outside the reviewer's worktree")
+    expect(warning.className).toContain("text-state-needs-input")
+    expect(elsewhere).toHaveTextContent("admin · mobile · /admin/users")
+    expect(elsewhere).toHaveTextContent("after a script")
+    expect(elsewhere.getAttribute("title")).toContain("http://127.0.0.1:3000/admin/users")
+    const unknown = strip.querySelector("[data-served=unknown]") as HTMLElement
+    expect(within(unknown).getByText("served from an unknown place").className).toContain("text-faint")
+    expect(unknown).toHaveTextContent("1440x900 · /")
+    expect(strip.querySelector("[data-served=worktree]")).not.toHaveTextContent("served from")
+  })
+
+  it("lists A's waived captures as a notice, and the round names the areas that need a capture", async () => {
+    stub(CAPTURE, [], EVIDENCE_ROUNDS)
+    mount(<AutopilotPane task={withStatus(reviewing)} />)
+    const notice = await screen.findByRole("note", { name: "Capture waived by reviewer A" })
+    expect(notice).toHaveTextContent("billing — Chrome refused the page: 401 at /billing/login")
+    const rounds = [...document.querySelectorAll("[data-round]")] as HTMLElement[]
+    expect(rounds[0]).toHaveTextContent("Needs a capture: web, admin")
+    expect(rounds[1]!.querySelector("[data-required]")).toHaveTextContent("Needs a capture: web, admin")
+  })
+
+  it("folds more than six images behind +N more, which shows the rest", async () => {
+    const many = Array.from({ length: 8 }, (_, i) => shot(`tab${i}`, { area: "web" }))
+    stub(CAPTURE, [], [round("1", 1, "pass", { reviews: [review("1a", "primary", "pass", { evidence: many })] })])
+    mount(<AutopilotPane task={withStatus(reviewing)} />)
+    const strip = await screen.findByRole("list", { name: "Evidence from reviewer A" })
+    expect(strip.querySelectorAll("[data-evidence]")).toHaveLength(6)
+    fireEvent.click(within(strip).getByRole("button", { name: "Show 2 more images from reviewer A" }))
+    expect(strip.querySelectorAll("[data-evidence]")).toHaveLength(8)
+    expect(within(strip).queryByRole("button", { name: /more images/ })).toBeNull()
+  })
+
+  it("without features.capture, the same rounds draw no evidence, waivers or required areas", async () => {
+    stub({ ...ALL, autoReview: true, reviewPanel: true }, [], EVIDENCE_ROUNDS)
+    mount(<AutopilotPane task={withStatus(reviewing)} />)
+    await screen.findByRole("heading", { name: "Reviews" })
+    expect(document.querySelectorAll("[data-reviewer]")).toHaveLength(4)
+    expect(document.querySelectorAll("[data-evidence]")).toHaveLength(0)
+    expect(screen.queryByRole("note")).toBeNull()
+    expect(screen.queryByText(/Needs a capture/)).toBeNull()
   })
 })
 

@@ -1,4 +1,5 @@
 import type {
+  AutoReviewEvidence,
   AutoReviewFinding,
   AutoReviewReview,
   AutoReviewRole,
@@ -215,4 +216,68 @@ export function recipeTaskWords(task: NonNullable<VerificationStatus["task"]>): 
   if (task.mode === "setup") return "Setting up the recipe"
   if (task.mode === "improve") return "Improving the recipe"
   return task.area ? `Fixing ${task.area}` : "Fixing the recipe"
+}
+
+/* ── evidence: what a reviewer showed, and what Wisp captured ──────────── */
+
+/** Evidence shows only once a review has settled: while its round runs, the daemon sends none. */
+export function reviewSettled(review: AutoReviewReview): boolean {
+  return review.state !== "running" && review.state !== "pending" && review.state !== "submitted"
+}
+
+/** How many thumbnails a strip draws before it folds the rest behind `+N more`. */
+export const EVIDENCE_SHOWN = 6
+
+/** Who made the image. Never "verified": a capture proves only what Wisp saw. */
+export const CAPTURED_WORD = "Captured by Wisp"
+export const PUBLISHED_WORD = "Published by the reviewer"
+
+/** Where a captured page came from, when that is worth a word: a warning, or a quiet unknown. */
+export const SERVED_ELSEWHERE_WORDS = "served from outside the reviewer's worktree"
+export const SERVED_UNKNOWN_WORDS = "served from an unknown place"
+export const SCRIPT_WORDS = "after a script"
+
+/** `/settings/profile` from a sanitized URL; the URL itself when it does not parse. */
+export function capturePath(url: string): string {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.pathname}${parsed.hash}`
+  } catch {
+    return url
+  }
+}
+
+/** A capture's provenance line: `web · desktop · /settings`, with the area only when it named one. */
+export function captureDetail(capture: NonNullable<AutoReviewEvidence["capture"]>): string {
+  return [capture.area, capture.viewport, capturePath(capture.url)].filter(Boolean).join(" · ")
+}
+
+/** A thumbnail's title: everything its caption truncates, and what each mark means. */
+export function evidenceTitle(evidence: AutoReviewEvidence): string {
+  const capture = evidence.capture
+  if (!capture) return `${PUBLISHED_WORD}\n${evidence.name}`
+  const lines = [CAPTURED_WORD, evidence.name]
+  if (capture.area) lines.push(`Area: ${capture.area}`)
+  lines.push(`Viewport: ${capture.viewport}`, `Opened: ${capture.url}`)
+  if (capture.servedFrom === "worktree") lines.push("Served from the reviewer's worktree")
+  else if (capture.servedFrom === "elsewhere") lines.push(`${upper(SERVED_ELSEWHERE_WORDS)}: it may not show this change`)
+  else if (capture.servedFrom === "unknown") lines.push("Wisp could not tell where the page was served from")
+  if (capture.scriptUsed) lines.push("Taken after the reviewer's script ran on the page")
+  if (!capture.settled) lines.push("Taken before the network went quiet")
+  return lines.join("\n")
+}
+
+/** The heading over A's waived captures, each `area — the reason Wisp recorded`. */
+export const WAIVED_WORD = "Capture waived"
+
+/** `Needs a capture: web, admin`: the recipe areas whose change reviewer A must show. */
+export function requiredWords(required: readonly string[]): string {
+  return `Needs a capture: ${required.join(", ")}`
+}
+
+/** The required line's title. */
+export const REQUIRED_TITLE = "These recipe areas changed, so reviewer A must show a capture Wisp took of each, or say why it could not"
+
+function upper(words: string): string {
+  return `${words[0]!.toUpperCase()}${words.slice(1)}`
 }

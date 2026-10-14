@@ -22,7 +22,10 @@ import { startNextQueuedMessage } from "../runner"
 import { createTaskMessage, getTask, randomId } from "../store"
 import { db } from "../store-database"
 import type { Task } from "../types"
+import { captureAvailable } from "../capture/chrome"
+import { capturesOfReview } from "../capture/store"
 import { maxTier, numstatOf, signalsOf, tierOf } from "./depth"
+import { evidenceShortfall, requiredAreas, waiversError } from "./evidence"
 import { recipePrompt, reviewerPrompt, verdictNudge, type RecipePromptInput } from "./prompts"
 import {
   activeRecipe, AREA_INDEX, fetchBase, fetchPullHead, matchAreas, readRecipeFile, RECIPE_INDEX, recipeSettings, recipeVersion, reviewRulesSection, type RecipeArea,
@@ -131,6 +134,7 @@ export async function planRound(start: ReviewerStart, input: {
   const { round } = createPanelRound({
     taskId: author.id, workflowId: input.workflowId, pr: pr.number, head: pr.head, base: pr.baseRefName, round: input.round, counted: input.counted,
     recipeVersion: recipe ? await recipeVersion(author.repo_path) : null, tier, signals: snapshot.signals, agents, carried: input.carried,
+    required: recipe ? requiredAreas(snapshot.matched, snapshot.changed, recipeSettings(author.repo_path).docs) : [],
   })
   roundSnapshots.set(round.id, snapshot)
   for (const id of roundSnapshots.keys()) if (roundSnapshots.size > KEPT_SNAPSHOTS) roundSnapshots.delete(id)
@@ -169,6 +173,7 @@ export async function launchReview(start: ReviewerStart, input: {
     pr: { number: pr.number, title: author.custom_title ? author.title : `the change from task ${author.id}`, url: pr.url, base: pr.baseRefName, head: pr.head },
     round: round.round, budget: input.budget, counted: round.counted === 1, goal: authorGoal(author), repoPath: author.repo_path,
     changed: snapshot.changed, previous: previous.map((earlier) => roundView(earlier)), authorTaskId: author.id,
+    capture: captureAvailable(start.cfg.chromePath), required: parsedList(round.required_json),
     recipe: {
       version: round.recipe_version,
       index: recipe ? readRecipeFile(author.repo_path, RECIPE_INDEX) : null,
@@ -219,7 +224,7 @@ export async function startRecipeTask(start: ReviewerStart, input: {
 async function launchRecipeTask(start: ReviewerStart, input: Parameters<typeof startRecipeTask>[1]): Promise<{ task: Task } | { error: string; status: number }> {
   const promptInput: RecipePromptInput = {
     mode: input.mode, projectName: input.projectName, repoPath: input.repoPath, area: input.area, note: input.note,
-    complaints: input.complaints, hasRecipe: activeRecipe(input.repoPath) !== null,
+    complaints: input.complaints, hasRecipe: activeRecipe(input.repoPath) !== null, capture: captureAvailable(start.cfg.chromePath),
   }
   const title = input.mode === "setup" ? `Set up verification · ${input.projectName}`
     : input.mode === "improve" ? `Improve verification · ${input.projectName}`
@@ -245,7 +250,7 @@ export function reviewerEvidence(reviewerTaskId: string): AutoReviewEvidence[] {
 
 const codePoints = (text: string): number => [...text].length
 
-const VERDICT_FIELDS = new Set(["token", "verdict", "cause", "summary", "findings", "recipeFeedback", "recipeArea", "reviewed", "rationale", "escalate"])
+const VERDICT_FIELDS = new Set(["token", "verdict", "cause", "summary", "findings", "recipeFeedback", "recipeArea", "reviewed", "rationale", "escalate", "waivers"])
 const LEGACY_FINDING_FIELDS = new Set(["title", "detail", "file", "line"])
 const FINDING_FIELDS = new Set([...LEGACY_FINDING_FIELDS, "severity", "lens"])
 const LENSES = new Set(["correctness", "architecture", "slop", "security", "performance", "tests", "docs", "verification"])
@@ -265,6 +270,7 @@ export function verdictError(body: Record<string, unknown>, context: VerdictCont
   if (unknown) return `unknown field '${unknown}'`
   if (typeof body.token !== "string" || body.token === "") return "token is required (WISP_REVIEW_TOKEN, set only in a reviewer's turns)"
   return verdictShapeError(body, context) ?? findingsError(body.findings, body.verdict, context) ?? recipeFieldsError(body) ?? panelFieldsError(body, context)
+    ?? waiverFieldError(body.waivers, context)
 }
 
 function verdictShapeError(body: Record<string, unknown>, context: VerdictContext): string | null {
@@ -291,6 +297,24 @@ function findingsError(findings: unknown, verdict: unknown, context: VerdictCont
   if (verdict === "fail" && blocking === 0) return "a fail verdict needs at least one blocking finding (notes alone do not stop a merge)"
   if (verdict === "pass" && blocking > 0) return "a pass carries no blocking finding: fail instead, or make it a note"
   return null
+}
+
+/** Waivers belong to the verifying reviewer of a review that knows them (protocol 3). */
+function waiverFieldError(raw: unknown, context: VerdictContext): string | null {
+  if (raw === undefined) return null
+  if (context.protocol < 3) return "waivers are not part of this review's verdict"
+  if (context.role === "second") return "waivers are the verifying reviewer's: reviewer B does not capture"
+  return waiversError(raw)
+}
+
+/** A JSON list of strings, or empty. */
+function parsedList(json: string | null | undefined): string[] {
+  try {
+    const value: unknown = JSON.parse(json ?? "[]")
+    return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : []
+  } catch {
+    return []
+  }
 }
 
 function findingError(finding: unknown, context: VerdictContext): string | null {
@@ -362,11 +386,16 @@ export function submitVerdict(reviewerTaskId: string, body: AutoReviewVerdictBod
     title: finding.title.trim(), ...(finding.detail ? { detail: finding.detail } : {}), ...(finding.file ? { file: finding.file } : {}),
     ...(finding.line ? { line: finding.line } : {}), ...(finding.severity ? { severity: finding.severity } : {}), ...(finding.lens ? { lens: finding.lens } : {}),
   }))
+  const evidence = reviewerEvidence(reviewerTaskId).map((image) => ({ ...image, reviewerTaskId }))
+  const waivers = (body.waivers ?? []).map((waiver) => ({ area: waiver.area, reason: waiver.reason.trim() }))
+  if (state === "pass" && review.role === "primary" && review.protocol >= 3) {
+    const short = evidenceShortfall({ required: parsedList(getRound(review.round_id)?.required_json), captures: capturesOfReview(review.id), waivers, images: evidence.length })
+    if (short) throw new VerdictError(`Not a pass yet: ${short}`, 400)
+  }
   const ok = finishReview(review.id, {
     state, cause: body.cause ?? null, summary: body.summary.trim(), rationale: body.rationale?.trim() || null, findings,
     reviewed: body.reviewed?.map((item) => item.trim()).filter(Boolean) ?? [], recipeFeedback: body.recipeFeedback?.trim() || null,
-    recipeArea: body.recipeArea ?? null, evidence: reviewerEvidence(reviewerTaskId).map((image) => ({ ...image, reviewerTaskId })),
-    escalated: body.escalate?.reason.trim() || null,
+    recipeArea: body.recipeArea ?? null, evidence, escalated: body.escalate?.reason.trim() || null, waivers,
   }, now)
   if (!ok) throw new VerdictError("This review already ended", 409)
   return { round: getRound(review.round_id)!, review: getReview(review.id)! }

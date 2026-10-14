@@ -178,6 +178,10 @@ jobs:
           WISP_BROWSER_LOGS: ${{ runner.temp }}/browser-security/logs
           WISP_BROWSER_SCREENSHOTS: ${{ runner.temp }}/browser-security/screenshots
         run: bun run check:browser-security
+      # wisp capture's boundary, in the same real Chrome: listeners count the
+      # connections a refused port receives (required here; CI=true fails a missing Chrome)
+      - name: wisp capture's browser stays inside its ports
+        run: bun run check:capture
       - name: keep the daemon log and screenshots of a failed run
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -72,6 +72,11 @@ const COMMAND_USAGE = {
   ${COMMAND} output list <task> --turn <n> [--json]    list image outputs and save commands
   ${COMMAND} output save <task> <image-id> --turn <n> --out <new-file>
                                                     save an output without overwriting an existing file`,
+  capture: `  ${COMMAND} capture <url> [--area <name>] [--viewport desktop|mobile|<w>x<h>] [--dark] [--selector <css>]
+            [--full-page] [--wait-for <css>] [--wait <ms>] [--script <file.js>] [--allow-port <n>]… [--name <label>] [--json]
+                                                    Wisp screenshots a page on this machine's loopback in its own
+                                                    headless Chrome, stores it in the running turn, and prints a
+                                                    file to look at (inside a task's turn; --script runs after load)`,
   brief: `  ${COMMAND} brief show [task] [--json]              the agent's latest task brief, its turn, and how current it is
   ${COMMAND} brief enable|disable [task]             ask each turn's agent for a short brief (off by default;
                                                     enabling starts with the next turn and never starts one)

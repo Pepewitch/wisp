@@ -49,6 +49,8 @@ export interface RecipeArea {
   paths: string[]
   /** proven: the recipe task drove it once end to end and saw it work */
   status: "proven" | "unproven"
+  /** screenshot: reviewer A's pass on a change here needs a `wisp capture` from its own worktree */
+  evidence: "screenshot" | "none"
 }
 
 export interface RecipeSnapshot {
@@ -94,8 +96,8 @@ export function recipePathError(path: string): string | null {
   return null
 }
 
-/** The frontmatter of an AREA.md: `paths:` (a comma list, or `- glob` lines) and `status:`. */
-export function parseAreaFrontmatter(text: string): { paths: string[]; status: "proven" | "unproven" } | string {
+/** The frontmatter of an AREA.md: `paths:` (a comma list, or `- glob` lines), `status:` and `evidence:`. */
+export function parseAreaFrontmatter(text: string): Omit<RecipeArea, "name"> | string {
   const lines = text.replace(/\r\n/g, "\n").split("\n")
   if (lines[0]?.trim() !== "---") return "starts with no frontmatter (a '---' line, then 'paths: …')"
   const end = lines.indexOf("---", 1)
@@ -103,6 +105,7 @@ export function parseAreaFrontmatter(text: string): { paths: string[]; status: "
   if (closing < 0) return "has frontmatter with no closing '---' line"
   const paths: string[] = []
   let status: "proven" | "unproven" = "unproven"
+  let evidence: string = "none"
   let listing = false
   for (const raw of lines.slice(1, closing)) {
     const line = raw.trimEnd()
@@ -117,13 +120,17 @@ export function parseAreaFrontmatter(text: string): { paths: string[]; status: "
       else paths.push(...value!.replace(/^\[|\]$/g, "").split(",").map(unquote).filter(Boolean))
     } else if (key === "status") {
       status = unquote(value!) === "proven" ? "proven" : "unproven"
+    } else if (key === "evidence") {
+      evidence = unquote(value!)
     }
   }
+  // a typo must not switch the rule off in silence
+  if (evidence !== "screenshot" && evidence !== "none") return `has 'evidence: ${evidence}': it is 'screenshot' or 'none'`
   const globs = paths.map((glob) => glob.trim()).filter(Boolean)
   if (globs.length === 0) return "names no paths (frontmatter 'paths: apps/web/**' says which changes belong to the area)"
   const bad = globs.find((glob) => glob.startsWith("/") || glob.split("/").includes(".."))
   if (bad) return `has a path outside the repository: ${bad}`
-  return { paths: globs, status }
+  return { paths: globs, status, evidence }
 }
 
 const unquote = (value: string): string => value.trim().replace(/^["']|["']$/g, "").trim()

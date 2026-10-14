@@ -34,6 +34,8 @@ export interface RoundRow {
   /** null on a phase-1 round */
   tier?: AutoReviewTier | null
   signals_json?: string | null
+  /** recipe areas reviewer A must show with a capture, fixed when the round was planned */
+  required_json?: string | null
   /** the panel's required roles, as JSON */
   roles?: string | null
   /** 1: a phase-1 round (one reviewer, no rubric); 2: a panel */
@@ -127,5 +129,6 @@ export function roundView(row: RoundRow, reviews: AutoReviewRound["reviews"] = [
     evidence: parsed<AutoReviewEvidence[]>(row.evidence_json, []), reviewerTaskId: row.reviewer_task_id,
     recipeVersion: row.recipe_version, createdAt: row.created_at, finishedAt: row.finished_at,
     tier: row.tier ?? null, signals: parsed<AutoReviewSignals | null>(row.signals_json ?? null, null), legacy: (row.protocol ?? 1) < 2, reviews,
+    required: parsed<string[]>(row.required_json ?? null, []),
   }
 }

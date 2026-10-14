@@ -116,6 +116,21 @@ The round's outcome, in this order:
 Passing CI, passing unit tests, or a PR description that says it works is
 never enough for a pass. A change to a screen needs screenshots of that screen.
 
+**Screenshots a recipe can require.** An area whose `AREA.md` says
+`evidence: screenshot` makes the requirement explicit. When a round's diff
+changes files in that area beyond docs and tests, the round records the area
+as needing a capture; a later recipe activation never changes a running round.
+Reviewer A's pass is then refused until Wisp holds a
+[`wisp capture`](CAPTURE.md) of that area, tagged `--area <name>` and served
+from A's own worktree. Wisp checks its own records, not A's word.
+
+If Wisp could not capture (it recorded no Chrome, a launch failure, a busy
+browser or a timeout, or the page was served from elsewhere or unknowably), A
+can name the area in its verdict's `waivers` with a reason, beside an image it
+published with `wisp output add`. Waivers show on the round and in the bounce.
+Reviewer B never captures and is never held to this. Reviews in flight across
+the upgrade and passes carried from an earlier round are exempt.
+
 **Back to the author.** A rejection is sent once per round as
 `[Wisp auto-review · PR #7 · round 1 of 3 · head abc1234]`, pointing at a
 `REVIEW-FEEDBACK.md` beside the task's data (never in its worktree): both
@@ -171,15 +186,20 @@ with have their own workflow and tools, so Wisp keeps the recipe in its own home
   drafts/<task>/          a recipe task's proposal, waiting for you to activate it
 ```
 
-An area starts with frontmatter naming the repository paths it covers and
-whether its recipe was proven end to end:
+An area starts with frontmatter naming the repository paths it covers,
+whether its recipe was proven end to end, and (for a web UI Wisp can open)
+whether a reviewer's pass needs a capture of it:
 
 ```markdown
 ---
 paths: apps/web/**, packages/ui/**
 status: proven
+evidence: screenshot
 ---
 ```
+
+`evidence` is `screenshot` or `none` (the default); any other value is refused
+when the draft is saved.
 
 Then come its sections: Launch, Health check, Drive, Evidence and Cleanup.
 

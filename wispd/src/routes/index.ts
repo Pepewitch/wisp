@@ -30,6 +30,7 @@ import {
   updateSuffixPromptRoute,
 } from "./suffix-prompts";
 import { outputRoute } from "./outputs";
+import { CAPTURE_PATH, captureRoute } from "./capture";
 import { attachmentRoute, taskMessageRoute, taskMessageSendNowRoute } from "./task-messages";
 import { createTaskRoute, listTasksRoute, taskRoute } from "./tasks";
 import { updateRoute } from "./update";
@@ -76,6 +77,7 @@ function taskRoutes(
     if (!task) return err(`no such task: ${logStreamMatch[1]}`, 404);
     return logStream(task, url, adapters);
   }
+  if (CAPTURE_PATH.test(path)) return captureRoute(req, path, cfg);
   const outputResponse = outputRoute(req, url, path, method);
   if (outputResponse !== null) return outputResponse;
   const attachmentResponse = attachmentRoute(path, method);

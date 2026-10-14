@@ -3,94 +3,13 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { CdpClient } from "../wispd/src/capture/cdp";
 
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const APP_ORIGIN = "http://127.0.0.1:8710";
 const APP_URL = `${APP_ORIGIN}/?gate=1`;
 const DEFAULT_OUTDIR = "/tmp/wisp-captures";
 const READY_TIMEOUT_MS = 15_000;
-
-type CdpMessage = {
-  id?: number;
-  result?: Record<string, unknown>;
-  error?: { code?: number; message?: string };
-};
-
-type Pending = {
-  method: string;
-  resolve: (result: Record<string, unknown>) => void;
-  reject: (error: Error) => void;
-};
-
-/** A minimal CDP client: one browser WebSocket, with flat target sessions. */
-class CdpClient {
-  private readonly socket: WebSocket;
-  private nextId = 1;
-  private readonly pending = new Map<number, Pending>();
-
-  private constructor(socket: WebSocket) {
-    this.socket = socket;
-    socket.onmessage = (event) => {
-      const raw = typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
-      let message: CdpMessage;
-      try {
-        message = JSON.parse(raw) as CdpMessage;
-      } catch {
-        return;
-      }
-
-      if (message.id === undefined) return; // Events do not have command ids.
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      if (message.error) {
-        pending.reject(new Error(`CDP ${pending.method}: ${message.error.message ?? "command failed"}`));
-      } else {
-        pending.resolve(message.result ?? {});
-      }
-    };
-    socket.onclose = () => {
-      for (const pending of this.pending.values()) pending.reject(new Error("CDP WebSocket closed"));
-      this.pending.clear();
-    };
-  }
-
-  static async connect(url: string): Promise<CdpClient> {
-    const socket = new WebSocket(url);
-    socket.binaryType = "arraybuffer";
-    await new Promise<void>((resolve, reject) => {
-      const fail = () => reject(new Error(`could not connect to Chrome DevTools at ${url}`));
-      socket.onopen = () => resolve();
-      socket.onerror = fail;
-    });
-    return new CdpClient(socket);
-  }
-
-  /**
-   * With flatten:true, target commands still use the browser WebSocket, but
-   * carry the attached target's sessionId in each wire message. Responses and
-   * events carry that same field; command ids are enough to route our replies.
-   */
-  send(method: string, params: Record<string, unknown> = {}, sessionId?: string): Promise<Record<string, unknown>> {
-    const id = this.nextId++;
-    const message = { id, method, params, ...(sessionId ? { sessionId } : {}) };
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { method, resolve, reject });
-      try {
-        this.socket.send(JSON.stringify(message));
-      } catch (error) {
-        this.pending.delete(id);
-        reject(error instanceof Error ? error : new Error(String(error)));
-      }
-    });
-  }
-
-  close(): void {
-    if (this.socket.readyState === WebSocket.OPEN || this.socket.readyState === WebSocket.CONNECTING) {
-      this.socket.close();
-    }
-  }
-}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));

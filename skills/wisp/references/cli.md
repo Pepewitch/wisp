@@ -37,6 +37,20 @@ are included in export. PNG, JPEG, GIF and WebP are supported, up to 8 MiB
 per image and 32 images / 64 MiB per turn. `save` refuses to overwrite a file.
 See [Image outputs](../../../docs/IMAGE-OUTPUTS.md) for native capture support.
 
+```sh
+wisp capture <url> [--area <name>] [--viewport desktop|mobile|<w>x<h>] [--dark] [--selector <css>]
+             [--full-page] [--wait-for <css>] [--wait <ms>] [--script <file.js>] [--allow-port <n>]… [--name <label>] [--json]
+```
+
+`capture` screenshots a page on this machine's loopback (`localhost`,
+`127.0.0.1`, `*.localhost`) in Wisp's own headless Chrome and stores it in the
+running turn. It prints a `.png`/`.jpg` file to look at, the final URL and
+status, and where the page was served from. `--script` runs after load
+(awaited, 10 s). A failure is recorded with its reason and exits 1; with no
+Chrome, publish your own image with `output add`. Reviewer and recipe tasks
+launch their app on `PORT` (`WISP_PORT_RANGE`). See
+[wisp capture](../../../docs/CAPTURE.md).
+
 ## Workflows
 
 ```sh

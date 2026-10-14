@@ -10,6 +10,9 @@ const REPEAT_FLAGS = new Set(["attach", "image", "copy"]);
 for (const flag of ["every", "prompt", "at", "lifetime", "max-wakeups", "params", "file", "replace"]) VALUE_FLAGS.add(flag);
 // auto-review and verification recipes
 for (const flag of ["round", "project", "draft", "area", "note", "pr"]) VALUE_FLAGS.add(flag);
+// wisp capture
+for (const flag of ["viewport", "selector", "wait-for", "wait", "script"]) VALUE_FLAGS.add(flag);
+REPEAT_FLAGS.add("allow-port");
 
 export function parseArgs(args: string[]): Parsed {
   const positional: string[] = [];

@@ -59,6 +59,8 @@ export function harnessesRoute(
       autoReview: true,
       // auto-review rounds carry a panel (reviews[]), a tier and the rubric; projects a second reviewer
       reviewPanel: true,
+      // POST /api/tasks/:id/capture, GET /api/tasks/:id/captures, and capture provenance on review evidence
+      capture: true,
     },
     harnesses: Object.entries(adapters).map(([name, def]) => ({
       name,
