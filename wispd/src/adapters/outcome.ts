@@ -1,4 +1,5 @@
 import { readContextPoint, type ContextPoint } from "./context";
+import { addUsageBlobs } from "./usage";
 import type { AdapterDef, ParsedTurn } from "./types";
 import { isRecord } from "../validate";
 import { boundJsonRecord, truncateUtf8 } from "../recording/bounds";
@@ -22,6 +23,7 @@ export interface OutcomeCheckpointV1 {
   candidateResult: string | null;
   settled: boolean;
   failed: boolean;
+  /** codex's terminal usage; for the mapped kind, the sum over its result events. */
   usage: unknown | null;
   claudeError: string | null;
   codexTerminalError: string | null;
@@ -255,7 +257,7 @@ export class IncrementalOutcomeReducer {
     const rawSession = this.def.parse.session ? event[this.def.parse.session] : null;
     const rawModel = this.def.parse.model ? event[this.def.parse.model] : null;
     const needsInputField = this.def.parse.needsInput;
-    const rawUsage = this.def.parse.usage ? event[this.def.parse.usage] : null;
+    const rawUsage = this.summedUsage() ? this.usage : this.def.parse.usage ? event[this.def.parse.usage] : null;
     return {
       result,
       session: typeof rawSession === "string" ? rawSession : null,
@@ -341,6 +343,12 @@ export class IncrementalOutcomeReducer {
     this.settled = checkpoint.settled;
     this.failed = checkpoint.failed;
     this.usage = checkpoint.usage;
+    // A checkpoint written before result usage was summed holds it only on
+    // the result event; seed the sum from it so a later result adds to it.
+    const usageField = this.def.parse.usage;
+    if (this.summedUsage() && this.usage === null && usageField && isRecord(this.resultEvent?.[usageField])) {
+      this.usage = this.resultEvent[usageField];
+    }
     this.claudeError = checkpoint.claudeError;
     this.codexTerminalError = checkpoint.codexTerminalError;
     this.codexEventError = checkpoint.codexEventError;
@@ -455,18 +463,36 @@ export class IncrementalOutcomeReducer {
     }
   }
 
+  /**
+   * Whether the mapped kind adds up usage across its result events rather
+   * than keeping the last one's. Only a declared resultType names a terminal
+   * event; without one every JSON line is a result candidate, and adding up
+   * whatever usage each line carried would count arbitrary events.
+   */
+  private summedUsage(): boolean {
+    return this.kind === "mapped-json" && Boolean(this.def.parse.resultType && this.def.parse.usage);
+  }
+
   private pushMapped(event: Record<string, any>): void {
     if (!this.def.parse.resultType || event.type === this.def.parse.resultType) {
+      const summed = this.summedUsage();
       this.resultEvent = this.resultFields(event, [
         this.def.parse.result,
         this.def.parse.session,
         this.def.parse.model,
         this.def.parse.needsInput,
-        this.def.parse.usage,
+        summed ? undefined : this.def.parse.usage,
         "isError",
         "is_error",
       ]);
       this.settled = true;
+      // A claude turn emits a result per model cycle (a background task's
+      // notification, a retry after a connection error), each reporting only
+      // its own cycle; the turn's usage is all of them. See addUsageBlobs.
+      const usage = summed ? event[this.def.parse.usage!] : undefined;
+      if (isRecord(usage)) {
+        this.usage = this.factValue(isRecord(this.usage) ? addUsageBlobs(this.usage, usage) : usage);
+      }
     }
   }
 

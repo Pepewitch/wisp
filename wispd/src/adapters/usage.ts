@@ -1,3 +1,4 @@
+import { isRecord } from "../validate";
 import type { AdapterDef, UsageSummary } from "./types";
 
 /**
@@ -135,6 +136,32 @@ export function formatUsage(def: AdapterDef, blob: unknown): UsageSummary | null
     throw new Error(`adapter usageFormat '${def.usageFormat}' is not a known formatter (known: ${known})`);
   }
   return formatter(blob);
+}
+
+/**
+ * Add a later terminal event's raw usage blob to the turn's so far. A claude
+ * turn can emit several `result` events — one per model cycle a background
+ * task's notification wakes, or a retry after a connection error — and each
+ * reports only its own cycle. Keeping the last one loses the rest: a turn that
+ * did real work and then failed early on a zero-usage retry reported 0 tokens.
+ *
+ * This is opencode's per-step addition (see "opencode-tokens"), done on the
+ * raw blob so its shape and every formatter stay unchanged: numbers add,
+ * nested records add field by field, lists concatenate, and any other value
+ * (claude's `service_tier`) is the later event's. A later null never erases
+ * an earlier count. A turn with one terminal event keeps its blob exactly as
+ * emitted.
+ */
+export function addUsageBlobs(earlier: Record<string, unknown>, later: Record<string, unknown>): Record<string, unknown> {
+  const sum: Record<string, unknown> = { ...earlier };
+  for (const [key, value] of Object.entries(later)) {
+    const prior = sum[key];
+    if (typeof prior === "number" && typeof value === "number") sum[key] = prior + value;
+    else if (isRecord(prior) && isRecord(value)) sum[key] = addUsageBlobs(prior, value);
+    else if (Array.isArray(prior) && Array.isArray(value)) sum[key] = [...prior, ...value];
+    else if (value !== undefined && value !== null) sum[key] = value;
+  }
+  return sum;
 }
 
 const USAGE_FIELDS = [

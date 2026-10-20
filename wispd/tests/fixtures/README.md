@@ -243,6 +243,18 @@ markers), its 429 quota mapper, and its own "Provider is overloaded"
 rendering. `bun run harness:snapshot` re-checks that all nine still exist in
 the shipped binary.
 
+## claude retried result — synthetic, 2026-10-20
+
+`claude-retried-result.jsonl` is **not** a capture. It is written from scratch
+in the shape of `claude -p --output-format stream-json` (field names and nesting
+as in `claude-unknown-model.jsonl`, claude-code 2.1.283 version string), to pin
+a turn that emits two `result` events: the first, after two real model calls,
+fails with "Connection refused" and reports that cycle's usage; the second, a
+retry that never reached the API, reports all zeros, after a zero-usage
+synthetic assistant event. It proves that the turn's usage is the sum of both
+results, not the last one's zeros, and that the context reading stays the last
+real call's prompt.
+
 ## droid / claude init events — captured 2026-08-22 from real Wisp-run turns
 
 | file | harness | model field |
