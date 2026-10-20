@@ -148,6 +148,16 @@ function messageParams(
  */
 const ASK_USER_GRACE_MS = 10_000;
 
+/**
+ * Tools whose calls only keep Droid's own books. Droid often acknowledges one
+ * after its answer ("Plan is up-to-date."), and that line must not become the
+ * turn's result.
+ */
+const BOOKKEEPING_TOOLS = new Set(["TodoWrite"]);
+
+/** The longest assistant message after only bookkeeping tools that still counts as an acknowledgement. */
+const ACKNOWLEDGEMENT_MAX_CHARS = 200;
+
 /** What a superseded questionnaire tells the model, in place of an answer. */
 const DEFERRED_ANSWER = "(no selection — see the message that follows)";
 
@@ -180,6 +190,8 @@ export class DroidLiveDriver {
   private sessionId: string | null;
   private model: string | null;
   private finalText = "";
+  /** Names of the tools called since the last assistant text. */
+  private toolsSinceText: string[] = [];
   private subagents: DroidSubagentStream | null = null;
   private readonly questions = new Map<string, PendingQuestion>();
   private askUserGrace: ReturnType<typeof setTimeout> | null = null;
@@ -475,7 +487,11 @@ export class DroidLiveDriver {
     });
   }
 
-  /** Last assistant prose is the conclusion; error copy lives on the error event, not here. */
+  /**
+   * Last assistant prose is the conclusion, except a short acknowledgement of
+   * bookkeeping tools (see `keepsAnswer`). Error copy lives on the error
+   * event, not here.
+   */
   private emitCompletion(options: {
     usage: Record<string, number> | null;
     isError: boolean;
@@ -504,7 +520,8 @@ export class DroidLiveDriver {
         .map((block) => block.text as string);
       if (texts.length > 0) {
         const text = texts.join("\n");
-        this.finalText = text;
+        if (!this.keepsAnswer(text)) this.finalText = text;
+        this.toolsSinceText = [];
         if (typeof message.modelId === "string") this.model = message.modelId;
         this.options.emit({
           type: "message",
@@ -518,6 +535,7 @@ export class DroidLiveDriver {
     }
     for (const block of content) {
       if (block.type === "tool_use") {
+        this.toolsSinceText.push(String(block.name));
         this.options.emit({
           type: "tool_call",
           id: block.id,
@@ -555,6 +573,22 @@ export class DroidLiveDriver {
         });
       }
     }
+  }
+
+  /**
+   * Whether `text` only acknowledges bookkeeping, so the answer before it
+   * stays the turn's result: every tool called since the previous assistant
+   * text was a bookkeeping tool, and `text` is short. The message itself
+   * still reaches the transcript unchanged.
+   */
+  private keepsAnswer(text: string): boolean {
+    const tools = this.toolsSinceText;
+    return (
+      this.finalText.trim() !== "" &&
+      tools.length > 0 &&
+      tools.every((name) => BOOKKEEPING_TOOLS.has(name)) &&
+      text.trim().length <= ACKNOWLEDGEMENT_MAX_CHARS
+    );
   }
 
   failPending(message: string): void {
