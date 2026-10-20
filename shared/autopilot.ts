@@ -66,6 +66,14 @@ export interface AutopilotStatus {
    * for a while. It is still on, for the task's next PR or next review.
    */
   done: boolean
+  /**
+   * The task's latest turn ended on the network (its detail starts
+   * `network: `) and Wisp resumes it on its own: resume `resume` of `of` is
+   * due at `resumesAt`, ISO-8601. A client shows the task as paused, not
+   * failed. Null otherwise, and once the resumes are spent: the task is then
+   * failed and waits for a person. Absent from an older daemon.
+   */
+  network?: { resumesAt: string; resume: number; of: number } | null
   /** when `reason` last changed, ISO-8601; null when never armed */
   updatedAt: string | null
 }

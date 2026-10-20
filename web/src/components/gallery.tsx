@@ -39,7 +39,7 @@ import {
   HeaderClusterSpecimen,
   UpdateGallerySpecimen,
 } from "@/components/update-gallery-specimen"
-import { backgroundLabel, STATE_LABEL } from "@/lib/state"
+import { backgroundLabel, NETWORK_PAUSED_LABEL, STATE_LABEL } from "@/lib/state"
 import { REPOS, STATUS, TASKS } from "@/lib/fixtures"
 import { useTheme } from "@/lib/theme"
 import { TASK_STATES } from "@/lib/types"
@@ -283,6 +283,12 @@ function FoundationSpecimens() {
                 <span className="font-mono text-[10.5px] text-faint">{s}</span>
               </div>
             ))}
+            <div className="flex items-center gap-2.5">
+              <StateDot state="failed" pausedOnNetwork />
+              <span className="text-[12px] text-fg-secondary">{NETWORK_PAUSED_LABEL}</span>
+              <Rule />
+              <span className="font-mono text-[10.5px] text-faint">failed · network</span>
+            </div>
           </div>
           <BackgroundRingSpecimens />
           <p className="mt-5 border-t border-border pt-4 text-[11.5px] leading-relaxed text-muted-foreground">

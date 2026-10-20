@@ -18,6 +18,7 @@ import {
 } from "../workflows/store"
 import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "./type"
 import { nextDelay, type Backoff } from "./cadence"
+import type { Task } from "../types"
 import { authorReviewNote } from "../verify/prompts"
 import { activeRecipe, readRecipeFile, RECIPE_INDEX, reviewRulesSection } from "../verify/recipe"
 
@@ -98,6 +99,10 @@ export interface AutopilotCheckpoint {
   reviewBase?: number
   /** Resume was pressed: a round whose reviewer gave no verdict is asked again */
   reviewRetry?: boolean
+  /** automatic resumes after turns that ended on the network, in a row, and the last one's message (network.ts) */
+  network?: { messageId: string; resumes: number }
+  /** the next of those resumes, due at `at` after turn `turn` ended on the network: what the status shows */
+  networkWait?: { turn: number; resume: number; of: number; at: string }
 }
 
 export interface AutopilotParams {
@@ -138,7 +143,7 @@ function latestRow(taskId: string): WorkflowRow | null {
 
 const OFF: AutopilotStatus = {
   autoMerge: false, autoFix: false, autoReview: false, reviewRounds: 0, pr: null, state: "off", reason: "", about: "task", by: "auto-merge", mergedByWisp: false,
-  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null,
+  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, network: null, updatedAt: null,
 }
 
 export function statusOf(row: WorkflowRow | null): AutopilotStatus {
@@ -173,8 +178,21 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   return {
     done: isDone(row, state, checkpoint),
     autoMerge: params.autoMerge, autoFix: params.autoFix, autoReview: params.autoReview, pr, state, reason, about, by, mergedByWisp: false, lastMerged,
-    pendingFix, fixRounds: checkpoint.rounds ?? 0, reviewRounds: checkpoint.reviewRounds ?? 0, updatedAt: row.updated_at,
+    pendingFix, fixRounds: checkpoint.rounds ?? 0, reviewRounds: checkpoint.reviewRounds ?? 0, network: networkWaitOf(row, checkpoint), updatedAt: row.updated_at,
   }
+}
+
+/**
+ * A resume after the network dropped, while it still stands: written by the
+ * last look, and true only while the task still rests on that very turn — a
+ * turn since (a person's message, say) is the task moving on before the next look.
+ */
+function networkWaitOf(row: WorkflowRow, checkpoint: AutopilotCheckpoint): AutopilotStatus["network"] {
+  const wait = checkpoint.networkWait
+  if (row.state !== "active" || !wait) return null
+  const task = getTask(row.task_id)
+  if (!task || task.state !== "failed" || task.turn_count !== wait.turn) return null
+  return { resumesAt: wait.at, resume: wait.resume, of: wait.of }
 }
 
 /** Whose words the reason is: a switch that is off speaks for nothing. */
@@ -649,6 +667,10 @@ export function reserveRound(row: WorkflowRow, round: {
   turnCount: number
   /** which switch sends it: auto-fix's rounds, or auto-review's bounce */
   by?: AutopilotBy
+  /** what its reason is about: the PR by default; a resume after the network dropped is about the task */
+  about?: "pr" | "task"
+  /** whether the task may take it now: settled `done` by default (taskIsIdle) */
+  ready?: (task: Task) => boolean
   /** a message id chosen beforehand, when files were stored under it first */
   messageId?: string
   /** files the message carries (attachments.ts attachmentManifest), and their fingerprint */
@@ -660,7 +682,7 @@ export function reserveRound(row: WorkflowRow, round: {
     // Evidence was gathered with awaits in between: a turn (even one that has
     // already finished), a queued message, or a Stop since then wins, and the
     // next look plans again.
-    if (!taskIsIdle(task) || task.turn_count !== round.turnCount) return null
+    if (!(round.ready ?? taskIsIdle)(task) || task.turn_count !== round.turnCount) return null
     const id = round.messageId ?? randomId("m", 12)
     createTaskMessage({
       id, taskId: task.id, text: round.prompt, attachmentHash: round.attachments?.hash ?? "", attachmentsJson: round.attachments?.json, origin: "workflow",
@@ -672,7 +694,7 @@ export function reserveRound(row: WorkflowRow, round: {
     const at = now.toISOString()
     db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, wake_count = wake_count + 1, revision = revision + 1,
       last_checked_at = ?, updated_at = ? WHERE id = ?`,
-    [JSON.stringify({ ...round.checkpoint, state: "waiting", about: "pr", by: round.by ?? "auto-fix" }), round.reason, at, at, row.id])
+    [JSON.stringify({ ...round.checkpoint, state: "waiting", about: round.about ?? "pr", by: round.by ?? "auto-fix" }), round.reason, at, at, row.id])
     recordWorkflow(row.id, "wake", round.reason, at, id)
     return id
   })()

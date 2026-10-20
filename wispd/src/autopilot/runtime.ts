@@ -17,12 +17,13 @@ import { bunProbeSpawn } from "../probes"
 import { taskBranches } from "../pull-request-branches"
 import { startNextQueuedMessage } from "../runner"
 import { getTask } from "../store"
-import { assertTaskCapacity, TaskCapacityError } from "../task-admission"
+import { hasTaskCapacity } from "../task-admission"
 import { recordAudit } from "../task-audit"
 import type { Task } from "../types"
 import { announceWorkflow, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
 import { conversationsBlock, mergeEvidence, mergeGate, sameReviewState, type PublishedWork } from "./gate"
 import { taskIsIdle } from "./idle"
+import { droppedOnNetwork, networkLook } from "./network"
 import { createGhAutopilot, ghAutopilot, type AutopilotGitHub, type BaseRules, type PrComment, type PrSnapshot } from "./github"
 import { githubBudget, GitHubPausedError, unlessPaused, type GitHubBudget } from "../github-budget"
 import { SnapshotBatches } from "./batch"
@@ -133,13 +134,14 @@ export class AutopilotRuntime {
     // A reviewer settling (or stopping to ask) is its author's moment.
     this.unsubscribe = subscribe((event) => {
       if (event.type !== "task") return
-      if (checkAutopilotOnTaskEvent(event.taskId, event.state, this.now())) kick()
+      const task = getTask(event.taskId)
+      // so is a turn that ended on the network: its countdown to a resume starts now (network.ts)
+      if (checkAutopilotOnTaskEvent(event.taskId, event.state, this.now()) || (droppedOnNetwork(event.state, task) && checkAutopilotSoon(event.taskId, this.now()))) kick()
       if (["done", "failed", "needs-input"].includes(event.state)) {
         const round = roundOfReviewer(event.taskId)
         if (round && checkAutopilotSoon(round.task_id, this.now())) kick()
       }
       // a recipe task's state is its project's verification state ("a recipe task is working")
-      const task = getTask(event.taskId)
       if (task?.verify_role === "recipe") emit({ type: "project", action: "update", path: resolve(task.repo_path) })
     })
     kick()
@@ -248,6 +250,14 @@ export class AutopilotRuntime {
         return
       }
     }
+
+    // A turn that ended on the network is resumed before anything asks GitHub, which is as unreachable.
+    if (networkLook(row, task, checkpoint, {
+      now, hasSlot: (t) => this.hasSlot(t), start: (id) => startNextQueuedMessage(task.id, this.adapters, this.cfg, id),
+      // no GitHub call goes out while it waits, so the budget does not stretch the wait;
+      // and it describes a failed task, so a person's message (failed → running) re-looks at once
+      say: (reason, delayMs) => this.saveCheck(row, { state: "waiting", reason, checkpoint, delayMs, stretch: 1, patient: false, busyOn: "failed" }),
+    })) return
 
     const repository = await this.repositoryOf(task, signal)
     if (!repository) { save("needs-you", "Not a GitHub repository", BUSY_MS); return }
@@ -583,13 +593,7 @@ export class AutopilotRuntime {
   }
 
   private hasSlot(task: Task): boolean {
-    try {
-      assertTaskCapacity(this.cfg, task.id)
-      return true
-    } catch (error) {
-      if (error instanceof TaskCapacityError) return false
-      throw error
-    }
+    return hasTaskCapacity(this.cfg, task.id)
   }
 
   /** A held row whose merge was under way: settle it if the PR is no longer open. */

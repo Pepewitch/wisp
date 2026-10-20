@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { backgroundDetail, backgroundNames, duration, elapsed, stateWord } from "./state"
+import { backgroundDetail, backgroundNames, duration, elapsed, stateText, stateWord } from "./state"
 import type { ApiTask, BackgroundGroup } from "./types"
 
 const START = "2026-08-27T12:00:00.000Z"
@@ -75,6 +75,28 @@ describe("stateWord (the honest failure word, Theme B)", () => {
     expect(stateWord(task({ state: "done", latest_turn_has_result: true, latest_turn_exit_code: 0 }))).toBe("Done")
     expect(stateWord(task({ state: "running" }))).toBe("Running")
     expect(stateWord(task({ state: "needs-input" }))).toBe("Needs input")
+  })
+})
+
+describe("a task paused on the network (autopilot resumes it)", () => {
+  const network = { resumesAt: START, resume: 1, of: 3 }
+  const task = (over: Partial<ApiTask>, resume: typeof network | null = network): ApiTask =>
+    ({ state: "failed", state_detail: "network: turn exited 1: API Error: Connection refused (ECONNREFUSED)",
+      autopilot: { network: resume } as ApiTask["autopilot"], ...over }) as ApiTask
+
+  it("reads 'Paused · network' in gray while the daemon says a resume is due", () => {
+    expect(stateWord(task({}))).toBe("Paused · network")
+    expect(stateText(task({}))).toBe("text-muted-foreground")
+  })
+
+  it("reads 'Failed' in the failure hue once the resumes are spent, or from a daemon older than them", () => {
+    expect(stateWord(task({}, null))).toBe("Failed")
+    expect(stateText(task({}, null))).toBe("text-state-failed")
+    expect(stateWord(task({ autopilot: undefined }))).toBe("Failed")
+  })
+
+  it("is never a pause once the task has moved on", () => {
+    expect(stateWord(task({ state: "running" }))).toBe("Running")
   })
 })
 

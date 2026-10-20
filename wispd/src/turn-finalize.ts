@@ -3,7 +3,9 @@ import {
   createIncrementalOutcomeReducer,
   errorDetail,
   isLimitError,
+  isNetworkFailure,
   isTransientError,
+  NETWORK_PREFIX,
   parseOutput,
   type AdapterDef,
   type ParsedTurn,
@@ -153,8 +155,10 @@ interface FailedTurnFacts {
 async function finalizeFailedTurn(facts: FailedTurnFacts): Promise<void> {
   const detail = facts.recorderDetail ?? errorDetail(facts.def, facts.rawOut, await safeRead(facts.errPath));
   const limitPrefix = !facts.killReason && detail !== null && isLimitError(facts.def, detail) ? "limit: " : "";
+  // A dropped network outranks a provider fault: it is the one autopilot resumes on its own.
+  const networkPrefix = !limitPrefix && !facts.killReason && isNetworkFailure(detail, facts.exitCode) ? NETWORK_PREFIX : "";
   const transientPrefix =
-    !limitPrefix && !facts.killReason && detail !== null && isTransientError(facts.def, detail) ? "transient: " : "";
+    !limitPrefix && !networkPrefix && !facts.killReason && detail !== null && isTransientError(facts.def, detail) ? "transient: " : "";
   const why = facts.killReason
     ? `turn killed: ${facts.killReason}`
     : facts.reportedFailure && facts.exitedCleanly
@@ -167,7 +171,7 @@ async function finalizeFailedTurn(facts: FailedTurnFacts): Promise<void> {
     { status: "failed", exitCode: facts.exitCode, result: facts.result },
     facts.taskId,
     "failed",
-    `${limitPrefix || transientPrefix}${why}`,
+    `${limitPrefix || networkPrefix || transientPrefix}${why}`,
   );
 }
 

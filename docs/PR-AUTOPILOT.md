@@ -145,6 +145,23 @@ Wisp's next look finds out.
   task still notices when its PR is merged (and carries on with the next PR)
   or closed.
 
+## When the network drops
+
+A turn that ends because the machine lost its connection to the provider
+(`ENOTFOUND`, `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, or the agent's own
+"can't reach the API server") is not a failure of the work. Its task keeps its
+session and its worktree, and its detail starts `network: `. While any of the
+three switches is on, the task shows as **Paused · network** rather than
+failed (`paused` in `wisp ls`), and Wisp resumes it on its own: one message,
+"The network dropped; continue from where you stopped.", after 1 minute, then
+2, then 4 if the resumed turn drops too. That is at most three resumes in a
+row; a turn that ends any other way starts the count over. After the third,
+the task reads failed and waits for you, as any failed task does.
+
+Only a dropped connection is retried. An expired login, a usage or rate
+limit, a quota, or any other error waits for you at once. Your own message
+works as always: sending one while the task is paused starts its turn now.
+
 ## Auto-fix
 
 When a check that counts is red on the PR's current head — or the PR conflicts

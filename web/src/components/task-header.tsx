@@ -5,7 +5,7 @@ import { useBackgroundDetail } from "@/hooks/useBackgroundDetail"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { TaskActions } from "@/components/task-actions"
 import { formatTokens } from "@/lib/format"
-import { stateWord } from "@/lib/state"
+import { pausedOnNetwork, stateWord } from "@/lib/state"
 import type { ApiTask, PullRequestStatus } from "@/lib/types"
 import { oneLine } from "@/lib/utils"
 
@@ -125,7 +125,7 @@ function TaskStateLine({ task }: { task: ApiTask }) {
   const detail = useBackgroundDetail(task.background)
   return (
     <span className="flex items-center gap-1.5" title={detail ? `${word}\n${detail}` : undefined}>
-      <StateDot state={task.state} background={task.background} />
+      <StateDot state={task.state} background={task.background} pausedOnNetwork={pausedOnNetwork(task)} />
       <span className="text-fg-secondary">{word}</span>
     </span>
   )

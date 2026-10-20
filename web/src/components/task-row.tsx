@@ -9,7 +9,7 @@ import { useBackgroundDetail } from "@/hooks/useBackgroundDetail"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
 import { AUTOPILOT_RAIL_TONE, autoMergeWords, autopilotBlocks, autopilotRail, autopilotSwitches } from "@/lib/autopilot-words"
 import { PULL_REQUEST_ICON_TONE, pullRequestSidebarTone } from "@/lib/pull-request-tone"
-import { STATE_TEXT, stateWord, since } from "@/lib/state"
+import { pausedOnNetwork, stateText, stateWord, since } from "@/lib/state"
 import type { ApiTask, PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
 import { cn, oneLine } from "@/lib/utils"
 
@@ -34,7 +34,7 @@ interface TaskRowProps {
 function TaskStateDot({ task, className }: { task: ApiTask; className?: string }) {
   return task.cleanup && task.cleanup.state !== "complete"
     ? <span role="img" aria-label={CLEANUP_LABEL[task.cleanup.state]} title={CLEANUP_LABEL[task.cleanup.state]} className={cn("size-1.5 shrink-0 rounded-full border-2", task.cleanup.state === "needs-attention" ? "border-state-stuck" : "border-state-background", className)} />
-    : <StateDot state={task.state} background={task.background} workflow={task.has_workflow} className={className} />
+    : <StateDot state={task.state} background={task.background} workflow={task.has_workflow} pausedOnNetwork={pausedOnNetwork(task)} className={className} />
 }
 
 /**
@@ -233,7 +233,7 @@ export function TaskRowTouch({ task, status, pullRequest, selected, onSelect }: 
           <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px]">
             {/* two-word states ("Needs input") wrapped and took the branch's
                 baseline with them on a 340px drawer — the state never wraps */}
-            <span className={cn("shrink-0 whitespace-nowrap", STATE_TEXT[task.state])}>{stateWord(task)}</span>
+            <span className={cn("shrink-0 whitespace-nowrap", stateText(task))}>{stateWord(task)}</span>
             {task.branch && (
               <>
                 <span className="text-faint">·</span>
@@ -417,7 +417,7 @@ export function TaskCard({
 
       <div className="mt-2 flex items-center gap-1.5">
         <TaskStateDot task={task} className="size-1.5" />
-        <span className={cn("text-[11.5px]", STATE_TEXT[task.state])}>{stateWord(task)}</span>
+        <span className={cn("text-[11.5px]", stateText(task))}>{stateWord(task)}</span>
         {task.archived && <span className="text-[11.5px] text-faint">· archived</span>}
       </div>
       <BackgroundDetail background={task.background} />

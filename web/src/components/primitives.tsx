@@ -1,7 +1,7 @@
 import type { ReactNode } from "react"
 
 import { useBackgroundDetail } from "@/hooks/useBackgroundDetail"
-import { backgroundLabel, STATE_DOT, STATE_LABEL } from "@/lib/state"
+import { backgroundLabel, NETWORK_PAUSED_LABEL, STATE_DOT, STATE_LABEL } from "@/lib/state"
 import type { ApiTask, TaskState } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -37,16 +37,19 @@ export function StateDot({
   state,
   background,
   workflow = false,
+  pausedOnNetwork = false,
   className,
 }: {
   state: TaskState
   background?: ApiTask["background"]
   workflow?: boolean
+  /** a failed task autopilot is about to resume (lib/state.ts pausedOnNetwork): the stuck hue, not the failure one */
+  pausedOnNetwork?: boolean
   className?: string
 }) {
   const label = backgroundLabel(background)
   const ambientOnly = (workflow && state !== "running") || (Boolean(label) && state === "done")
-  const word = [STATE_LABEL[state], label, workflow ? "Workflow attached" : null].filter(Boolean).join(" · ")
+  const word = [pausedOnNetwork ? NETWORK_PAUSED_LABEL : STATE_LABEL[state], label, workflow ? "Workflow attached" : null].filter(Boolean).join(" · ")
   // The word says something is running; the detail says what, so the reader
   // can judge Stop without guessing. Screen readers get the same text.
   const detail = useBackgroundDetail(background)
@@ -64,7 +67,7 @@ export function StateDot({
           ? background?.state === "unknown" && !workflow
             ? "border-2 border-state-creating bg-transparent"
             : "border-2 border-state-background bg-transparent"
-          : STATE_DOT[state],
+          : pausedOnNetwork ? STATE_DOT.stuck : STATE_DOT[state],
         state === "running" && "shadow-[0_0_0_3px_var(--accent-wash)]",
         className,
       )}

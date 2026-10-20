@@ -50,18 +50,37 @@ export const TURN_STATUS_TEXT: Record<TurnStatus, string> = {
   interrupted: "text-muted-foreground",
 }
 
+export const NETWORK_PAUSED_LABEL = "Paused · network"
+
+/**
+ * A failed task autopilot is about to resume: its latest turn ended on the
+ * network, and the daemon says a resume is due (AutopilotStatus.network). It
+ * is a pause, so it wears neither the failure word nor the failure hue. Once
+ * the resumes are spent the daemon stops saying so, and it reads "Failed".
+ */
+export function pausedOnNetwork(task: ApiTask): boolean {
+  return task.state === "failed" && Boolean(task.autopilot?.network)
+}
+
 /**
  * The honest failure word (Theme B), mirroring `displayStateWord` in
  * src/types.ts: "Exited N" when the work landed — the latest turn HAS a
  * result — and the harness CLI then exited nonzero. "Failed" is reserved for
- * a turn that never delivered. Every other state keeps its own word, and the
- * hue stays the failure hue either way: the word is the fix, not the color.
+ * a turn that never delivered, and "Paused · network" for one autopilot is
+ * about to resume. Every other state keeps its own word, and the hue stays
+ * the failure hue for both failure words: the word is the fix, not the color.
  */
 export function stateWord(task: ApiTask): string {
   const background = backgroundLabel(task.background);
-  const outcome = task.state === "failed" && task.latest_turn_has_result && task.latest_turn_exit_code
-    ? `Exited ${task.latest_turn_exit_code}` : STATE_LABEL[task.state]
+  const outcome = pausedOnNetwork(task) ? NETWORK_PAUSED_LABEL
+    : task.state === "failed" && task.latest_turn_has_result && task.latest_turn_exit_code
+      ? `Exited ${task.latest_turn_exit_code}` : STATE_LABEL[task.state]
   return background ? `${outcome} · ${background}` : outcome
+}
+
+/** The state line's tone: a network pause needs nobody, so it stays gray. */
+export function stateText(task: ApiTask): string {
+  return pausedOnNetwork(task) ? "text-muted-foreground" : STATE_TEXT[task.state]
 }
 
 /**
