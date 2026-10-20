@@ -178,7 +178,11 @@ export function createTaskRoute(
         base: body.base as string | undefined,
         attachments: body.attachments,
         autopilot: isRecord(body.autopilot)
-          ? { autoMerge: body.autopilot.autoMerge === true, autoFix: body.autopilot.autoFix === true }
+          ? {
+            autoMerge: body.autopilot.autoMerge === true,
+            autoFix: body.autopilot.autoFix === true,
+            autoReview: body.autopilot.autoReview === true,
+          }
           : undefined,
         actor: requestActor(req),
       },
