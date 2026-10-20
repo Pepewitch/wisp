@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { VerificationStatus } from "../../../shared/api/auto-review"
 import { api } from "@/lib/api"
+import { clearCreateTaskDraft, writeCreateTaskDraft } from "@/lib/drafts"
 import type { RepoInfo } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
@@ -181,7 +182,7 @@ describe("project settings verification", () => {
     verification: { state: "none", areas: 0, draft: false, attention: false, busy: false },
   }
   const HARNESS = {
-    name: "claude", hasModel: true, hasEffort: true, hasImage: true,
+    name: "claude", hasModel: true, hasEffort: true, hasImage: true, effortLevels: ["low", "medium", "high", "max"],
     defaults: { model: "opus-5" }, models: { list: ["opus-5", "sonnet-5"], defaultModel: "opus-5", probedAt: "2026-10-12T08:00:00Z" },
   }
 
@@ -238,19 +239,104 @@ describe("project settings verification", () => {
     expect(uiIntentsFor("test-connection").taskFocusRequest()).toMatchObject({ taskId: "tvr3ip" })
   })
 
-  it("needs a reviewer agent before it can start one, and saves the choice with Save", async () => {
-    const calls = stubVerification(STATUS_NONE)
-    mount(<ProjectSettingsSpecimen project={{ ...REVIEWABLE, verify: null }} />)
-    const setup = await screen.findByRole("button", { name: "Set up verification" })
-    expect(setup).toBeDisabled()
-    // a disabled button shows no title: the reason is a line beside it
-    expect(screen.getByText(/Choose a reviewer agent first/)).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: "Reviewer agent" }))
-    fireEvent.click(await screen.findByRole("menuitemradio", { name: /sonnet-5/ }))
-    await waitFor(() => expect(screen.getByRole("button", { name: "Set up verification" })).toBeEnabled())
+  const savedBody = async (calls: Call[]) => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }))
     await waitFor(() => expect(calls.some((call) => call.path === "/api/projects" && call.method === "POST")).toBe(true))
-    expect(calls.find((call) => call.path === "/api/projects")!.body).toMatchObject({ verify: { harness: "claude", model: "sonnet-5" } })
+    return calls.find((call) => call.path === "/api/projects" && call.method === "POST")!.body
+  }
+  const pick = async (picker: string, item: string | RegExp) => {
+    fireEvent.click(screen.getByRole("button", { name: picker }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: item }))
+  }
+
+  describe("with each task's own agent as the reviewer", () => {
+    const OWN = { ...REVIEWABLE, verify: null }
+    afterEach(() => clearCreateTaskDraft("test-connection", "/repo"))
+
+    it("starts a recipe task on an agent picked for it, and leaves the reviewer setting unchanged", async () => {
+      const calls = stubVerification(STATUS_NONE)
+      mount(<ProjectSettingsSpecimen project={OWN} />)
+      // what a new task would start on: the first harness's default model, at its default effort
+      const recipe = await screen.findByRole("button", { name: "Recipe agent" })
+      await waitFor(() => expect(recipe).toHaveTextContent("claude · opus-5"))
+      expect(screen.getByRole("button", { name: "Recipe agent effort" })).toHaveTextContent("Default effort")
+      expect(screen.getByRole("button", { name: "Reviewer agent" })).toHaveTextContent("Each task's own agent")
+      await pick("Recipe agent", /sonnet-5/)
+      await pick("Recipe agent effort", "high")
+      const setup = screen.getByRole("button", { name: "Set up verification" })
+      expect(setup).toBeEnabled()
+      fireEvent.click(setup)
+      await waitFor(() =>
+        expect(calls).toContainEqual({
+          path: "/api/projects/verification/tasks",
+          method: "POST",
+          body: { path: "/repo", mode: "setup", harness: "claude", model: "sonnet-5", effort: "high" },
+        }),
+      )
+      expect(await screen.findByText(/Started Set up verification for sample-app/)).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: "Reviewer agent" })).toHaveTextContent("Each task's own agent")
+      expect(await savedBody(calls)).toMatchObject({ verify: null })
+    })
+
+    it("starts from the project's create composer when it has a drafted agent", async () => {
+      writeCreateTaskDraft("test-connection", "/repo", {
+        prompt: "", choice: { harness: "claude", model: "sonnet-5" }, effort: "max", fast: false, mode: "worktree", base: "", suffixPromptId: null,
+      })
+      const calls = stubVerification(STATUS_NONE)
+      mount(<ProjectSettingsSpecimen project={OWN} />)
+      await waitFor(() => expect(screen.getByRole("button", { name: "Recipe agent" })).toHaveTextContent("claude · sonnet-5"))
+      expect(screen.getByRole("button", { name: "Recipe agent effort" })).toHaveTextContent("max effort")
+      fireEvent.click(screen.getByRole("button", { name: "Set up verification" }))
+      await waitFor(() =>
+        expect(calls).toContainEqual({
+          path: "/api/projects/verification/tasks",
+          method: "POST",
+          body: { path: "/repo", mode: "setup", harness: "claude", model: "sonnet-5", effort: "max" },
+        }),
+      )
+    })
+
+    it("drops the recipe agent once a reviewer agent is chosen, and saves that choice with Save", async () => {
+      const calls = stubVerification(STATUS_NONE)
+      mount(<ProjectSettingsSpecimen project={OWN} />)
+      expect(await screen.findByRole("button", { name: "Recipe agent" })).toBeInTheDocument()
+      await pick("Reviewer agent", /sonnet-5/)
+      await waitFor(() => expect(screen.queryByRole("button", { name: "Recipe agent" })).toBeNull())
+      expect(await savedBody(calls)).toMatchObject({ verify: { harness: "claude", model: "sonnet-5" } })
+    })
+  })
+
+  it("chooses the reviewer's effort, saves it, and starts a recipe task with it", async () => {
+    const calls = stubVerification(STATUS_NONE)
+    mount(<ProjectSettingsSpecimen project={REVIEWABLE} />)
+    const effort = await screen.findByRole("button", { name: "Reviewer agent effort" })
+    await waitFor(() => expect(effort).toHaveTextContent("Default effort"))
+    await pick("Reviewer agent effort", "high")
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reviewer agent effort" })).toHaveTextContent("high effort"))
+    // a model change on the same harness keeps it
+    await pick("Reviewer agent", /sonnet-5/)
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reviewer agent effort" })).toHaveTextContent("high effort"))
+    fireEvent.click(screen.getByRole("button", { name: "Set up verification" }))
+    await waitFor(() =>
+      expect(calls).toContainEqual({
+        path: "/api/projects/verification/tasks",
+        method: "POST",
+        body: { path: "/repo", mode: "setup", harness: "claude", model: "sonnet-5", effort: "high" },
+      }),
+    )
+    expect(await savedBody(calls)).toMatchObject({ verify: { harness: "claude", model: "sonnet-5", effort: "high" } })
+  })
+
+  it("Harness default clears a reviewer's effort", async () => {
+    const calls = stubVerification(STATUS_NONE)
+    mount(<ProjectSettingsSpecimen project={{ ...REVIEWABLE, verify: { harness: "claude", model: "opus-5", effort: "xhigh" } }} />)
+    // a level set elsewhere (the CLI) shows even when the harness does not list it
+    const effort = await screen.findByRole("button", { name: "Reviewer agent effort" })
+    await waitFor(() => expect(effort).toHaveTextContent("xhigh effort"))
+    await pick("Reviewer agent effort", "Harness default")
+    await waitFor(() => expect(screen.getByRole("button", { name: "Reviewer agent effort" })).toHaveTextContent("Default effort"))
+    const body = (await savedBody(calls)) as { verify: Record<string, unknown> }
+    expect(body.verify).toEqual({ harness: "claude", model: "opus-5" })
   })
 
   describe("the second reviewer", () => {
@@ -298,6 +384,18 @@ describe("project settings verification", () => {
       fireEvent.click(await screen.findByRole("menuitemradio", { name: /sonnet-5/ }))
       await waitFor(() => expect(screen.getByRole("button", { name: "Second reviewer" })).toHaveTextContent("claude · sonnet-5"))
       expect(await saved(calls)).toMatchObject({ verifySecond: { harness: "claude", model: "sonnet-5" } })
+    })
+
+    it("saves the second reviewer's effort", async () => {
+      const calls = stubVerification({ ...STATUS_NONE, second: "off" }, PANEL)
+      mount(<ProjectSettingsSpecimen project={{ ...REVIEWABLE, verifySecond: "off" }} />)
+      const picker = await screen.findByRole("button", { name: "Second reviewer" })
+      await waitFor(() => expect(picker).toHaveTextContent("Off — one reviewer"))
+      expect(screen.queryByRole("button", { name: "Second reviewer effort" })).toBeNull()
+      await pick("Second reviewer", /sonnet-5/)
+      await pick("Second reviewer effort", "max")
+      await waitFor(() => expect(screen.getByRole("button", { name: "Second reviewer effort" })).toHaveTextContent("max effort"))
+      expect(await saved(calls)).toMatchObject({ verifySecond: { harness: "claude", model: "sonnet-5", effort: "max" } })
     })
 
     it("saves Same agent as the reviewer as null, which clears the choice", async () => {

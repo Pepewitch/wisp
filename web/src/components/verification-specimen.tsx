@@ -17,8 +17,8 @@ const NOW = Date.now()
 const ago = (min: number) => new Date(NOW - min * 60_000).toISOString()
 
 const HARNESSES: HarnessInfo[] = [
-  { name: "claude", hasModel: true, hasEffort: true, hasImage: true, defaults: { model: "opus-5" }, models: { list: ["opus-5", "sonnet-5"], defaultModel: "opus-5", probedAt: ago(60) } },
-  { name: "codex", hasModel: true, hasEffort: true, hasImage: true, defaults: { model: "gpt-5.6-luna" }, models: { list: ["gpt-5.6-luna"], defaultModel: "gpt-5.6-luna", probedAt: ago(60) } },
+  { name: "claude", hasModel: true, hasEffort: true, hasImage: true, effortLevels: ["low", "medium", "high", "xhigh", "max"], defaults: { model: "opus-5" }, models: { list: ["opus-5", "sonnet-5"], defaultModel: "opus-5", probedAt: ago(60) } },
+  { name: "codex", hasModel: true, hasEffort: true, hasImage: true, effortLevels: ["low", "medium", "high", "xhigh"], defaults: { model: "gpt-5.6-luna" }, models: { list: ["gpt-5.6-luna"], defaultModel: "gpt-5.6-luna", probedAt: ago(60) } },
 ]
 
 const NONE: VerificationStatus = {
@@ -59,9 +59,11 @@ function Specimen({ status, initial, initialSecond, busy = false, message = null
 }) {
   const [agent, setAgent] = useState(initial)
   const [second, setSecond] = useState<ProjectVerifySecond>(initialSecond ?? null)
+  const [recipeAgent, setRecipeAgent] = useState<ProjectVerifyAgent>({ harness: "claude", model: "opus-5" })
   const [note, setNote] = useState("")
   const model: VerificationFieldsModel = {
-    status, now: NOW, readError: null, harnesses: HARNESSES, hidden: {}, agent, onAgentChange: setAgent, note, onNoteChange: setNote,
+    status, now: NOW, readError: null, harnesses: HARNESSES, hidden: {}, agent, onAgentChange: setAgent,
+    recipeAgent, onRecipeAgentChange: setRecipeAgent, note, onNoteChange: setNote,
     starting: null, activating: false, busy, message, onStart: () => {}, onActivate: () => {}, onOpenTask: () => {},
     ...(initialSecond !== undefined ? { second, onSecondChange: setSecond } : {}),
   }
@@ -76,15 +78,16 @@ export function VerificationSpecimen() {
         <Specimen status={NONE} initial={null} />
         <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
           The recipe auto-review checks against lives in Wisp, never in the repo. Set up verification starts a recipe
-          task, a normal visible task; it needs an agent to run on, so the button stays disabled (its title says why)
-          until one is chosen. The agent is saved with Save, like every other field.
+          task, a normal visible task. Each task&apos;s own agent has no task to borrow from here, so while the reviewer
+          is left on it a Recipe agent row picks the recipe task&apos;s harness, model and effort on the spot, starting
+          from what a new task would use. That pick is never saved; the reviewer agent is saved with Save.
         </p>
       </div>
       <div data-frame="verification-active">
         <Eyebrow>Verification — active, an area needs attention, a draft waiting, a recipe task working</Eyebrow>
         <Specimen
           status={ACTIVE}
-          initial={{ harness: "claude", model: "opus-5" }}
+          initial={{ harness: "claude", model: "opus-5", effort: "high" }}
           initialSecond={{ harness: "codex", model: "gpt-5.6-luna" }}
           busy
           message={{ tone: "error", text: "Task tvr3ip is already working on this project's verification recipe" }}
@@ -94,6 +97,7 @@ export function VerificationSpecimen() {
           reviewer reported the recipe failing (with Fix beside it). Activate draft is an outline button — Save stays
           the dialog&apos;s one primary. A refusal from the daemon shows inline, in red. On a daemon with the review
           panel the Second reviewer sits under the Reviewer agent: a different agent here is a real second opinion.
+          Each named reviewer has an effort beside its model: the harness&apos;s levels, or its default.
         </p>
       </div>
       <div data-frame="verification-second-off">
