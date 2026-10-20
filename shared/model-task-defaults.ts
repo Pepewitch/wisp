@@ -1,7 +1,8 @@
 /**
  * What a new task starts with on each model: auto-fix and auto-merge. The
  * daemon stores them (settings' `modelTaskDefaults`), the Models modal edits
- * them, and the create composer seeds its switches from them. A task is free to differ; these only decide where its switches start.
+ * them, and the create composer seeds its switches from them. A task is
+ * free to differ; these only decide where its switches start.
  *
  * Stored as OVERRIDES of the built-in defaults, so a model nobody touched
  * (including one a later probe discovers) starts with neither autopilot
