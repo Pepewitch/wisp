@@ -618,14 +618,16 @@ and the modal says so once at the top rather than four times.
   from the same list; saved with Save as `verifySecond`, sent only once a
   person picked one and never to a daemon without the panel),
   and a note with **Set up verification** / **Improve** and a per-area **Fix**.
-  A named reviewer has an effort menu beside its model: the harness's levels
-  (`effortOptions`, as the composer offers them) and *Harness default*, which
-  saves no `effort`. A recipe task runs on the reviewer agent. It belongs to
+  A named reviewer on an effort-capable harness has an effort menu beside its
+  model: *Harness default*, which saves no `effort`, and the harness's levels
+  (`effortOptions`, as the composer offers them); the current effort stays
+  listed even when the harness names no levels, so it can always be cleared. A recipe task runs on the reviewer agent. It belongs to
   the project, so while the reviewer is "Each task's own agent" it has no
   task's agent to borrow: a **Recipe agent** row then picks its harness, model
   and effort on the spot, starting from what a new task would use (the
-  project's drafted composer agent, else the preferred model), and is never
-  saved. The buttons are disabled only with no agent to offer or a recipe task
+  project's drafted composer agent, else the preferred model, else the first
+  usable harness in the composer's order, at its configured effort), and is
+  never saved. The buttons are disabled only with no agent to offer or a recipe task
   already at work, and a muted line beside them says why (a disabled button
   shows no title and takes no focus). A started
   task is selected behind the modal, so unsaved edits survive. The sidebar's

@@ -187,14 +187,15 @@ export function VerificationSection({
 /**
  * The agent a new task in this project would start on: the create composer's
  * pick for it when one is drafted, else the preferred model, else the first
- * usable harness's default. Its effort is the draft's, or the harness default.
+ * usable harness's default, in the composer's harness order. Its effort is the
+ * draft's, else the harness's configured default, as the composer seeds it.
  */
 function newTaskAgent(connectionId: string, repoPath: string, harnesses: HarnessInfo[]): ProjectVerifyAgent | null {
   const draft = readCreateTaskDraft(connectionId, repoPath)
-  const choice = initialChoice(harnesses, draft?.choice ?? loadPreferredModel(connectionId))
+  const choice = initialChoice(orderHarnesses(harnesses), draft?.choice ?? loadPreferredModel(connectionId))
   if (!choice) return null
   const drafted = draft?.choice?.harness === choice.harness && draft.choice.model === choice.model
-  const effort = drafted ? draft!.effort : ""
+  const effort = drafted ? draft!.effort : harnesses.find((h) => h.name === choice.harness)?.defaults.reasoningEffort
   return { harness: choice.harness, model: choice.model, ...(effort ? { effort } : {}) }
 }
 
@@ -463,14 +464,10 @@ function AgentPicker({
   onChange: (agent: ProjectVerifySecond) => void
   "aria-label": string
 }) {
-  const { connectionId } = useDaemonRuntime()
   const named = agent && agent !== "off" ? agent : null
   const choice = named ? null : fixed.find((option) => option.value === agent) ?? fixed[0] ?? null
   const selected = named?.model ? { harness: named.harness, model: named.model } : null
   const harness = named ? harnesses.find((candidate) => candidate.name === named.harness) : undefined
-  // the harness's own levels, as the composer offers them, and a level set elsewhere (the CLI) stays visible
-  const efforts = harness?.hasEffort ? effortOptions(connectionId, harness) : []
-  if (named?.effort && efforts.length > 0 && !efforts.includes(named.effort)) efforts.push(named.effort)
   const label = named ? (
     <>
       {named.harness}
@@ -512,28 +509,47 @@ function AgentPicker({
           )}
         </MenuRadioGroup>
       </Menu>
-      {named && efforts.length > 0 && (
-        <Menu
-          icon={<Effort />}
-          label={named.effort ? `${named.effort} effort` : "Default effort"}
-          aria-label={`${ariaLabel} effort`}
-        >
-          <MenuRadioGroup
-            value={named.effort ?? DEFAULT_EFFORT}
-            onValueChange={(value) => {
-              const effort = value === DEFAULT_EFFORT ? undefined : value
-              onChange({ harness: named.harness, ...(named.model ? { model: named.model } : {}), ...(effort ? { effort } : {}) })
-            }}
-          >
-            <MenuRadioItem value={DEFAULT_EFFORT}>Harness default</MenuRadioItem>
-            {efforts.map((effort) => (
-              <MenuRadioItem key={effort} value={effort}>
-                {effort}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </Menu>
-      )}
+      {named && harness?.hasEffort && <EffortMenu harness={harness} agent={named} aria-label={`${ariaLabel} effort`} onChange={onChange} />}
     </span>
+  )
+}
+
+/**
+ * A named agent's effort: Harness default (saves none) and the harness's own
+ * levels, as the composer offers them. The current effort, set by the CLI or
+ * borrowed from a composer draft, always stays listed, so it can be seen and
+ * cleared even on a harness that names no levels.
+ */
+function EffortMenu({
+  harness,
+  agent,
+  onChange,
+  "aria-label": ariaLabel,
+}: {
+  harness: HarnessInfo
+  agent: ProjectVerifyAgent
+  onChange: (agent: ProjectVerifyAgent) => void
+  "aria-label": string
+}) {
+  const { connectionId } = useDaemonRuntime()
+  const efforts = effortOptions(connectionId, harness)
+  if (agent.effort && !efforts.includes(agent.effort)) efforts.push(agent.effort)
+  return (
+    <Menu icon={<Effort />} label={agent.effort ? `${agent.effort} effort` : "Default effort"} aria-label={ariaLabel}>
+      <MenuRadioGroup
+        value={agent.effort ?? DEFAULT_EFFORT}
+        onValueChange={(value) => {
+          const effort = value === DEFAULT_EFFORT ? undefined : value
+          onChange({ harness: agent.harness, ...(agent.model ? { model: agent.model } : {}), ...(effort ? { effort } : {}) })
+        }}
+      >
+        <MenuRadioItem value={DEFAULT_EFFORT}>Harness default</MenuRadioItem>
+        {efforts.map((effort) => (
+          <MenuRadioItem key={effort} value={effort}>
+            {effort}
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </Menu>
   )
 }

@@ -186,7 +186,7 @@ describe("project settings verification", () => {
     defaults: { model: "opus-5" }, models: { list: ["opus-5", "sonnet-5"], defaultModel: "opus-5", probedAt: "2026-10-12T08:00:00Z" },
   }
 
-  function stubVerification(status: VerificationStatus, features: Record<string, boolean> = { autoReview: true }, tasks = 201) {
+  function stubVerification(status: VerificationStatus, features: Record<string, boolean> = { autoReview: true }, tasks = 201, harnesses: unknown[] = [HARNESS]) {
     const calls: Call[] = []
     vi.stubGlobal(
       "fetch",
@@ -195,7 +195,7 @@ describe("project settings verification", () => {
         const method = init?.method ?? "GET"
         const body = init?.body ? JSON.parse(String(init.body)) : undefined
         calls.push({ path, method, body })
-        if (path === "/api/harnesses") return Response.json({ harnesses: [HARNESS], features })
+        if (path === "/api/harnesses") return Response.json({ harnesses, features })
         if (path === "/api/settings") return Response.json({ autoRenameTasksFromPullRequests: true, hiddenModels: {} })
         if (path.startsWith("/api/projects/verification?")) return Response.json(status)
         if (path === "/api/projects/verification/tasks") {
@@ -292,6 +292,51 @@ describe("project settings verification", () => {
           path: "/api/projects/verification/tasks",
           method: "POST",
           body: { path: "/repo", mode: "setup", harness: "claude", model: "sonnet-5", effort: "max" },
+        }),
+      )
+    })
+
+    it("starts on the harness a new task would, in the composer's order, at its configured effort", async () => {
+      // the daemon lists droid first; the composer orders claude ahead of it
+      const DROID = {
+        name: "droid", hasModel: true, hasEffort: true, hasImage: true, effortLevels: ["low", "high"],
+        defaults: { model: "droid-default" }, models: { list: ["droid-default"], defaultModel: "droid-default", probedAt: "2026-10-12T08:00:00Z" },
+      }
+      const CLAUDE = { ...HARNESS, defaults: { model: "opus-5", reasoningEffort: "medium" } }
+      const calls = stubVerification(STATUS_NONE, { autoReview: true }, 201, [DROID, CLAUDE])
+      mount(<ProjectSettingsSpecimen project={OWN} />)
+      await waitFor(() => expect(screen.getByRole("button", { name: "Recipe agent" })).toHaveTextContent("claude · opus-5"))
+      expect(screen.getByRole("button", { name: "Recipe agent effort" })).toHaveTextContent("medium effort")
+      fireEvent.click(screen.getByRole("button", { name: "Set up verification" }))
+      await waitFor(() =>
+        expect(calls).toContainEqual({
+          path: "/api/projects/verification/tasks",
+          method: "POST",
+          body: { path: "/repo", mode: "setup", harness: "claude", model: "opus-5", effort: "medium" },
+        }),
+      )
+    })
+
+    it("shows and clears a drafted effort on a harness that lists no levels", async () => {
+      const CUSTOM = {
+        name: "custom", hasModel: true, hasEffort: true, hasImage: false, effortLevels: [],
+        defaults: { model: "c-1" }, models: { list: ["c-1"], defaultModel: "c-1", probedAt: "2026-10-12T08:00:00Z" },
+      }
+      writeCreateTaskDraft("test-connection", "/repo", {
+        prompt: "", choice: { harness: "custom", model: "c-1" }, effort: "high", fast: false, mode: "worktree", base: "", suffixPromptId: null,
+      })
+      const calls = stubVerification(STATUS_NONE, { autoReview: true }, 201, [CUSTOM])
+      mount(<ProjectSettingsSpecimen project={OWN} />)
+      const effort = await screen.findByRole("button", { name: "Recipe agent effort" })
+      await waitFor(() => expect(effort).toHaveTextContent("high effort"))
+      await pick("Recipe agent effort", "Harness default")
+      await waitFor(() => expect(screen.getByRole("button", { name: "Recipe agent effort" })).toHaveTextContent("Default effort"))
+      fireEvent.click(screen.getByRole("button", { name: "Set up verification" }))
+      await waitFor(() =>
+        expect(calls).toContainEqual({
+          path: "/api/projects/verification/tasks",
+          method: "POST",
+          body: { path: "/repo", mode: "setup", harness: "custom", model: "c-1" },
         }),
       )
     })
