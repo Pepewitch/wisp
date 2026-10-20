@@ -5,6 +5,7 @@ import {
   BUILTIN_ADAPTERS,
   createIncrementalOutcomeReducer,
   foldIncrementalOutcome,
+  formatUsage,
   parseOutput,
 } from "../src/adapters";
 
@@ -85,5 +86,60 @@ describe("incremental outcome reducers", () => {
       model: "model-2",
       skills: ["review"],
     });
+  });
+
+  test("a turn's usage adds up every result event, even when the last one reports zero", () => {
+    const def = BUILTIN_ADAPTERS.claude!;
+    const { outcome, errorDetail } = foldIncrementalOutcome(def, fixture("claude-retried-result.jsonl"))!;
+
+    expect(outcome.isError).toBe(true);
+    expect(errorDetail).toBe("API Error: Unable to connect to API (ENOTFOUND)");
+    expect(formatUsage(def, outcome.usage)).toEqual({
+      inputTokens: 10,
+      outputTokens: 2000,
+      cachedInputTokens: 98000,
+      cacheWriteTokens: 2500,
+    });
+    // The raw blob keeps its shape: nested counts add, strings stay, lists join.
+    expect(outcome.usage).toMatchObject({
+      server_tool_use: { web_search_requests: 0 },
+      cache_creation: { ephemeral_1h_input_tokens: 2500 },
+      service_tier: "standard",
+      iterations: [],
+    });
+    // Context is still the last real call's prompt, not the sum and not the zero retry.
+    expect(outcome.context).toEqual({ usedTokens: 4 + 50000 + 500 });
+  });
+
+  test("summed usage survives a checkpoint between result events", () => {
+    const def = BUILTIN_ADAPTERS.claude!;
+    const [first, second] = fixture("claude-retried-result.jsonl")
+      .trim()
+      .split("\n")
+      .filter((line) => line.includes(`"type":"result"`));
+    const tick = `{"type":"result","is_error":false,"result":"tick","usage":{"input_tokens":1,"output_tokens":5,"cache_read_input_tokens":null}}`;
+
+    const reducer = createIncrementalOutcomeReducer(def)!;
+    reducer.pushStdoutLine(first!);
+    const resumed = createIncrementalOutcomeReducer(def, reducer.checkpoint())!;
+    resumed.pushStdoutLine(second!);
+    resumed.pushStdoutLine(tick);
+    expect(formatUsage(def, resumed.outcome().usage)).toMatchObject({
+      inputTokens: 11,
+      outputTokens: 2005,
+      cachedInputTokens: 98000,
+    });
+
+    // A checkpoint written before usage was summed kept it on the result event only.
+    const legacy = { ...reducer.checkpoint(), usage: null, resultEvent: JSON.parse(first!) };
+    const fromLegacy = createIncrementalOutcomeReducer(def, legacy)!;
+    fromLegacy.pushStdoutLine(tick);
+    expect(formatUsage(def, fromLegacy.outcome().usage)).toMatchObject({ inputTokens: 11, outputTokens: 2005 });
+  });
+
+  test("without a declared result type the last line's usage still stands alone", () => {
+    const def = { bin: "custom", exec: [], parse: { format: "json" as const, result: "text", usage: "usage" } };
+    const raw = [`{"text":"a","usage":{"input_tokens":7}}`, `{"text":"b","usage":{"input_tokens":3}}`].join("\n");
+    expect(foldIncrementalOutcome(def, raw)!.outcome.usage).toEqual({ input_tokens: 3 });
   });
 });

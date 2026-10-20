@@ -220,7 +220,8 @@ export interface AdapterDef {
      * JSON field holding the turn's usage blob (Theme B), read off the SAME
      * result line the result text comes from (claude's result event and
      * droid's completion event both carry `usage` there — verified against
-     * real turn logs 2026-08-31). A strategy parses usage itself; this field
+     * real turn logs 2026-08-31). With a resultType, every result event's
+     * usage adds to the turn's. A strategy parses usage itself; this field
      * is for the flat mapping only, so it joins the strategy-conflict list.
      */
     usage?: string;
@@ -377,7 +378,9 @@ export interface ParsedTurn {
   /**
    * The harness's own usage report for the turn (Theme B) — the RAW blob from
    * its terminal event, exactly as emitted, or null when the stream carried
-   * none (an interrupted turn, a text-format harness). Wisp persists it
+   * none (an interrupted turn, a text-format harness). A turn with several
+   * terminal events (claude's result per model cycle) gets their blobs added
+   * up by `addUsageBlobs`, in the same shape. Wisp persists it
    * verbatim (`usage_json`) and normalizes at the API boundary via the
    * adapter's `usageFormat`; token counts are facts and no shape is invented.
    */
