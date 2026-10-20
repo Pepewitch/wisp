@@ -9,7 +9,6 @@ import { RenameTaskDialog } from "@/components/rename-task-dialog"
 import { useAutopilot } from "@/hooks/mutations"
 import { useHarnessFeatures } from "@/hooks/queries"
 import { useArchiveFlow } from "@/hooks/useArchiveFlow"
-import { useBriefSwitch } from "@/hooks/useBriefSwitch"
 import { failureReason } from "@/lib/api"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { ApiTask } from "@/lib/types"
@@ -17,7 +16,7 @@ import { uiIntentsFor } from "@/lib/ui-intents"
 
 /**
  * The task verbs that are not worth a permanent button: find, rename and
- * archive — and the brief, auto-merge, auto-fix and auto-review switches, as
+ * archive — and the auto-merge, auto-fix and auto-review switches, as
  * shortcuts.
  * What those switches are doing (the reason, the round waiting to send, the
  * pause to resume) lives in the Autopilot tab, which has the room for it.
@@ -83,7 +82,6 @@ export function TaskActions({ task }: { task: ApiTask }) {
             Export or delete task data…
           </MenuItem>
         )}
-        <BriefItems task={task} />
         <AutoMergeItems task={task} />
       </Menu>
 
@@ -108,25 +106,6 @@ export function TaskActions({ task }: { task: ApiTask }) {
         onForce={() => archive.request(true)}
         stopsAutopilot={archive.stopsAutopilot}
       />
-    </>
-  )
-}
-
-/**
- * Task briefs: the switch alone. What switching does, and that it starts with
- * the NEXT turn, is said by the Autopilot tab's Brief section; a failed write
- * still shows here, on the control that sent it.
- */
-function BriefItems({ task }: { task: ApiTask }) {
-  const brief = useBriefSwitch(task)
-  if (!brief.switchable) return null
-  return (
-    <>
-      <MenuSeparator />
-      <MenuCheckboxItem checked={brief.enabled} disabled={brief.disabled} onCheckedChange={brief.set}>
-        Task brief
-      </MenuCheckboxItem>
-      {brief.error && <div className="max-w-[280px]"><MenuNote>{brief.error}</MenuNote></div>}
     </>
   )
 }

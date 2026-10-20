@@ -100,8 +100,8 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   only after commit.
 - Everything Wisp writes into a harness input goes in one `<wisp>` section
   per input (`wispSection` / `withWispSection` in `turn-input.ts`). That
-  covers the first turn's task preamble, standing notes (auto-merge, task
-  briefs), the attached-files note, auto-fix rounds, heartbeat wakes and a
+  covers the first turn's task preamble, standing notes (auto-merge), the
+  attached-files note, auto-fix rounds, heartbeat wakes and a
   plugin workflow's control lines. A single line goes inline
   (`<wisp>…</wisp>`), several go in a block, and a literal `</wisp>` inside
   (any letter case) is escaped so relayed text cannot close it. One blank line

@@ -11,6 +11,11 @@ import type { ApiTask } from "./types";
 const COMMAND = wispCommand();
 
 export async function createCommand(positional: string[], flags: Flags): Promise<void> {
+  // refused, not ignored: a script that asked for a brief must learn it gets none
+  if (flags.brief !== undefined) {
+    printError("--brief is no longer supported: Wisp removed task briefs. Run the command again without it.");
+    process.exit(1);
+  }
   let repo: string, prompt: string;
   if (positional.length >= 2) {
     [repo, prompt] = [positional[0]!, positional.slice(1).join(" ")];
@@ -18,7 +23,7 @@ export async function createCommand(positional: string[], flags: Flags): Promise
     [repo, prompt] = [process.cwd(), positional[0]!];
   } else {
     printError(
-      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--brief] [--attach <path>]…`,
+      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--attach <path>]…`,
     );
     process.exit(1);
   }
@@ -59,7 +64,6 @@ export async function createCommand(positional: string[], flags: Flags): Promise
           ...(flags["auto-review"] === true ? { autoReview: true } : {}),
         }
         : undefined,
-      briefEnabled: flags.brief === true ? true : undefined,
       attachments,
     })) as ApiTask;
   } catch (error) {
@@ -74,10 +78,8 @@ function reportCreated(task: ApiTask, flags: Flags): void {
   const where = task.mode === "local" ? ", local" : "";
   const autopilot = (task as ApiTask & { autopilot?: { autoMerge?: boolean; autoFix?: boolean; autoReview?: boolean } }).autopilot;
   const merge = [autopilot?.autoMerge && ", auto-merge", autopilot?.autoFix && ", auto-fix", autopilot?.autoReview && ", auto-review"].filter(Boolean).join("");
-  const brief = task.briefEnabled === true ? ", brief" : "";
-  print(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}${brief}) — ${task.title}`);
+  print(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}) — ${task.title}`);
   const asked = flags["auto-merge"] === true || flags["auto-fix"] === true;
   if (asked && !autopilot?.autoMerge && !autopilot?.autoFix) printError("warning: this daemon did not arm auto-merge or auto-fix (it may be older than this CLI)");
   if (flags["auto-review"] === true && !autopilot?.autoReview) printError("warning: this daemon did not arm auto-review (it may be older than this CLI)");
-  if (flags.brief === true && task.briefEnabled !== true) printError("warning: this daemon did not turn briefs on (it may be older than this CLI)");
 }

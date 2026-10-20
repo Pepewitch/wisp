@@ -21,23 +21,22 @@ const repo: RepoInfo = {
   configured: true,
 }
 
-const harness = (name: string, models: string[], hasBriefs = true): HarnessInfo => ({
+const harness = (name: string, models: string[]): HarnessInfo => ({
   name,
   hasModel: true,
   hasEffort: false,
   hasImage: false,
-  hasBriefs,
   defaults: { model: models[0] },
   models: { list: models, defaultModel: models[0] ?? null, probedAt: "2026-09-22T00:00:00.000Z" },
 })
 
-const HARNESSES = [harness("claude", ["claude-opus-5", "claude-sonnet-5"]), harness("cursor", ["auto"], false)]
-const FEATURES = { taskBriefs: true, taskAutopilot: true }
+const HARNESSES = [harness("claude", ["claude-opus-5", "claude-sonnet-5"]), harness("cursor", ["auto"])]
+const FEATURES = { taskAutopilot: true }
 
 function daemon(
   modelTaskDefaults: Record<string, unknown> | undefined,
   sent: { path: string; body: unknown }[] = [],
-  options: { client?: QueryClient; held?: (() => void)[] } = {},
+  options: { client?: QueryClient; held?: (() => void)[]; features?: Record<string, boolean> } = {},
 ) {
   let settings: Record<string, unknown> = {
     autoRenameTasksFromPullRequests: true,
@@ -55,7 +54,7 @@ function daemon(
       }
       return settings
     }
-    if (path === "/api/harnesses") return { harnesses: HARNESSES, features: FEATURES }
+    if (path === "/api/harnesses") return { harnesses: HARNESSES, features: options.features ?? FEATURES }
     if (path === "/api/suffix-prompts") return { suffixPrompts: [] }
     sent.push({ path, body: init?.body })
     return { id: "synthetic-task" }
@@ -73,26 +72,26 @@ describe("per-model task defaults in the Models modal", () => {
   const openDefaults = async (name: string) =>
     fireEvent.click(await screen.findByRole("button", { name: `New task defaults for ${name}` }))
 
-  it("starts with a brief, edits from the row menu, and PATCHes only the overrides", async () => {
+  it("starts without autopilot, edits from the row menu, and PATCHes only the overrides", async () => {
     const sent: { path: string; body: unknown }[] = []
     render(<ModelVisibilityDialog open onOpenChange={() => {}} />, { wrapper: daemon({}, sent) })
 
     await openDefaults("claude · claude-sonnet-5")
-    const brief = await screen.findByRole("menuitemcheckbox", { name: "Task brief" })
-    expect(brief).toHaveAttribute("aria-checked", "true")
+    const fix = await screen.findByRole("menuitemcheckbox", { name: "Auto-fix" })
+    expect(fix).toHaveAttribute("aria-checked", "false")
     const merge = screen.getByRole("menuitemcheckbox", { name: "Auto-merge" })
     expect(merge).toHaveAttribute("aria-checked", "false")
 
-    fireEvent.click(brief)
+    fireEvent.click(fix)
     await waitFor(() => expect(sent).toHaveLength(1))
-    expect(sent[0]!.body).toEqual({ modelTaskDefaults: { claude: { "claude-sonnet-5": { brief: false } } } })
+    expect(sent[0]!.body).toEqual({ modelTaskDefaults: { claude: { "claude-sonnet-5": { autoFix: true } } } })
 
     // the menu stays open, and the second click builds on the first rather
     // than on the pre-click map
     fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Auto-merge" }))
     await waitFor(() => expect(sent).toHaveLength(2))
     expect(sent[1]!.body).toEqual({
-      modelTaskDefaults: { claude: { "claude-sonnet-5": { brief: false, autoMerge: true } } },
+      modelTaskDefaults: { claude: { "claude-sonnet-5": { autoFix: true, autoMerge: true } } },
     })
   })
 
@@ -103,12 +102,13 @@ describe("per-model task defaults in the Models modal", () => {
 
     await openDefaults("claude · claude-sonnet-5")
     const item = (name: string) => screen.getByRole("menuitemcheckbox", { name })
-    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Task brief" }))
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Auto-fix" }))
     fireEvent.click(item("Auto-merge"))
+    // the row already shows the unanswered write, so switching it back builds on that
+    await waitFor(() => expect(item("Auto-fix")).toHaveAttribute("aria-checked", "true"))
     fireEvent.click(item("Auto-fix"))
-    await waitFor(() => expect(item("Task brief")).toHaveAttribute("aria-checked", "false"))
+    await waitFor(() => expect(item("Auto-fix")).toHaveAttribute("aria-checked", "false"))
     expect(item("Auto-merge")).toHaveAttribute("aria-checked", "true")
-    expect(item("Auto-fix")).toHaveAttribute("aria-checked", "true")
 
     // one write at a time, in click order, each answered before the next leaves
     for (let n = 1; n <= 3; n++) {
@@ -117,32 +117,29 @@ describe("per-model task defaults in the Models modal", () => {
       act(() => held.shift()!())
     }
     expect(sent.at(-1)!.body).toEqual({
-      modelTaskDefaults: { claude: { "claude-sonnet-5": { brief: false, autoMerge: true, autoFix: true } } },
+      modelTaskDefaults: { claude: { "claude-sonnet-5": { autoMerge: true } } },
     })
-    await waitFor(() => expect(item("Auto-fix")).toHaveAttribute("aria-checked", "true"))
-    expect(item("Task brief")).toHaveAttribute("aria-checked", "false")
+    await waitFor(() => expect(item("Auto-merge")).toHaveAttribute("aria-checked", "true"))
+    expect(item("Auto-fix")).toHaveAttribute("aria-checked", "false")
   })
 
   it("names only how a model differs from the usual start", async () => {
     render(<ModelVisibilityDialog open onOpenChange={() => {}} />, {
-      wrapper: daemon({
-        claude: { "claude-opus-5": { autoFix: true, autoMerge: true } },
-        cursor: { auto: { brief: false } },
-      }),
+      wrapper: daemon({ claude: { "claude-opus-5": { autoFix: true, autoMerge: true } } }),
     })
     expect(await screen.findByText("Auto-fix · Auto-merge")).toBeInTheDocument()
-    // cursor's harness here cannot publish a brief, so "No brief" would describe nothing
-    expect(screen.queryByText("No brief")).toBeNull()
-    expect(screen.getAllByText(/Auto-fix|Auto-merge|No brief/)).toHaveLength(1)
-
-    await openDefaults("cursor · auto")
-    expect(await screen.findByRole("menuitemcheckbox", { name: "Auto-fix" })).toBeInTheDocument()
-    expect(screen.queryByRole("menuitemcheckbox", { name: "Task brief" })).toBeNull()
+    expect(screen.getAllByText(/Auto-fix|Auto-merge/)).toHaveLength(1)
   })
 
-  it("offers no menu on a daemon that cannot store them", async () => {
-    render(<ModelVisibilityDialog open onOpenChange={() => {}} />, { wrapper: daemon(undefined) })
+  it("offers no menu on a daemon that cannot store them, or has no autopilot", async () => {
+    const { unmount } = render(<ModelVisibilityDialog open onOpenChange={() => {}} />, { wrapper: daemon(undefined) })
     await screen.findByText("claude-sonnet-5")
+    expect(screen.queryByRole("button", { name: /^New task defaults for/ })).toBeNull()
+    unmount()
+
+    render(<ModelVisibilityDialog open onOpenChange={() => {}} />, { wrapper: daemon({}, [], { features: {} }) })
+    await screen.findByText("claude-sonnet-5")
+    await new Promise((resolve) => setTimeout(resolve, 20))
     expect(screen.queryByRole("button", { name: /^New task defaults for/ })).toBeNull()
   })
 })
@@ -161,22 +158,21 @@ describe("the composer seeds from the chosen model's defaults", () => {
   )
   const prompt = () => screen.getByPlaceholderText<HTMLTextAreaElement>("What do you want to work on?")
 
-  it("asks for a brief by default", async () => {
+  it("arms nothing by default", async () => {
     const sent: { path: string; body: unknown }[] = []
     render(dialog, { wrapper: daemon({}, sent) })
-    expect(await screen.findByRole("button", { name: "Task brief on" })).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "Manual PR" })).toBeInTheDocument()
     fireEvent.change(prompt(), { target: { value: "do the work" } })
     fireEvent.click(screen.getByRole("button", { name: "Create" }))
     await waitFor(() => expect(sent.find((call) => call.path === "/api/tasks")).toBeDefined())
     const body = sent.find((call) => call.path === "/api/tasks")!.body as Record<string, unknown>
-    expect(body.briefEnabled).toBe(true)
     expect(body.autopilot).toBeUndefined()
   })
 
   it("follows a default changed mid-draft, except for a switch already pressed", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
     render(dialog, { wrapper: daemon({}, [], { client }) })
-    expect(await screen.findByRole("button", { name: "Task brief on" })).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "Manual PR" })).toBeInTheDocument()
     fireEvent.change(prompt(), { target: { value: "half a thought" } })
 
     const setDefaults = (modelTaskDefaults: Record<string, unknown>) =>
@@ -186,15 +182,13 @@ describe("the composer seeds from the chosen model's defaults", () => {
           modelTaskDefaults,
         })),
       )
-    setDefaults({ claude: { "claude-opus-5": { brief: false, autoFix: true } } })
-    expect(await screen.findByRole("button", { name: "Task brief" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Auto-fix" })).toBeInTheDocument()
+    setDefaults({ claude: { "claude-opus-5": { autoFix: true } } })
+    fireEvent.click(await screen.findByRole("button", { name: "Auto-fix" }))
 
-    fireEvent.click(screen.getByRole("button", { name: "Task brief" }))
-    expect(await screen.findByRole("button", { name: "Task brief on" })).toBeInTheDocument()
-    setDefaults({ claude: { "claude-opus-5": { brief: false, autoMerge: true } } })
+    fireEvent.click(await screen.findByRole("menuitemcheckbox", { name: "Auto-fix" }))
+    expect(await screen.findByRole("button", { name: "Manual PR" })).toBeInTheDocument()
+    setDefaults({ claude: { "claude-opus-5": { autoFix: true, autoMerge: true } } })
     expect(await screen.findByRole("button", { name: "Auto-merge" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Task brief on" })).toBeInTheDocument()
     expect(prompt().value).toBe("half a thought")
   })
 
@@ -204,7 +198,7 @@ describe("the composer seeds from the chosen model's defaults", () => {
       wrapper: daemon(
         {
           claude: {
-            "claude-opus-5": { brief: false, autoMerge: true },
+            "claude-opus-5": { autoMerge: true },
             "claude-sonnet-5": { autoFix: true },
           },
         },
@@ -212,19 +206,16 @@ describe("the composer seeds from the chosen model's defaults", () => {
       ),
     })
     expect(await screen.findByRole("button", { name: "Auto-merge" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Task brief" })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole("button", { name: /claude.*claude-opus-5/ }))
     fireEvent.click(await screen.findByRole("menuitemradio", { name: /claude-sonnet-5/ }))
     expect(await screen.findByRole("button", { name: "Auto-fix" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "Task brief on" })).toBeInTheDocument()
 
     fireEvent.change(prompt(), { target: { value: "do the work" } })
     fireEvent.click(screen.getByRole("button", { name: "Create" }))
     await waitFor(() => expect(sent.find((call) => call.path === "/api/tasks")).toBeDefined())
     expect(sent.find((call) => call.path === "/api/tasks")!.body).toMatchObject({
       model: "claude-sonnet-5",
-      briefEnabled: true,
       autopilot: { autoMerge: false, autoFix: true },
     })
   })

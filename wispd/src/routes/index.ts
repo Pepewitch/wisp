@@ -42,7 +42,6 @@ import { diagnosticLog } from "./diagnostic";
 import { bulkPurgeRoute } from "./bulk-purge";
 import { workflowRoute } from "./workflows";
 import { AUTOPILOT_PATH, autopilotRoute } from "./autopilot";
-import { BRIEF_PATH, briefRoute } from "./task-brief";
 import { AUTO_REVIEW_PATH, autoReviewRoute, verificationRoute } from "./auto-review";
 import { settingsRoute } from "./settings";
 import { harnessLimitsRoute } from "./harness-limits";
@@ -139,12 +138,10 @@ function taskFamilyRoute(
   url: URL,
   path: string,
   cfg: WispConfig,
-  adapters: Record<string, AdapterDef>,
 ): Response | Promise<Response> | null {
   if (path === "/api/workflow-types" || /^\/api\/(?:workflows\/|tasks\/[a-z0-9]+\/workflows$)/.test(path)) return workflowRoute(req, path);
   if (AUTOPILOT_PATH.test(path)) return autopilotRoute(req, path);
   if (AUTO_REVIEW_PATH.test(path)) return autoReviewRoute(req, path);
-  if (BRIEF_PATH.test(path)) return briefRoute(req, path, cfg, adapters);
   if (TERMINALS_PATH.test(path)) return terminalsRoute(req, url, path, cfg);
   return null;
 }
@@ -152,7 +149,7 @@ function taskFamilyRoute(
 export function route(req: Request, url: URL, path: string, ctx: RouteContext): Response | Promise<Response> {
   const m = req.method;
   const { cfg, adapters } = ctx;
-  const family = taskFamilyRoute(req, url, path, cfg, adapters);
+  const family = taskFamilyRoute(req, url, path, cfg);
   if (family !== null) return family;
   const { models, probes, skills, compacts, pullRequests, updates, limits } = ctx.caches;
 

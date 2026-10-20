@@ -13,8 +13,6 @@ acting on it. Open `wisp log` only when the result is not enough.
 
 Cheaper views, each answering one question:
 
-- `wisp brief show <id>`: the agent's own short report, when briefs are on;
-  check it against the result and the diff ([briefs](cli.md#task-briefs)).
 - `wisp pr <id>`: what auto-merge or auto-fix is waiting for.
 - `wisp audit <id>`: who did what to the task, and when.
 - `wisp search <text>`: find a task by exact text (`-a` includes archived).

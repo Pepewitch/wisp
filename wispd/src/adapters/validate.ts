@@ -32,7 +32,6 @@ const ADAPTER_KEYS = [
   "effort",
   "effortLevels",
   "fastMode",
-  "briefs",
   "staticModels",
   "defaultModel",
   "image",
@@ -240,13 +239,6 @@ function applyCoreFields(
   if (raw.effort !== undefined) merged.effort = stringArray(raw.effort, `${label}.effort`);
   if (raw.effortLevels !== undefined) merged.effortLevels = stringArray(raw.effortLevels, `${label}.effortLevels`);
   if (raw.fastMode !== undefined) merged.fastMode = validateFastMode(raw.fastMode, `${label}.fastMode`);
-  if (raw.briefs === null) {
-    // like every other builtin capability, null takes it away
-    delete merged.briefs;
-  } else if (raw.briefs !== undefined) {
-    if (typeof raw.briefs !== "boolean") throw new Error(`${label}.briefs must be a boolean or null, got ${typeName(raw.briefs)}`);
-    merged.briefs = raw.briefs;
-  }
   if (raw.staticModels !== undefined) merged.staticModels = stringArray(raw.staticModels, `${label}.staticModels`);
   if (raw.allowEmptyResult !== undefined) {
     if (typeof raw.allowEmptyResult !== "boolean") {
@@ -469,12 +461,6 @@ function validateAdapter(
     merged.liveInput = null;
     warn(
       `${label}: overriding bin or exec disables inherited liveInput; set liveInput explicitly only after verifying the custom command's native protocol`,
-    );
-  }
-  if (builtin?.briefs && raw.briefs === undefined && (raw.bin !== undefined || raw.exec !== undefined)) {
-    delete merged.briefs;
-    warn(
-      `${label}: overriding bin or exec disables inherited task briefs; set briefs: true only after verifying the custom command's tool shell receives the task environment`,
     );
   }
   applyCoreFields(name, raw, builtin, merged, warn);

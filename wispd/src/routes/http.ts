@@ -17,8 +17,8 @@ import { turnInput } from "../live-input";
  * calls `backgroundWork` bare and still sees every row.
  */
 export function apiTask(t: Task): ApiTask {
-  const { brief_enabled, brief_generation: _generation, input_seq: _seq, input_rev: _rev, ...row } = t;
-  return { ...row, archived: t.archived !== 0, fast: t.fast !== 0, briefEnabled: brief_enabled === 1, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), turn_input: t.archived ? null : turnInput(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
+  const { brief_enabled: _brief, brief_generation: _generation, input_seq: _seq, input_rev: _rev, ...row } = t;
+  return { ...row, archived: t.archived !== 0, fast: t.fast !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), turn_input: t.archived ? null : turnInput(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
 }
 
 export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {

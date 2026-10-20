@@ -79,7 +79,6 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // (verified against droid 0.229.0's top-level help).
     attach: ["resume", "{session}"],
     // task env reaches the agent's tool shell: tests/harness-facts/droid.json taskEnv
-    briefs: true,
     modelDiscovery: "droid-models",
     // Wisp's default for new droid tasks (owner decision, 2026-09-30).
     defaultModel: "claude-opus-5-5",
@@ -186,7 +185,6 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     limitMarkers: ["usage limit", "rate limit", "credit balance", "you've reached your"],
     attach: ["--resume", "{session}"],
     // task env reaches the agent's tool shell: tests/harness-facts/claude.json taskEnv
-    briefs: true,
     // no modelDiscovery (researched on claude-code 2.1.240): the CLI exposes
     // no model list and names no default — `--help` has no models subcommand
     // (running `claude models` starts an interactive session), and the
@@ -280,7 +278,6 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     ],
     attach: ["resume", "{session}"], // `codex resume <id>` = interactive, same session
     // task env reaches the agent's tool shell: tests/harness-facts/codex.json taskEnv
-    briefs: true,
     modelDiscovery: "codex-models",
     // Wisp's default for new codex tasks (owner decision, 2026-09-30).
     defaultModel: "gpt-6.1-sol",
@@ -364,7 +361,6 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // invented shapes.
     attach: ["--resume", "{session}"], // interactive resume, same session
     // task env reaches the agent's tool shell: tests/harness-facts/cursor.json taskEnv
-    briefs: true,
     // No probe/skillDiscovery/compact strategy: none of those surfaces is
     // verified on cursor. Cursor documents interactive `/usage`, but
     // cursor-agent 2026.09.18 did not settle it in print mode, so it remains

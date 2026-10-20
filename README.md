@@ -4,13 +4,13 @@ https://github.com/user-attachments/assets/93c9376d-e671-44b8-9f34-82a747d929da
 
 <p>Run your coding agents in parallel, each task in its own worktree.<br />
 Wisp follows every task through: red CI and review comments go back to the agent,<br />
-the PR merges when it's ready, and a brief is waiting for you when you're back.</p>
+and the PR merges when it's ready.</p>
 
 <p>Self-hosted · No Wisp account · Works with Droid, Claude Code, Codex, Cursor, and OpenCode</p>
 
 </div>
 
-<p align="center"><img src="docs/assets/readme-hero.webp" width="880" alt="Wisp with five coding-agent tasks on a web app: a feature, a debug, an exploration, a flaky CI test and a deploy. The dark-mode task's conversation, its brief, and its auto-merge and auto-fix switches, with the same brief open on a phone." /></p>
+<p align="center"><img src="docs/assets/readme-hero.webp" width="880" alt="Wisp with five coding-agent tasks on a web app: a feature, a debug, an exploration, a flaky CI test and a deploy. The dark-mode task's conversation and its auto-merge and auto-fix switches, with the same task open on a phone." /></p>
 
 ## What Wisp does
 
@@ -31,9 +31,6 @@ the PR merges when it's ready, and a brief is waiting for you when you're back.<
   wake-up is an agent turn. A scheduled steer sends your next instruction at
   the time you pick.
   [Workflows](docs/WORKFLOWS.md)
-- **Read a brief, not a transcript.** At the end of each turn the agent
-  reports what it did, what's left, and any decision it needs from you, with
-  the option it recommends. Answer in one line. [Briefs](skills/wisp/references/cli.md#task-briefs)
 - **See the whole picture.** Read the conversation, review the diff, open a
   terminal in the worktree, and see the diagrams agents draw rendered right in
   the chat. [Publish image outputs](docs/IMAGE-OUTPUTS.md) for inline previews
@@ -101,7 +98,6 @@ and is tested on Ubuntu 24.04. Intel Macs and Windows aren't supported.
 
 - [Auto-merge and auto-fix](docs/PR-AUTOPILOT.md)
 - [Workflows: heartbeats and scheduled steers](docs/WORKFLOWS.md)
-- [Task briefs](skills/wisp/references/cli.md#task-briefs)
 - [Phone and remote access](docs/REMOTE-ACCESS.md)
 - [CLI reference](skills/wisp/references/cli.md)
 - [Storage, archive and cleanup](docs/ARCHIVE-CLEANUP.md)

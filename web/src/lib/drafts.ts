@@ -13,12 +13,6 @@ export interface CreateTaskDraft {
   choice: { harness: string; model: string } | null
   effort: string
   fast: boolean
-  /**
-   * The brief toggle as pressed in this draft. Absent follows the model's
-   * default, so a default changed in the Models modal still reaches a draft
-   * nobody has toggled.
-   */
-  brief?: boolean
   mode: "worktree" | "local"
   base: string
   suffixPromptId: string | null

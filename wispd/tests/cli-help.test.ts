@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { COMMANDS } from "../src/cli";
-import { briefHelp, briefUsage } from "../src/cli-brief-help";
 import { COMMAND_ALIASES, commandHelp, HELP, offlineAnswer, resolveCommand, workflowUsage } from "../src/cli-help";
 import { workflowCommand } from "../src/cli-workflow";
 
@@ -25,7 +24,7 @@ afterAll(() => {
 
 async function run(args: string[], home: string) {
   // this suite may run inside a Wisp turn, or under wisp-dev: none of that may leak in
-  const { NODE_ENV: _node, WISP_BRIEF_RUN: _run, WISP_TASK_ID: _task, WISP_COMMAND_NAME: _name, ...inherited } = process.env;
+  const { NODE_ENV: _node, WISP_TASK_ID: _task, WISP_COMMAND_NAME: _name, ...inherited } = process.env;
   const child = Bun.spawn({
     cmd: [process.execPath, "src/index.ts", ...args],
     cwd: WISPD,
@@ -50,11 +49,8 @@ function snapshot(dir: string): Record<string, string> {
 }
 
 /** What `<name> …--help…` must print: its usage, and only that. */
-function expectedHelp(name: string, args: string[]): string {
-  const command = resolveCommand(name)!;
-  if (command !== "brief") return commandHelp(command);
-  // brief keeps its agent-facing help (cli-brief-help.ts)
-  return args[1] === "--help" || args[1] === "-h" ? briefHelp() : briefUsage();
+function expectedHelp(name: string): string {
+  return commandHelp(resolveCommand(name)!);
 }
 
 describe("--help runs nothing", () => {
@@ -95,13 +91,13 @@ describe("--help runs nothing", () => {
     // before the home exists: nothing may create it
     const absent = join(tempDir("wisp-cli-help-absent-"), "home");
     const bare = await run([name, "--help"], absent);
-    expect(bare).toEqual({ exit: 0, out: `${expectedHelp(name, [name, "--help"]).trimEnd()}\n`, err: "" });
+    expect(bare).toEqual({ exit: 0, out: `${expectedHelp(name).trimEnd()}\n`, err: "" });
     expect(existsSync(absent)).toBe(false);
 
     // with a home and a live daemon, after arguments that would otherwise act
     for (const args of [[name, "tabcde", "on", "-h"], [name, "--force", "--help", "--json"]]) {
       const r = await run(args, home);
-      expect(r).toEqual({ exit: 0, out: `${expectedHelp(name, args).trimEnd()}\n`, err: "" });
+      expect(r).toEqual({ exit: 0, out: `${expectedHelp(name).trimEnd()}\n`, err: "" });
     }
     expect(requests).toEqual([]);
     expect(snapshot(home)).toEqual(before);
@@ -110,7 +106,6 @@ describe("--help runs nothing", () => {
   test("help <command> is the same answer as <command> --help; help <unknown> refuses", async () => {
     for (const name of NAMES) {
       const command = resolveCommand(name)!;
-      if (command === "brief") continue;
       expect(offlineAnswer(["help", name])).toEqual({ text: commandHelp(command), exit: 0, stream: "out" });
     }
     expect(offlineAnswer(["help"])).toEqual({ text: HELP, exit: 0, stream: "out" });
@@ -128,11 +123,17 @@ describe("--help runs nothing", () => {
     expect(r.exit).toBe(1);
     expect(r.err).toStartWith("unknown command: nope\n");
     expect(r.err).toContain("wisp help [command]");
+    // task briefs were removed: `brief` is no command at all, help included
+    for (const args of [["brief", "show"], ["brief", "--help"], ["help", "brief"]]) {
+      const removed = await run(args, home);
+      expect(removed.exit, args.join(" ")).toBe(1);
+      expect(removed.err, args.join(" ")).toStartWith("unknown command: brief\n");
+    }
     expect(requests).toEqual([]);
   });
 
   test("an unknown subcommand exits nonzero with a usage hint and asks the daemon nothing", async () => {
-    for (const args of [["workflow", "strat", "tabcde", "heartbeat"], ["project", "nope"], ["pr", "tabcde", "nope"], ["brief", "nope"]]) {
+    for (const args of [["workflow", "strat", "tabcde", "heartbeat"], ["project", "nope"], ["pr", "tabcde", "nope"]]) {
       const r = await run(args, home);
       expect(r.exit, args.join(" ")).not.toBe(0);
       expect(r.err, args.join(" ")).toContain("usage:");

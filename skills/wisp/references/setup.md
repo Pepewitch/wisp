@@ -186,14 +186,15 @@ harmless preferences.
   picker's footer, and it is a denylist, so a model a later probe discovers
   shows up on its own. A harness with every model hidden drops out of the
   picker until one is shown again.
-- `modelTaskDefaults` example — where the composer starts a new task's task
-  brief, auto-fix and auto-merge switches, per harness and model:
-  `"modelTaskDefaults": { "codex": { "gpt-5.6-luna": { "brief": false, "autoMerge": true } } }`.
-  Only overrides are stored: a model not listed starts with a brief and
-  neither autopilot switch. Edited from the same Models manager (the `…` on a
-  model's row; a row says how its model differs). The composer still lets you switch them
-  for one task, and `wisp new` and the API ignore this setting: they only use
-  what they are given explicitly.
+- `modelTaskDefaults` example — where the composer starts a new task's
+  auto-fix and auto-merge switches, per harness and model:
+  `"modelTaskDefaults": { "codex": { "gpt-5.6-luna": { "autoMerge": true } } }`.
+  Only overrides are stored: a model not listed starts with neither autopilot
+  switch. A `brief` key left there by an older Wisp is ignored. Edited from
+  the same Models manager (the `…` on a model's row; a row says how its model
+  differs). The composer still lets you switch them for one task, and
+  `wisp new` and the API ignore this setting: they only use what they are
+  given explicitly.
 - `adapters.json` — declare extra harnesses or override builtin fields (a
   harness is a headless one-shot command plus resume/model/effort templates).
 - `suffix-prompts.json` — reusable prompt suffixes, created/edited in the
@@ -215,9 +216,9 @@ harmless preferences.
 Every harness turn also runs with `WISP_TASK_ID`, `WISP_TASK_SLOT`,
 `WISP_WORKTREE`, and `WISP_REPO` set in its environment (a task's terminal
 gets the same four), plus `WISP_AGENT_TURN=1`, which only a turn has: `wisp`
-run there is recorded in the task audit as that task's agent. `wisp brief` (used
-with no task id, e.g. from inside a running turn) falls back to
-`$WISP_TASK_ID` when one is running in the harness's own shell.
+run there is recorded in the task audit as that task's agent. Commands an
+agent runs from inside its own turn, such as `wisp output add` and
+`wisp capture`, take the task from `$WISP_TASK_ID`.
 
 ## Models and effort
 

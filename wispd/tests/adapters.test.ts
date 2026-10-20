@@ -1099,7 +1099,7 @@ describe("validateAdapters (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateAdapters({ foo: { ...validNew, binn: "typo" } }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, effortLevels, fastMode, briefs, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, endOfOptions, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, contextFormat, probe, limits, skillDiscovery, compact, compactPrompt)",
+      "adapters.json: adapter 'foo': unknown key 'binn' — ignoring (known: bin, auth, exec, resume, model, effort, effortLevels, fastMode, staticModels, defaultModel, image, imageInput, imageDelivery, liveInput, allowEmptyResult, endOfOptions, parse, events, activity, errors, limitMarkers, transientMarkers, attach, modelDiscovery, usageFormat, contextFormat, probe, limits, skillDiscovery, compact, compactPrompt)",
     ]);
     expect("binn" in out.foo!).toBe(false);
   });
@@ -1206,10 +1206,8 @@ describe("validateAdapters (a prior audit)", () => {
       (message) => warnings.push(message),
     );
     expect(overridden.droid!.liveInput).toBeNull();
-    expect(overridden.droid!.briefs).toBeUndefined();
     expect(warnings).toEqual([
       "adapters.json: adapter 'droid': overriding bin or exec disables inherited liveInput; set liveInput explicitly only after verifying the custom command's native protocol",
-      "adapters.json: adapter 'droid': overriding bin or exec disables inherited task briefs; set briefs: true only after verifying the custom command's tool shell receives the task environment",
     ]);
 
     const verified = validateAdapters({
@@ -1407,15 +1405,13 @@ describe("validateAdapters: fast mode", () => {
   });
 });
 
-describe("adapter task briefs", () => {
-  test("task briefs are declared, never inherited by a changed command or guessed for a custom one", () => {
-    expect(validateAdapters({ droid: { model: ["-m", "{model}"] } }).droid!.briefs).toBe(true);
-    expect(validateAdapters({ droid: { bin: "/opt/wrapper/droid" } }, () => {}).droid!.briefs).toBeUndefined();
-    expect(validateAdapters({ droid: { bin: "/opt/wrapper/droid", briefs: true } }, () => {}).droid!.briefs).toBe(true);
-    expect(validateAdapters({ foo: { bin: "x", exec: [], parse: { format: "text" } } }).foo!.briefs).toBeUndefined();
-    expect(validateAdapters({ foo: { bin: "x", exec: [], parse: { format: "text" }, briefs: true } }).foo!.briefs).toBe(true);
-    expect(() => validateAdapters({ foo: { bin: "x", exec: [], parse: { format: "text" }, briefs: "yes" } })).toThrow("briefs must be a boolean or null");
-    // null takes a builtin's briefs away, the same as for its other capabilities
-    expect(validateAdapters({ droid: { briefs: null } }).droid!.briefs).toBeUndefined();
+describe("retired adapter keys", () => {
+  test("an adapters.json written for task briefs still loads: `briefs` is an ignored unknown key", () => {
+    const warnings: string[] = [];
+    const loaded = validateAdapters({ foo: { bin: "x", exec: [], parse: { format: "text" }, briefs: true } }, (message) => warnings.push(message));
+    expect(loaded.foo!.bin).toBe("x");
+    expect("briefs" in loaded.foo!).toBe(false);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toStartWith("adapters.json: adapter 'foo': unknown key 'briefs' — ignoring");
   });
 });

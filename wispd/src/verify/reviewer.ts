@@ -9,7 +9,6 @@
  * hostile process running as the same user, which can read Wisp's database.
  */
 import type { AutoReviewEvidence, AutoReviewFinding, AutoReviewSignals, AutoReviewVerdictBody } from "../../../shared/api/auto-review"
-import type { TaskBriefV1 } from "../../../shared/task-brief"
 import type { AdapterDef } from "../adapters"
 import type { PrSnapshot } from "../autopilot/github"
 import { repoConfigFor, type WispConfig } from "../config"
@@ -46,21 +45,11 @@ export function verifyAgent(cfg: WispConfig, adapters: Record<string, AdapterDef
   return { harness: fallback.harness, model: fallback.model ?? undefined, effort: fallback.effort ?? undefined }
 }
 
-/** The author's goal for the reviewer: what it was asked, and what its agent last reported. */
-function authorGoal(author: Task): { title: string; outcome: string | null } {
+/** The author's goal for the reviewer: what it was asked. */
+function authorGoal(author: Task): string {
   const first = db.query("SELECT prompt FROM turns WHERE task_id = ? ORDER BY n LIMIT 1").get(author.id) as { prompt: string } | null
   const asked = (first?.prompt ?? author.title).trim()
-  const brief = db.query("SELECT payload_json FROM task_briefs WHERE task_id = ? ORDER BY turn_n DESC LIMIT 1").get(author.id) as { payload_json: string } | null
-  return { title: asked.length > 2000 ? `${asked.slice(0, 2000)}…` : asked, outcome: briefOutcome(brief?.payload_json) }
-}
-
-function briefOutcome(payload: string | undefined): string | null {
-  if (!payload) return null
-  try {
-    return (JSON.parse(payload) as TaskBriefV1).outcome
-  } catch {
-    return null
-  }
+  return asked.length > 2000 ? `${asked.slice(0, 2000)}…` : asked
 }
 
 export interface ReviewerStart {
@@ -197,7 +186,7 @@ export async function launchReview(start: ReviewerStart, input: {
     prompt: `Auto-review ${label} · PR #${pr.number} · round ${round.round}${round.counted === 1 ? "" : " (re-run)"} · ${pr.head.slice(0, 7)}`,
     firstTurnPrompt: prompt,
     harness: review.harness, model: review.model ?? undefined, effort: review.effort ?? undefined,
-    fast: false, brief: false, mode: "worktree", base: pr.head, actor: "autopilot", verifyRole: "reviewer",
+    fast: false, mode: "worktree", base: pr.head, actor: "autopilot", verifyRole: "reviewer",
     prepare: (task) => { launchedReview(review.id, task.id) },
   })
   if (!("kind" in created)) return { launched: true }
@@ -239,7 +228,7 @@ async function launchRecipeTask(start: ReviewerStart, input: Parameters<typeof s
   const created = await start.launch({
     repoPath: input.repoPath, prompt: title, firstTurnPrompt: recipePrompt(promptInput),
     harness: input.agent.harness, model: input.agent.model, effort: input.agent.effort,
-    fast: false, brief: false, mode: "worktree", actor: input.actor, verifyRole: "recipe",
+    fast: false, mode: "worktree", actor: input.actor, verifyRole: "recipe",
     prepare: (task) => recordVerifyTask({ taskId: task.id, projectPath: input.repoPath, mode: input.mode, area: input.area, roundId: input.roundId }),
   })
   if ("kind" in created) {

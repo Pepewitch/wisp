@@ -408,7 +408,7 @@ function MainView({
     mobile: isMobile,
     features: searchFeature.data,
     connectionId: runtime.connectionId,
-    // the header's row: it carries the brief switch, and the list row alone can lag the detail
+    // the header's row: it carries the autopilot status, and the list row alone can lag the detail
     task: header,
     taskId: selectedId,
     archived,
@@ -497,7 +497,7 @@ function AppShell({
   }) => ReactNode
   conversation: ReactNode
   changes: ReactNode
-  autopilot?: { label: "Autopilot" | "Brief"; render: (showConversation: () => void, hidden: boolean) => ReactNode }
+  autopilot?: (showConversation: () => void, hidden: boolean) => ReactNode
   workflows?: ReactNode
   terminal: ReactNode
   composer: ReactNode

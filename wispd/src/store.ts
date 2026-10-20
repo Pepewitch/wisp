@@ -63,8 +63,6 @@ export function createTask(t: {
   fast?: boolean;
   /** where turns run; omitted = 'worktree', the behaviour every task had before local mode */
   mode?: TaskMode;
-  /** ask each eligible turn for a task brief; omitted = off, the default for every task */
-  brief?: boolean;
   /** a task Wisp started for verification (verify/); omitted = an ordinary task */
   verify_role?: "reviewer" | "recipe" | null;
   slot: number;
@@ -72,13 +70,10 @@ export function createTask(t: {
   return db.transaction((input: typeof t): Task => {
     const timestamp = now();
     const fast = input.fast === true ? 1 : 0;
-    // Born enabled at generation 1, the same state an off→on switch reaches,
-    // and written before the first turn can start.
-    const brief = input.brief === true ? 1 : 0;
     db.run(
-      `INSERT INTO tasks (id, title, repo_path, harness, model, effort, fast, mode, slot, state, context_n, brief_enabled, brief_generation, verify_role, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'creating', 1, ?, ?, ?, ?, ?)`,
-      [input.id, input.title, input.repo_path, input.harness, input.model, input.effort ?? null, fast, input.mode ?? "worktree", input.slot, brief, brief, input.verify_role ?? null, timestamp, timestamp],
+      `INSERT INTO tasks (id, title, repo_path, harness, model, effort, fast, mode, slot, state, context_n, verify_role, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'creating', 1, ?, ?, ?)`,
+      [input.id, input.title, input.repo_path, input.harness, input.model, input.effort ?? null, fast, input.mode ?? "worktree", input.slot, input.verify_role ?? null, timestamp, timestamp],
     );
     // A task's first durable context is born with it — one row, one boundary.
     db.run(

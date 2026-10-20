@@ -9,7 +9,8 @@ import { isRecord, typeName } from "./validate";
 /**
  * Shape-check and normalize (shared/model-task-defaults.ts). A switch this
  * build does not know is dropped rather than refused, so a config written by a
- * newer Wisp with a fourth switch still boots; a wrong-typed known switch is
+ * newer Wisp with another switch still boots, and so does one an older Wisp
+ * wrote with the retired `brief` switch; a wrong-typed known switch is
  * refused, like any other malformed setting. Harness and model names are never
  * checked against what is installed, for the reason hiddenModels gives.
  */

@@ -84,13 +84,12 @@ export function MobileShell({
   conversation: ReactNode
   changes: ReactNode
   /**
-   * The Autopilot tab (the task brief, auto-merge and auto-fix), a surface
-   * level with Changes; labelled Brief on a daemon with briefs and no
-   * autopilot, and absent on one with neither. It is handed a way back to the
-   * chat because "Show in conversation" and "View message" must land on a
-   * transcript that is on screen.
+   * The Autopilot tab (auto-merge, auto-fix and auto-review), a surface level
+   * with Changes, absent on a daemon without autopilot. It is handed a way
+   * back to the chat because "View message" must land on a transcript that is
+   * on screen.
    */
-  autopilot?: { label: "Autopilot" | "Brief"; render: (showChat: () => void, hidden: boolean) => ReactNode }
+  autopilot?: (showChat: () => void, hidden: boolean) => ReactNode
   /** Absent when the connected daemon does not support task workflows. */
   workflows?: ReactNode
   terminal: ReactNode
@@ -242,7 +241,7 @@ export function MobileShell({
       >
         {tabs.map((t) => (
           <Tab key={t} size="lg" active={tab === t} onClick={() => setTab(t)} className="h-full flex-1 basis-auto justify-center px-1">
-            {t === "autopilot" && autopilot ? autopilot.label : TAB_LABEL[t]}
+            {TAB_LABEL[t]}
           </Tab>
         ))}
       </div>
@@ -253,7 +252,7 @@ export function MobileShell({
             conversation's scroll position or tear down a live shell */}
         {firstRun}
         {!firstRun && <Pane show={tab === "chat"}>{conversation}</Pane>}
-        {!firstRun && autopilot && <Pane show={tab === "autopilot"}>{autopilot.render(() => setTab("chat"), tab !== "autopilot")}</Pane>}
+        {!firstRun && autopilot && <Pane show={tab === "autopilot"}>{autopilot(() => setTab("chat"), tab !== "autopilot")}</Pane>}
         {!firstRun && <Pane show={tab === "changes"}>{changes}</Pane>}
         {!firstRun && workflows !== undefined && <Pane show={tab === "workflows"}>{workflows}</Pane>}
         {!firstRun && (
@@ -300,7 +299,7 @@ function surfaceTabs(autopilot: boolean, workflows: boolean): MobileTab[] {
  * from anywhere (the task menu, ⌘F) gives the chat back first. The find has
  * already run against a hidden transcript by then, where nothing can scroll,
  * so it is asked again once the chat is on screen — the same frame the
- * Autopilot tab's own "Show in conversation" waits.
+ * Autopilot tab's own "View message" waits.
  */
 function useChatOnFind(tab: MobileTab, setTab: (tab: MobileTab) => void) {
   const { connectionId } = useDaemonRuntime()

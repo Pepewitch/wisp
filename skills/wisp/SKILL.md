@@ -66,7 +66,7 @@ the daemon down. It is authoritative for flags: trust it over any copied list,
 this file's included. Read a reference only when its trigger applies:
 
 - [supervise.md](references/supervise.md): tasks you did not just start, or
-  several at once; steering, switching harness or model, briefs, webhooks
+  several at once; steering, switching harness or model, webhooks
 - [needs-input.md](references/needs-input.md): a task is `needs-input`,
   especially when no question shows
 - [failures.md](references/failures.md): a task is `stuck`, `failed`, or
@@ -74,7 +74,7 @@ this file's included. Read a reference only when its trigger applies:
 - [integrating.md](references/integrating.md): a task is `done` and its work
   should land; auto-merge, auto-fix, archive refusals, purge, merge conflicts
 - [cli.md](references/cli.md): what a command or flag does beyond its help
-  text, such as `--base`, `--fast`, `--brief`, `--local`, or `wisp workflow`
+  text, such as `--base`, `--fast`, `--local`, or `wisp workflow`
 - [images.md](references/images.md): attaching files with `--attach`
 - [setup.md](references/setup.md): `wisp doctor` fails or the daemon is down;
   install, config, models and effort, browser and Desktop, the HTTP API

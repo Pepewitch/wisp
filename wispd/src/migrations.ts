@@ -601,8 +601,10 @@ END;
     id: 14,
     name: "task-briefs",
     up: (db) => {
-      // Task briefs (brief-store.ts): a per-task switch, one binding per
-      // eligible turn, and at most one report per source turn.
+      // Task briefs: a per-task switch, one binding per eligible turn, and at
+      // most one report per source turn. Briefs were removed later; these
+      // columns and tables stay, unread, so a downgrade still opens the
+      // profile.
       //
       // brief_generation moves on every off→on, and a binding records the
       // generation it was issued under, so a disable/re-enable cycle can never
@@ -646,8 +648,10 @@ CREATE INDEX IF NOT EXISTS idx_task_briefs_task ON task_briefs(task_id, turn_n);
     id: 15,
     name: "brief-provenance",
     up: (db) => {
-      // What a brief needs to know about the person's own input, recorded by
-      // Wisp rather than asked of the model (brief-store.ts):
+      // What a brief needed to know about the person's own input, recorded by
+      // Wisp rather than asked of the model. Briefs were removed later;
+      // origin and source_seq outlived them (delivery framing, queue order),
+      // input_rev and task_answer_observations stay unread:
       //
       //  - origin: who wrote a message. `workflow_id` cannot answer that — a
       //    finished schedule-steer sets it back to NULL — so it is written

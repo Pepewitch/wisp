@@ -56,7 +56,7 @@ async function gitRepo(): Promise<string> {
 }
 
 const input = (repoPath: string, extra: Partial<NewTaskInput> = {}): NewTaskInput => ({
-  repoPath, prompt: "write the thing", harness: "quick", fast: false, brief: false, mode: "local", actor: "cli", ...extra,
+  repoPath, prompt: "write the thing", harness: "quick", fast: false, mode: "local", actor: "cli", ...extra,
 });
 
 describe("creating a task without HTTP", () => {

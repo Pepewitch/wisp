@@ -730,6 +730,22 @@ describe("local vs worktree tasks", () => {
     expect(((await res.json()) as { error: string }).error).toBe('mode must be one of worktree, local, got "sideways"');
   });
 
+  test("an older client's briefEnabled is accepted and ignored: the task is created, with no brief", async () => {
+    const repo = gitRepo();
+    for (const briefEnabled of [true, "yes"]) {
+      const created = await call("/api/tasks", "POST", { repoPath: repo, prompt: "p", harness: "fake", briefEnabled });
+      expect(created.status).toBe(201);
+      const task = (await created.json()) as Record<string, unknown> & { id: string };
+      expect("briefEnabled" in task).toBe(false);
+      expect("brief_enabled" in task).toBe(false);
+      const deadline = Date.now() + 5_000;
+      while (turnsFor(task.id)[0]?.status !== "done") {
+        if (Date.now() >= deadline) throw new Error(`task ${task.id} did not finish its turn`);
+        await Bun.sleep(20);
+      }
+    }
+  });
+
   test("suffix prompts reach create and steer turns while the task title stays user-authored", async () => {
     const repo = gitRepo();
     const createSuffix = createSuffixPrompt(`Review ${crypto.randomUUID()}`, "Inspect correctness and security.");

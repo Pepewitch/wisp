@@ -412,7 +412,7 @@ export function parseSnapshots(raw: unknown, numbers: number[]): Map<number, PrS
   return found
 }
 
-// shared with the CLI's brief printer; re-exported for this module's callers
+// re-exported for this module's callers
 export { controlFree }
 
 /**

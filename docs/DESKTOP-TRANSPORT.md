@@ -80,8 +80,8 @@ daemon refusal into a generic proxy failure.
 
 ### Server-sent events
 
-`GET /api/events` has transient task, turn, message, workflow, brief,
-terminals, project, harnesses, settings, and harness-limits notifications.
+`GET /api/events` has transient task, turn, message, workflow, terminals,
+project, harnesses, settings, and harness-limits notifications.
 It is an invalidation stream, not a durable snapshot. Every initial connection
 and every reconnect therefore performs a baseline refetch before treating the
 cache as current.

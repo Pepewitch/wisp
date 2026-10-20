@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
-import { latestHumanInput } from "../src/brief-inputs";
 import { activeLiveInput } from "../src/live-input";
 import { answerQuestionResponse } from "../src/routes/task-answer";
 import { taskAudit } from "../src/task-audit";
@@ -175,7 +174,7 @@ describe("Droid live AskUser and interrupt", () => {
     expect(db.query("SELECT COUNT(*) AS n FROM task_messages WHERE task_id = ?").get(task.id)).toEqual({ n: 0 });
   });
 
-  test("the answer route refuses an incomplete answer before recording it, and records a complete one while briefs are off", async () => {
+  test("the answer route refuses an incomplete answer, and delivers a complete one", async () => {
     const dir = mkdtempSync(join(tmpdir(), "wisp-droid-answer-"));
     const answerPath = join(dir, "answers.json");
     const task = makeTask();
@@ -187,21 +186,17 @@ describe("Droid live AskUser and interrupt", () => {
         headers: { "content-type": "application/json", "x-wisp-client": "web" },
         body: JSON.stringify({ questionId: "ask-1", answers }),
       }));
-    const observations = () => db.query(`SELECT state FROM task_answer_observations WHERE task_id = ?`).all(task.id);
 
     const empty = await post([{ index: 1, answer: "  " }]);
     expect(empty.status).toBe(409);
     expect(((await empty.json()) as { error: string }).error).toContain("answer every question first");
-    expect(observations()).toEqual([]);
-    expect(getTask(task.id)!.input_rev).toBe(0);
     expect(taskAudit(task.id)).toEqual([]);
 
     expect((await post([{ index: 1, answer: "Japan" }])).status).toBe(200);
-    expect(observations()).toEqual([{ state: "delivered" }]);
     expect(taskAudit(task.id)).toEqual([expect.objectContaining({ action: "answer", actor: "web", detail: "question ask-1" })]);
-    // briefs were never on for this task: switching them on later still sees what was said last
-    expect(latestHumanInput(task.id)?.input).toMatchObject({ kind: "answer", text: "Japan", question: "Where to?", delivery: "delivered" });
     await until(() => getTask(task.id)?.state === "done");
+    const reply = JSON.parse(readFileSync(answerPath, "utf8")) as { result: { answers: { answer: string }[] } };
+    expect(reply.result.answers[0]!.answer).toBe("Japan");
   });
 
   test("interrupt closes live stdin before SIGTERM so a TERM-trapping harness can exit", async () => {

@@ -632,26 +632,6 @@ describe("daemon API contracts", () => {
   });
 });
 
-describe("task briefs at the create boundary", () => {
-  test("a wrong type is named, and a harness that cannot publish refuses the switch", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "wisp-create-brief-"));
-    const base = await startServer();
-    await expectError(base, "/api/tasks", 400, "briefEnabled must be a boolean, got string", "POST", {
-      repoPath: repo,
-      prompt: "make a task",
-      harness: "claude",
-      briefEnabled: "yes",
-    });
-    // refused rather than showing a band that never fills
-    await expectError(base, "/api/tasks", 400, "harness 'opencode' can't write task briefs", "POST", {
-      repoPath: repo,
-      prompt: "make a task",
-      harness: "opencode",
-      briefEnabled: true,
-    });
-  });
-});
-
 describe("model task defaults over the API", () => {
   test("model task defaults patch independently, normalize, and no-op when unchanged", async () => {
     const base = await startServer();
@@ -660,27 +640,24 @@ describe("model task defaults over the API", () => {
 
     try {
       const updated = await api(base, "/api/settings", "PATCH", {
+        // an older client's retired `brief` switch is accepted and dropped
         modelTaskDefaults: { codex: { "gpt-5": { brief: false, autoMerge: true, autoFix: false } } },
       });
       expect(updated.status).toBe(200);
-      expect(await json(updated)).toMatchObject({
-        modelTaskDefaults: { codex: { "gpt-5": { brief: false, autoMerge: true } } },
-      });
-      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8"))).toMatchObject({
-        modelTaskDefaults: { codex: { "gpt-5": { brief: false, autoMerge: true } } },
-      });
+      expect((await json<{ modelTaskDefaults: unknown }>(updated)).modelTaskDefaults).toEqual({ codex: { "gpt-5": { autoMerge: true } } });
+      expect(JSON.parse(readFileSync(CONFIG_PATH, "utf8")).modelTaskDefaults).toEqual({ codex: { "gpt-5": { autoMerge: true } } });
       expect(events).toContainEqual({ type: "settings" });
 
       // another client PATCHing only hiddenModels leaves the defaults alone
       const kept = await api(base, "/api/settings", "PATCH", { hiddenModels: { cursor: ["auto"] } });
       expect(await json(kept)).toMatchObject({
-        modelTaskDefaults: { codex: { "gpt-5": { brief: false, autoMerge: true } } },
+        modelTaskDefaults: { codex: { "gpt-5": { autoMerge: true } } },
       });
 
       // the same overrides spelled with explicit built-in values are a no-op
       events.length = 0;
       const noop = await api(base, "/api/settings", "PATCH", {
-        modelTaskDefaults: { codex: { "gpt-5": { autoMerge: true, brief: false, autoFix: false } }, droid: {} },
+        modelTaskDefaults: { codex: { "gpt-5": { autoMerge: true, autoFix: false } }, droid: {} },
       });
       expect(noop.status).toBe(200);
       expect(events).toEqual([]);

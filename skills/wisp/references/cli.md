@@ -75,35 +75,6 @@ push/merge instructions through flags or `--params` JSON. See
 and the trusted executable plugin contract. Push/merge flags guide the agent; they are not a
 process sandbox.
 
-## Task briefs
-
-```sh
-wisp brief enable [task]            # ask each eligible turn's agent for a short brief
-wisp brief disable [task]           # stop asking; saved briefs are kept
-wisp brief show [task] [--json]     # the latest brief, its turn, and how current it is
-wisp new … --brief                  # create a task with briefs already on
-wisp brief --help                   # what an agent reads before publishing
-```
-
-From the CLI and the API, briefs are off unless you switch them on for a task.
-The web and desktop composers start each new task at its model's default,
-which is on unless switched off in Settings → Models → Manage… (see
-`modelTaskDefaults` in [setup.md](setup.md)). While on, each ordinary
-turn on a harness that supports them (claude, codex, droid, cursor) carries one
-line asking the agent to run `wisp brief set --stdin` before it ends; a
-`/command` after the first turn, a steer, and a questionnaire answer carry no
-reminder. The agent's
-save is bound to the turn that asked for it, so a disabled task, an ended turn,
-or another task can never be written to. Enabling never starts, steers, or
-interrupts a turn — the next eligible turn is the first to be asked. A brief is
-the agent's report, not a verified result: `show` says which turn wrote it and
-whether a later turn ran without one. It also shows the start of your own latest
-message or questionnaire answer, taken from Wisp's records rather than the
-agent's, on one line with terminal control
-characters removed. Everything else it prints is the agent's text, cleaned the
-same way; `--json` stays lossless. A scheduled steer counts as yours, since its
-words are; Wisp's own messages and a workflow plugin's never do.
-
 ## Auto-merge, auto-fix and auto-review
 
 ```
@@ -154,7 +125,7 @@ head again without spending a round.
 
 ```
 wisp new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local]
-         [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--brief] [--attach <path>]…
+         [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--attach <path>]…
 ```
 
 Create and start a task. `repo` defaults to the current directory.
@@ -169,8 +140,9 @@ literally, and the create fails if it does not resolve. It is rejected for
 `--local`, which adopts the branch the checkout is already on. `--auto-merge`
 merges the task's PR once it is ready (below); `--auto-review` has an independent
 reviewer task verify each of its heads first. `--attach` repeats (see
-images.md; `--image` is the old name and still works). Prints
-`created <id> (<harness>[, <model>][, local][, auto-merge][, auto-fix][, auto-review][, brief]) — <title>`;
+images.md; `--image` is the old name and still works). Task briefs were
+removed, so `--brief` is refused. Prints
+`created <id> (<harness>[, <model>][, local][, auto-merge][, auto-fix][, auto-review]) — <title>`;
 the model is shown when Wisp received an explicit or configured choice, and
 omitted when the harness will choose its own default.
 

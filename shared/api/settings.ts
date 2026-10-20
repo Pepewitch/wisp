@@ -16,9 +16,9 @@ export type WispPreferences = {
    */
   hiddenModels: Record<string, string[]>;
   /**
-   * harness name -> model id -> where a new task's brief, auto-fix and
-   * auto-merge switches start in the composer. Only values that differ from
-   * the built-in defaults (brief on, both autopilot switches off) are kept.
+   * harness name -> model id -> where a new task's auto-fix and auto-merge
+   * switches start in the composer. Only values that differ from the built-in
+   * defaults (both off) are kept.
    */
   modelTaskDefaults: ModelTaskDefaultsMap;
 };

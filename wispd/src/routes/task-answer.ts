@@ -1,5 +1,3 @@
-import { observeAnswer, settleAnswerObservation } from "../brief-inputs";
-import { emit } from "../events";
 import { activeLiveInput } from "../live-input";
 import { assertTaskNotStopping, InterruptConflict } from "../turn-interrupt";
 import { recordAudit, requestActor } from "../task-audit";
@@ -57,27 +55,18 @@ export function answerQuestionResponse(task: Task, req: Request): Promise<Respon
     if (!live?.answer) {
       return err("this question is no longer waiting for an answer — send it as a message instead", 409);
     }
-    // Task briefs: the answer is the person's latest input, and it never
-    // reaches the message table — record it before the write, settle it after.
-    // A submission the harness would refuse is refused here first, so a
-    // rejected answer is never recorded as something the person said.
+    // A submission the harness would refuse is refused here first, with a
+    // count the person can act on.
     const asked = live.question?.(body.questionId);
     if (asked && missingAnswers(asked.questions, answers) > 0) {
       return err(`answer every question first (${missingAnswers(asked.questions, answers)} still empty)`, 409);
     }
-    const observation = asked ? observeAnswer(task.id, live.turnId, asked.id, asked.questions, answers) : null;
     try {
       // The driver owns the state move back to running: it is the half that
       // knows the harness actually took the answer.
       await live.answer(body.questionId, answers);
     } catch (error) {
-      if (observation) settleAnswerObservation(observation, "failed");
-      if (observation) emit({ type: "brief", taskId: task.id });
       return err(String(error instanceof Error ? error.message : error), 409);
-    }
-    if (observation) {
-      settleAnswerObservation(observation, "delivered");
-      emit({ type: "brief", taskId: task.id });
     }
     recordAudit(task.id, "answer", requestActor(req), `question ${body.questionId}`);
     return json({ ok: true });

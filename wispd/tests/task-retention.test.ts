@@ -57,7 +57,7 @@ test("export is a readable snapshot; purge removes managed files/records and kee
   expect(readFileSync(join(f.repo, "source.txt"), "utf8")).toBe("user repository");
 });
 
-test("a task's briefs travel with its export, and purge removes them with their bindings and answers", async () => {
+test("export leaves an older Wisp's brief rows out, and purge removes them", async () => {
   const f = fixture();
   const turn = db.query("SELECT id FROM turns WHERE task_id = ?").get(f.id) as { id: number };
   db.run(
@@ -74,7 +74,7 @@ test("a task's briefs travel with its export, and purge removes them with their 
      VALUES (?, ?, ?, 1, 1, 1, 'q', 'Keep it?', '[]', 'delivered', 'now', 'now')`,
     [`qa_${f.id}`, f.id, turn.id],
   );
-  expect((await exportTask(f.task)).briefs).toEqual([{ turn: 1, context: 1, revision: 1, savedAt: "now", brief: { version: 1, outcome: "Kept.", remaining: [] } }]);
+  expect(Object.keys(await exportTask(f.task))).not.toContain("briefs");
   await purgeTask(f.task);
   for (const table of ["task_briefs", "brief_runs", "task_answer_observations"]) {
     expect(db.query(`SELECT COUNT(*) AS n FROM ${table} WHERE task_id = ?`).get(f.id), table).toEqual({ n: 0 });

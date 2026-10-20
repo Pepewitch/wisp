@@ -1027,10 +1027,10 @@ all — a finger reveals nothing by hovering, and the manager does the job there
 
 Each manager row also carries the model's **task defaults**
 (`modelTaskDefaults` in daemon settings, built-in defaults in
-`shared/model-task-defaults.ts`: brief on, both autopilot switches off). They
+`shared/model-task-defaults.ts`: both autopilot switches off). They
 are said only by exception: a row whose model starts like every other shows
-nothing, and one that differs ends in a muted note (`No brief`,
-`Auto-fix · Auto-merge`). A `…` on the row opens a menu of
+nothing, and one that differs ends in a muted note
+(`Auto-fix · Auto-merge`). A `…` on the row opens a menu of
 `MenuCheckboxItem`s, offering only the switches the composer would offer
 there. The `…` is a `.model-row-action` like the picker's eye (hover, focus,
 or open), except that a coarse pointer always shows it, because the manager
@@ -1284,49 +1284,42 @@ naming whose filesystem the path is on). The disabled button it replaced meant
 the web UI could not be taken from zero to one project without a terminal, on
 the one surface — a phone — where that costs the most.
 
-## 5k. The Autopilot tab — the brief, then what auto-merge, auto-fix and auto-review are doing
+## 5k. The Autopilot tab — what auto-merge, auto-fix and auto-review are doing
 
 `components/autopilot-pane.tsx` (`AutopilotPane`, drawn from its models by
 `AutopilotView`). Autopilot is the first tab of the task panel, beside Changes
 and Workflows, and the tab the panel opens on. The header says **which task
 this is**; the tab says **where it stands**, and what Wisp is doing about its
-PR. Two sections share ONE scroller:
-
-1. **Brief** (`BriefSection` in `task-brief.tsx`), first, with only the tab
-   strip above it: it is the part a person reads. Its header row is `Brief`
-   and its switch; under it the report in full, at agent-prose leading
-   (13 / 1.7). Nothing caps it and it has no scroller of its own.
-2. **Automation**, under the one full-width line in the tab
-   (`border-border-strong`; every other rule is inset): the Auto-merge,
-   Auto-fix and Auto-review switch rows (Auto-review only where the daemon
-   advertises `features.autoReview`), the current PR's review rounds while
-   Auto-review is on (`auto-review-view.tsx`: a dot, the round and its
-   verdict, and an Open action for the reviewer task), then History. With
-   `features.reviewPanel` a round also says its tier (`deep review`, muted;
-   its `title` is what Wisp measured from the diff) and lists one row per
-   reviewer under it, A then B: the letter, the agent (`harness · model`), a
-   dot and its words (`Waiting for a slot`, `Kept` for a pass carried from an
-   earlier round on the head, `escalated: <reason>` when a light round's A
-   asked for B), and Open for that reviewer's task, which replaces the
-   round's own. The row's `title` holds the findings, blocking first; there
-   is no red text, because a rejection's dot already carries it. A round from
-   before the panel (`legacy`) keeps its one line and a faint `before the
-   panel`. Without the flag every round is drawn exactly as phase 1.
-   With `features.capture` a **settled** reviewer's row is followed by its
-   evidence (`ReviewEvidence`): A's waived captures first, as a notice
-   (`Capture waived`, then `area — the reason Wisp recorded`, in the
-   needs-input amber), then small thumbnails that wrap — six, then
-   `+N more`, which shows the rest. Each loads through the output route with
-   `useAssetStatus` and expands in `AttachmentViewer`, as a turn's outputs do,
-   and says who made it: `Captured by Wisp` with `area · viewport · path`, or
-   `Published by the reviewer`. A capture served from outside the reviewer's
-   worktree says so in amber (the page may not be this change); an unknown
-   source and `after a script` are faint; the `title` holds the full URL.
-   Nothing says *verified* — a capture proves only what Wisp saw. A round
-   whose areas need a capture says `Needs a capture: web, admin` under its
-   line. While a round runs (`running`, `pending`, a withheld `submitted`)
-   no evidence is drawn, and without the flag none of this is. Words live in
-   `lib/auto-review-words.ts`.
+PR. Its one section, **Automation**, fills the tab's scroller: the Auto-merge,
+Auto-fix and Auto-review switch rows (Auto-review only where the daemon
+advertises `features.autoReview`), the current PR's review rounds while
+Auto-review is on (`auto-review-view.tsx`: a dot, the round and its
+verdict, and an Open action for the reviewer task), then History. With
+`features.reviewPanel` a round also says its tier (`deep review`, muted;
+its `title` is what Wisp measured from the diff) and lists one row per
+reviewer under it, A then B: the letter, the agent (`harness · model`), a
+dot and its words (`Waiting for a slot`, `Kept` for a pass carried from an
+earlier round on the head, `escalated: <reason>` when a light round's A
+asked for B), and Open for that reviewer's task, which replaces the
+round's own. The row's `title` holds the findings, blocking first; there
+is no red text, because a rejection's dot already carries it. A round from
+before the panel (`legacy`) keeps its one line and a faint `before the
+panel`. Without the flag every round is drawn exactly as phase 1.
+With `features.capture` a **settled** reviewer's row is followed by its
+evidence (`ReviewEvidence`): A's waived captures first, as a notice
+(`Capture waived`, then `area — the reason Wisp recorded`, in the
+needs-input amber), then small thumbnails that wrap — six, then
+`+N more`, which shows the rest. Each loads through the output route with
+`useAssetStatus` and expands in `AttachmentViewer`, as a turn's outputs do,
+and says who made it: `Captured by Wisp` with `area · viewport · path`, or
+`Published by the reviewer`. A capture served from outside the reviewer's
+worktree says so in amber (the page may not be this change); an unknown
+source and `after a script` are faint; the `title` holds the full URL.
+Nothing says *verified* — a capture proves only what Wisp saw. A round
+whose areas need a capture says `Needs a capture: web, admin` under its
+line. While a round runs (`running`, `pending`, a withheld `submitted`)
+no evidence is drawn, and without the flag none of this is. Words live in
+`lib/auto-review-words.ts`.
 
 - **Section headers are 12.5 / 600**, the §4 row size at a heavier weight, so
   they outrank the `Auto-merge` row under them without an eyebrow.
@@ -1353,57 +1346,18 @@ PR. Two sections share ONE scroller:
   The data is `GET /api/tasks/:id/autopilot/history` (`useAutopilotHistory`),
   refreshed by the SSE `workflow` event; a daemon without
   `features.autopilotHistory` draws no History at all and is never asked.
-- **A long brief docks the Automation header.** The header row is
-  `sticky bottom-0`, a direct child of the scroller (a sticky row docks only
-  within its parent). While the section is below the fold (one
-  IntersectionObserver on a 1px sentinel) it docks at the foot of the pane
-  with the live line, so a needs-you red is always on screen; a click scrolls
-  there, and in place it is a plain header again. No red dot on the tab
-  itself: the rail and the PR icon already say it.
-- **Which daemon, which tab.** `taskBriefs` and `taskAutopilot` each bring
-  their section; a daemon with briefs and no autopilot keeps the tab's old
-  name, `Brief`, and shows the brief alone. The panel opens on it; a person's
-  own pick wins after that, and a daemon with neither opens on Changes with no
-  strip. All panes stay mounted, so a scroll position, an open comparison and
-  the log survive a look at the diff. On touch it is its own surface in the
+- **No red dot on the tab.** The rail and the PR icon already say it.
+- **Which daemon, which tab.** `taskAutopilot` brings the tab. The panel
+  opens on it; a person's own pick wins after that, and a daemon without it
+  opens on Changes. All panes stay mounted, so a scroll position and the log
+  survive a look at the diff. On touch it is its own surface in the
   mobile shell's strip (`Chat · Autopilot · Changes · Workflows · Terminal`);
   a task still opens on Chat.
-- **The task menu keeps the switches as shortcuts** — `Task brief`,
-  `Auto-merge #318`, `Auto-fix`, `Auto-review` — and nothing else: no reason notes, no action
+- **The task menu keeps the switches as shortcuts** — `Auto-merge #318`,
+  `Auto-fix`, `Auto-review` — and nothing else: no reason notes, no action
   rows. A menu that repeats a paragraph is why this tab exists. Each surface
   owns its own write: a pending write or its error shows only on the control
-  that sent it. An archived task has no brief switch but keeps the report it
-  has; a harness without `hasBriefs` cannot be switched on and is named as
-  unable.
-- **Two voices, split where the speaker changes.** Your latest words come
-  first, exact and in quotes, with a caption of Wisp's own facts (`sent
-  mid-turn 4`, `queued for the next turn`, `may not have arrived`). Then a
-  labelled divider, `The agent's report`, and below it Goal, Result,
-  Remaining, Decision and Scope. The divider borrows the context divider's
-  register and carries why the report may be older (`— written before your
-  latest input`). Recorded facts and agent claims never share a sentence. One
-  freshness line (`turn 4 · 2m ago`) sits above both, chosen by priority in
-  `lib/brief.ts`; the best state is a time. No state says "complete",
-  "verified" or "up to date". An empty remaining list reads `Nothing the agent
-  knows of.`, never "Done".
-- **Always open.** There is nothing to collapse, and nothing capped.
-  (`lib/brief-open.ts` and its stored preference are gone.)
-- **No accent, no chips.** Send stays the one primary. "Recommended" is a
-  check glyph and a muted word, and it marks an option only when the
-  recommendation plainly starts with that option's label: the payload names
-  its recommendation in prose, and a marker on the wrong option is worse than
-  none.
-- **Reading never writes.** Compare, Show all and Show in conversation are
-  local. Show in conversation hands the words to find-in-task
-  (`openFind(query, turn)`), which already knows how to load pages until a
-  turn is mounted. On touch the transcript is another tab, so the shell brings
-  Chat forward first (`onShowConversation`), and any find from elsewhere (the
-  task menu, ⌘F) does the same when the Autopilot tab is showing. The switch
-  is the brief's only mutation.
-- **Honest absence.** A daemon without `features.taskBriefs` has no Brief section. On
-  with no report is one line that never guesses why (`Turn 5 ended without
-  one.`). The create composer offers its glyph toggle (§5c-ii's shape, on the
-  scoping row beside the PR picker) only where the harness can publish.
+  that sent it.
 
 The gallery's *Autopilot tab* section draws every state from the real
 components and models, one `data-frame` per state for screenshots.
@@ -1475,7 +1429,7 @@ shell uses.
 
 `Changes` used to be a label that merely kept a tab's shape, "so `Checks` can
 slot in beside it later". **Workflows** is the sibling that arrived first, and
-the **Brief** joined them, and grew into **Autopilot** (§5k,
+**Autopilot** joined them (§5k,
 `task-panel.tsx`); the shape was right: tabs, selection is a background pill,
 no underline and no hue. Autopilot is first and the panel opens on it.
 
@@ -1484,7 +1438,7 @@ never closes the diff you had open. The strip is handed to the VISIBLE pane's
 `PaneHeader`, never to both — two tablists in one tree is the bug that trades
 one duplicated label for a broken a11y tree. Each pane still renders its own
 plain label when it is given no strip. The strip is built from the daemon's
-features (`taskBriefs`, `taskAutopilot`, `taskWorkflows`): a daemon with none gets Changes
+features (`taskAutopilot`, `taskWorkflows`): a daemon with none gets Changes
 alone, with its own label. The panel paints nothing until those features are
 known, so a cold load never opens on Changes and then jumps to Autopilot.
 
