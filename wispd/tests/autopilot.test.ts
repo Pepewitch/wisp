@@ -8,6 +8,7 @@ import { isTaskMerging } from "../src/autopilot/merging";
 import { publishedWork } from "../src/autopilot/published";
 import { AFTER_MERGE_MS, choosePull, WAITING_ON_YOU_MS } from "../src/autopilot/runtime";
 import { autopilotArchiveWarning, autopilotHistory, autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, resumeAutopilot, setAutopilot, writeAutopilotCheckpoint } from "../src/autopilot/store";
+import { createCommand } from "../src/cli-create";
 import { formatAutopilot, formatAutopilotHistory, prCommand } from "../src/cli-pr";
 import { autopilotRoute } from "../src/routes/autopilot";
 import { harnessesRoute } from "../src/routes/harnesses";
@@ -956,6 +957,34 @@ describe("API and CLI", () => {
     const local = await create({ mode: "local", autopilot: { autoMerge: true } });
     expect(local.status).toBe(400);
     expect(await local.text()).toContain("need a worktree task");
+  });
+
+  test("wisp new --auto-review creates the task with auto-review armed, and does not warn", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "wisp-autopilot-create-"));
+    for (const args of [["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "init"]]) {
+      const result = Bun.spawnSync(["git", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...args], { cwd: repo });
+      expect(result.exitCode, result.stderr.toString()).toBe(0);
+    }
+    const adapters = { quick: { bin: "bash", exec: ["-c", "printf done"], parse: { format: "text" as const }, attach: null } };
+    let response: Response | undefined;
+    // the CLI's request goes to the route in-process, the way the daemon would serve it
+    const fetched = spyOn(globalThis, "fetch").mockImplementation((async (url: string, init: RequestInit) => {
+      response = await createTaskRoute(new Request(url, init), loadConfig(), adapters, null);
+      return response.clone();
+    }) as unknown as typeof fetch);
+    const errors: string[] = [];
+    const errorLog = spyOn(console, "error").mockImplementation((line: unknown) => { errors.push(String(line)); });
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await createCommand([repo, "review me"], { harness: "quick", "auto-review": true });
+    } finally { fetched.mockRestore(); errorLog.mockRestore(); log.mockRestore(); }
+    expect(response?.status).toBe(201);
+    const created = await response!.json() as { id: string; autopilot: AutopilotStatus };
+    expect(created.autopilot).toMatchObject({ autoMerge: false, autoFix: false, autoReview: true, state: "waiting" });
+    expect(autopilotStatus(created.id)).toMatchObject({ autoReview: true });
+    expect(errors.join("\n")).not.toContain("did not arm");
+    await until(() => getTask(created.id)?.state === "done", "the created task to settle");
+    db.run("DELETE FROM tasks WHERE id = ?", [created.id]);
   });
 
   test("the route validates, toggles, and resumes", async () => {
