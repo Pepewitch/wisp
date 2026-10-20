@@ -4,7 +4,8 @@
  *
  * It never decides anything mid-turn. A busy task is only checked on a slow
  * cadence, and only to notice that its PR was merged or closed by someone
- * else; the moment the task settles, an event brings its row forward.
+ * else; the moment the task settles, an event brings its row forward, and so
+ * does the task leaving the state a wait on it described (failed → running).
  */
 import type { AutopilotState } from "../../../shared/autopilot"
 import type { AdapterDef } from "../adapters"
@@ -37,7 +38,7 @@ import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsCha
 import { headFirstSeen, headSince } from "./heads"
 import { planFix, type FixPlan } from "./fix"
 import {
-  anySwitch, checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, endMergeAttempt, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
+  anySwitch, checkAutopilotOnTaskEvent, checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, endMergeAttempt, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
   reserveRound, saveAutopilotCheck, unmarkedTurns, withdrawQueuedRound, writeAutopilotCheckpoint, type AutopilotCheck, type AutopilotCheckpoint,
 } from "./store"
 import { CONTEXT_CHANGE_PAUSE } from "./type"
@@ -127,11 +128,12 @@ export class AutopilotRuntime {
     const kick = (): void => { void backgroundPass("autopilot check", () => this.tick(), { loop: true }) }
     this.timer = setInterval(kick, 10_000)
     this.timer.unref?.()
-    // A task that settles is the moment auto-merge usually has something to do.
+    // A task that settles is the moment auto-merge usually has something to do;
+    // one that moved on from a wait's state makes that wait's reason stale.
     // A reviewer settling (or stopping to ask) is its author's moment.
     this.unsubscribe = subscribe((event) => {
       if (event.type !== "task") return
-      if (event.state === "done" && checkAutopilotSoon(event.taskId, this.now())) kick()
+      if (checkAutopilotOnTaskEvent(event.taskId, event.state, this.now())) kick()
       if (["done", "failed", "needs-input"].includes(event.state)) {
         const round = roundOfReviewer(event.taskId)
         if (round && checkAutopilotSoon(round.task_id, this.now())) kick()
@@ -256,7 +258,8 @@ export class AutopilotRuntime {
       if (!idle) {
         // a turn is running: its end is when a next PR appears, so the quick retries start over
         delete checkpoint.nextPrMisses
-        save("waiting", checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, busyReason(task)) : busyReason(task), BUSY_MS)
+        const reason = checkpoint.lastMerged ? nextPrReason(checkpoint.lastMerged, busyReason(task)) : busyReason(task)
+        this.saveCheck(row, { state: "waiting", reason, checkpoint, delayMs: BUSY_MS, busyOn: task.state })
         return
       }
       const mergedHere = checkpoint.mergedHere === true
@@ -302,7 +305,7 @@ export class AutopilotRuntime {
     supersedeStaleRounds(row, pr, this.cfg, now)
     if (!ctx.idle) {
       forgetIdle(checkpoint)
-      save("waiting", busyReason(task), BUSY_MS)
+      this.saveCheck(row, { state: "waiting", reason: busyReason(task), checkpoint, delayMs: BUSY_MS, busyOn: task.state })
       return
     }
     // The delay runs from the end of the task's LATEST turn: one the owner
