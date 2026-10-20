@@ -948,6 +948,102 @@ describe("Droid live turn completion", () => {
     }
   });
 
+  describe("an acknowledgement of bookkeeping tools", () => {
+    type Step = { text: string } | { tool: string };
+
+    /** Plays assistant texts and tool calls, one message each, and returns the completion's finalText. */
+    async function finalTextAfter(steps: Step[]): Promise<{ finalText: string; messages: string[] }> {
+      const { driver, events } = await bootDroid();
+      steps.forEach((step, index) => {
+        const content =
+          "text" in step
+            ? [{ type: "text", text: step.text }]
+            : [{ type: "tool_use", id: `tool-${index}`, name: step.tool, input: {} }];
+        notify(driver, {
+          type: "create_message",
+          message: { id: `assistant-${index}`, role: "assistant", content, createdAt: index },
+        });
+        if ("tool" in step) notify(driver, { type: "tool_result", toolUseId: `tool-${index}`, content: "ok" });
+      });
+      notify(driver, { type: "agent_turn_completed", reason: "completed" });
+      await driver.close();
+      return {
+        finalText: events.find((event) => event.type === "completion")!.finalText,
+        messages: events.filter((event) => event.type === "message").map((event) => event.text),
+      };
+    }
+
+    test("keeps the answer before it, and the transcript keeps both", async () => {
+      expect(
+        await finalTextAfter([{ text: "THE_ANSWER" }, { tool: "TodoWrite" }, { text: "Plan is up-to-date." }]),
+      ).toEqual({ finalText: "THE_ANSWER", messages: ["THE_ANSWER", "Plan is up-to-date."] });
+    });
+
+    test("keeps the answer when the TodoWrite rides in the answer's own message", async () => {
+      const { driver, events } = await bootDroid();
+      notify(driver, {
+        type: "create_message",
+        message: {
+          id: "assistant-1",
+          role: "assistant",
+          content: [
+            { type: "text", text: "THE_ANSWER" },
+            { type: "tool_use", id: "todo-1", name: "TodoWrite", input: {} },
+          ],
+          createdAt: 1,
+        },
+      });
+      notify(driver, {
+        type: "create_message",
+        message: { id: "assistant-2", role: "assistant", content: [{ type: "text", text: "Plan is up-to-date." }], createdAt: 2 },
+      });
+      notify(driver, { type: "agent_turn_completed", reason: "completed" });
+      expect(events.find((event) => event.type === "completion")!.finalText).toBe("THE_ANSWER");
+      await driver.close();
+    });
+
+    test("keeps the answer across repeated acknowledgements", async () => {
+      const { finalText } = await finalTextAfter([
+        { text: "THE_ANSWER" },
+        { tool: "TodoWrite" },
+        { text: "Plan is up-to-date." },
+        { tool: "TodoWrite" },
+        { text: "Plan is up-to-date." },
+      ]);
+      expect(finalText).toBe("THE_ANSWER");
+    });
+
+    test("a long message after TodoWrite is the answer", async () => {
+      const long = "x".repeat(201);
+      expect((await finalTextAfter([{ text: "draft" }, { tool: "TodoWrite" }, { text: long }])).finalText).toBe(long);
+    });
+
+    test("a short message after real work is the answer", async () => {
+      const { finalText } = await finalTextAfter([
+        { text: "Running the tests." },
+        { tool: "TodoWrite" },
+        { tool: "Execute" },
+        { text: "All tests pass." },
+      ]);
+      expect(finalText).toBe("All tests pass.");
+    });
+
+    test("a short message with no tool call before it is the answer", async () => {
+      const { finalText } = await finalTextAfter([
+        { text: "THE_ANSWER" },
+        { tool: "TodoWrite" },
+        { text: "Plan is up-to-date." },
+        { text: "One more thing: it is fixed." },
+      ]);
+      expect(finalText).toBe("One more thing: it is fixed.");
+    });
+
+    test("with no answer before it, the acknowledgement is all there is", async () => {
+      const { finalText } = await finalTextAfter([{ tool: "TodoWrite" }, { text: "Plan is up-to-date." }]);
+      expect(finalText).toBe("Plan is up-to-date.");
+    });
+  });
+
   test("an error completion with no assistant text leaves finalText empty", async () => {
     const { driver, events, terminals } = await bootDroid();
     notify(driver, { type: "agent_turn_completed", reason: "error" });

@@ -22,8 +22,9 @@ function thinkingLines(value: unknown, pre = "", keepEmpty = true): string | nul
 /**
  * A stream-json terminal event is a SETTLEMENT MARKER, not content. On
  * success its text repeats prose that already streamed as assistant events —
- * claude's result and droid's finalText are the last assistant message
- * exactly, cursor's result is the whole turn's prose concatenated (all
+ * claude's result is the last assistant message exactly, droid's finalText
+ * the last one that is not a to-do acknowledgement (live/droid.ts), cursor's
+ * result is the whole turn's prose concatenated (all
  * byte-verified against real logs, see parse.ts) — so reprinting any of it
  * only duplicates. codex set this precedent: turn.completed → "✓ turn
  * complete". The exception is is_error: an error result's text may be

@@ -125,6 +125,21 @@ error kinds `rate_limit_reached` / "quota exceeded" / "usage not included").
 These strings seed each adapter's `limitMarkers` in
 `wispd/src/adapters/builtins.ts`.
 
+## droid JSON-RPC bookkeeping acknowledgement — droid 0.229.0, 2026-10
+
+`droid-plan-acknowledgement.jsonl` is the Droid side of the end of a live
+`droid-jsonrpc` turn: the `droid.session_notification` frames the driver
+reads. Its order and shapes are those of affected turns in Wisp logs: the
+answer as one assistant message, a `TodoWrite` call in an assistant message
+of its own, the standalone `"TODO List Updated"` result, a separate assistant
+message `"Plan is up-to-date."`, then `agent_turn_completed`. The answer text,
+identifiers, timestamps and usage numbers are synthetic.
+
+What this proves: Droid acknowledges its to-do tool *after* the answer, so
+"the last assistant message" is that acknowledgement, not the answer. The
+driver keeps the answer as the turn's `finalText` and still streams the
+acknowledgement as a message.
+
 ## cursor — cursor-agent 2026.08.31-4057e58, model `cursor-grok-4.6-high`, 2026-09-01
 
 Run in a throwaway git repo, stdin from /dev/null (same as codex — Wisp spawns
