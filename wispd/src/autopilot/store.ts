@@ -8,6 +8,7 @@ import type { AutopilotBy, AutopilotHistoryEntry, AutopilotState, AutopilotStatu
 import { db } from "../store-database"
 import { emit } from "../events"
 import { createTaskMessage, getTask, randomId } from "../store"
+import type { TaskState } from "../types"
 import { keyParts, markerOf, withDelivered } from "./feedback"
 import { taskIsIdle } from "./idle"
 import { isTaskMerging } from "./merging"
@@ -41,6 +42,8 @@ export interface AutopilotCheckpoint {
   merged?: { base: string; byWisp: boolean; noted: boolean }
   /** what the saved reason describes (see AutopilotStatus.about) */
   about?: "pr" | "task"
+  /** the task state a wait on the busy task describes: the task leaving it brings the next look forward */
+  busyOn?: TaskState
   /** auto-fix rounds sent for the bound PR */
   rounds?: number
   /** the workflow runs Wisp reran on this head, so none is rerun twice */
@@ -349,6 +352,8 @@ export interface AutopilotCheck {
   by?: AutopilotBy
   /** nothing left to do for now (AutopilotStatus.done); any other look clears it */
   done?: boolean
+  /** a wait on the busy task: the state it describes (AutopilotCheckpoint.busyOn); any other look clears it */
+  busyOn?: TaskState
   checkpoint: AutopilotCheckpoint
   delayMs: number
   failures?: number
@@ -370,6 +375,8 @@ export function saveAutopilotCheck(row: WorkflowRow, check: AutopilotCheck, now:
   const checkpoint: AutopilotCheckpoint = { ...check.checkpoint, state: check.state, about: check.about ?? "task", by: check.by ?? "auto-merge" }
   if (check.done) checkpoint.done = true
   else delete checkpoint.done
+  if (check.busyOn) checkpoint.busyOn = check.busyOn
+  else delete checkpoint.busyOn
   const paced = nextDelay({
     delayMs: check.delayMs, patient: check.patient ?? check.state === "needs-you", key: `${check.state}:${check.reason}`,
     previous: previous.backoff, stretch: check.stretch ?? 1,
@@ -490,6 +497,20 @@ export function checkAutopilotSoon(taskId: string, now = new Date()): boolean {
   const result = db.run("UPDATE workflows SET next_check_at = ? WHERE task_id = ? AND type = ? AND state = 'active' AND next_check_at > ?",
     [now.toISOString(), taskId, AUTOPILOT_TYPE, now.toISOString()])
   return result.changes > 0
+}
+
+/**
+ * A task event that brings the next look forward: the task settled, or it
+ * left the state the last look's wait described — a failed task running again
+ * must not keep reading as failed until that turn ends.
+ */
+export function checkAutopilotOnTaskEvent(taskId: string, state: string, now = new Date()): boolean {
+  if (state !== "done") {
+    const row = autopilotRow(taskId)
+    const busyOn = row ? checkpointOf(row).busyOn : undefined
+    if (!busyOn || busyOn === state) return false
+  }
+  return checkAutopilotSoon(taskId, now)
 }
 
 /**

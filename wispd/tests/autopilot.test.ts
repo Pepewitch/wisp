@@ -684,6 +684,34 @@ describe("binding and the edges of a merge", () => {
     }
   });
 
+  test("a failed task running again stops reading as failed while the new turn runs", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub();
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock);
+    transition(task.id, "running");
+    transition(task.id, "failed");
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reason: "The task failed — waiting for you", about: "task" });
+    rt.start();
+    try {
+      // the person sends a message: a new turn starts, long before the slow busy look is due
+      transition(task.id, "running");
+      await until(() => autopilotStatus(task.id).reason === "Waiting for the task to finish", "the re-look on running");
+      expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", about: "task" });
+      expect(state.merges).toHaveLength(0);
+      // more news while it runs is no new situation: no look until the turn settles
+      const looks = autopilotRow(task.id)!.check_count;
+      transition(task.id, "running", "still working");
+      await rt.tick();
+      expect(autopilotRow(task.id)!.check_count).toBe(looks);
+    } finally {
+      await rt.stop();
+    }
+  });
+
   test("a PR that exists but is not the task's own is named, not hidden behind \"waiting for a PR\"", async () => {
     const task = doneTask();
     const clock = { now: START };
