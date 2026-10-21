@@ -2,8 +2,9 @@
 
 This ledger separates release evidence from the version label. The 0.6 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.6.9 is the current release; earlier 0.6 records are retained
-below. The 0.5 records remain in
+coverage. 0.6.9 was the last 0.6 release; 0.7.0 supersedes it, and its record
+is in [the 0.7 ledger](../v0.7/QUALIFICATION.md). Earlier 0.6 records are
+retained below. The 0.5 records remain in
 [the 0.5 ledger](../v0.5/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
@@ -14,8 +15,8 @@ still apply to 0.6.9.
 ## 0.6.9 publication
 
 **Published and promoted on 2026-10-09.**
-[Wisp 0.6.9](https://github.com/Pepewitch/wisp/releases/tag/v0.6.9) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.6.9](https://github.com/Pepewitch/wisp/releases/tag/v0.6.9) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 09:56:04 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`6d7dd68d982353bc9b91b7f231d2f2e1f502e46a`](https://github.com/Pepewitch/wisp/commit/6d7dd68d982353bc9b91b7f231d2f2e1f502e46a),
@@ -44,8 +45,8 @@ completed every job successfully on its first run:
 
 Promotion completed at 09:58:18 UTC with Homebrew tap commit
 [`03f9c7f6438b9fa15d98dba230c7db645b9d4978`](https://github.com/Pepewitch/homebrew-tap/commit/03f9c7f6438b9fa15d98dba230c7db645b9d4978).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.6.9.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.6.9 until 0.7.0 was promoted.
 
 0.6.9 adds no database migration. No PNG asset or brand-generator input changed
 since 0.6.8, so the PNG assets were not re-rendered. Before tagging, the local
