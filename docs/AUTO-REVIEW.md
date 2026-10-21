@@ -253,7 +253,9 @@ wisp verify show [file]                # list the recipe's files, or print one
 
 In the app, a project's **Verification** button in the sidebar opens its
 settings at the Verification section. There you can start a recipe task, choose
-the reviewer agent, read the areas, and activate a draft. The button's dot says
+the reviewer agents and their effort, read the areas, and activate a draft. A
+recipe task runs on the reviewer agent; while that is left on each task's own
+agent, you pick the recipe task's agent there for that task alone. The button's dot says
 when a draft is waiting, a recipe task is working, or a reviewer reported a
 problem with the recipe.
 

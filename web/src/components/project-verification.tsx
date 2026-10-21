@@ -1,16 +1,18 @@
-import { useState } from "react"
+import { useMemo, useState } from "react"
 
 import type { VerificationStatus, VerificationTaskBody } from "../../../shared/api/auto-review"
 import { Menu, MenuNote, MenuRadioGroup, MenuRadioItem, MenuSeparator } from "@/components/menu"
 import { ModelMenuGroups } from "@/components/model-menu"
-import { Bot } from "@/components/icons"
+import { Bot, Effort } from "@/components/icons"
 import { Button } from "@/components/primitives"
 import { useActivateVerification, useStartVerificationTask } from "@/hooks/mutations"
 import { useHarnesses, useProjectVerification } from "@/hooks/queries"
 import { useHiddenModels } from "@/hooks/useHiddenModels"
 import { failureReason } from "@/lib/api"
 import { recipeTaskWords, verificationStateLine } from "@/lib/auto-review-words"
-import { orderHarnesses } from "@/lib/model-choice"
+import { readCreateTaskDraft } from "@/lib/drafts"
+import { effortOptions } from "@/lib/effort"
+import { initialChoice, loadPreferredModel, orderHarnesses } from "@/lib/model-choice"
 import type { HiddenModels } from "@/lib/model-visibility"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { STATE_DOT, STATE_LABEL } from "@/lib/state"
@@ -49,6 +51,14 @@ export interface VerificationFieldsModel {
    */
   second?: ProjectVerifySecond
   onSecondChange?: (second: ProjectVerifySecond) => void
+  /**
+   * What a recipe task runs on while the reviewer is each task's own agent:
+   * a recipe task belongs to the project, so it has no task's agent to
+   * borrow. Picked here for those tasks only, never saved; null when there
+   * is no harness to offer. Unused once a reviewer agent is chosen.
+   */
+  recipeAgent: ProjectVerifyAgent | null
+  onRecipeAgentChange: (agent: ProjectVerifyAgent) => void
   note: string
   onNoteChange: (note: string) => void
   /** the action in flight: `setup`, `improve`, or `fix:<area>` (`fix:` for the whole recipe) */
@@ -89,13 +99,19 @@ export function VerificationSection({
   const start = useStartVerificationTask()
   const activate = useActivateVerification()
   const [note, setNote] = useState("")
+  const [recipePick, setRecipePick] = useState<ProjectVerifyAgent | null>(null)
   const [message, setMessage] = useState<VerificationMessage | null>(null)
   // opened once; "saved 8 minutes ago" need not tick while the dialog is up
   const [now] = useState(() => Date.now())
   const openTask = (id: string) => uiIntentsFor(connectionId).focusTask(id)
+  // until a person picks one, what a new task in this project would run on
+  const newTask = useMemo(() => newTaskAgent(connectionId, project.path, harnesses.data ?? []), [connectionId, project.path, harnesses.data])
+  const recipeAgent = recipePick ?? newTask
 
   const onStart = (mode: Mode, area?: string) => {
-    if (!agent) return
+    // the reviewer agent when there is one; otherwise the one picked for recipe tasks
+    const runsOn = agent ?? recipeAgent
+    if (!runsOn) return
     setMessage(null)
     start.mutate(
       {
@@ -103,9 +119,9 @@ export function VerificationSection({
         mode,
         ...(area ? { area } : {}),
         ...(note.trim() ? { note: note.trim() } : {}),
-        harness: agent.harness,
-        ...(agent.model ? { model: agent.model } : {}),
-        ...(agent.effort ? { effort: agent.effort } : {}),
+        harness: runsOn.harness,
+        ...(runsOn.model ? { model: runsOn.model } : {}),
+        ...(runsOn.effort ? { effort: runsOn.effort } : {}),
       },
       {
         onSuccess: ({ task }) => {
@@ -153,6 +169,8 @@ export function VerificationSection({
       agent={agent}
       onAgentChange={onAgentChange}
       {...(second ? { second: secondShown, onSecondChange: second.onChange } : {})}
+      recipeAgent={recipeAgent}
+      onRecipeAgentChange={setRecipePick}
       note={note}
       onNoteChange={setNote}
       starting={pendingStart ? (pendingStart.mode === "fix" ? `fix:${pendingStart.area ?? ""}` : pendingStart.mode) : null}
@@ -164,6 +182,21 @@ export function VerificationSection({
       onOpenTask={openTask}
     />
   )
+}
+
+/**
+ * The agent a new task in this project would start on: the create composer's
+ * pick for it when one is drafted, else the preferred model, else the first
+ * usable harness's default, in the composer's harness order. Its effort is the
+ * draft's, else the harness's configured default, as the composer seeds it.
+ */
+function newTaskAgent(connectionId: string, repoPath: string, harnesses: HarnessInfo[]): ProjectVerifyAgent | null {
+  const draft = readCreateTaskDraft(connectionId, repoPath)
+  const choice = initialChoice(orderHarnesses(harnesses), draft?.choice ?? loadPreferredModel(connectionId))
+  if (!choice) return null
+  const drafted = draft?.choice?.harness === choice.harness && draft.choice.model === choice.model
+  const effort = drafted ? draft!.effort : harnesses.find((h) => h.name === choice.harness)?.defaults.reasoningEffort
+  return { harness: choice.harness, model: choice.model, ...(effort ? { effort } : {}) }
 }
 
 /** The status's second reviewer (nulls for "its default") as the form holds one. */
@@ -184,8 +217,8 @@ export function VerificationFields(model: VerificationFieldsModel) {
       </p>
     )
   }
-  const blocked = !agent
-    ? "Choose a reviewer agent first: a recipe task runs on it"
+  const blocked = !agent && !model.recipeAgent
+    ? "No agent to run a recipe task on: choose one above"
     : busy
       ? "A recipe task is already working on this recipe"
       : null
@@ -324,6 +357,26 @@ export function VerificationFields(model: VerificationFieldsModel) {
         </div>
       )}
 
+      {!agent && (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-3">
+            <span className="w-[96px] shrink-0 text-[12px] text-fg-secondary">Recipe agent</span>
+            <AgentPicker
+              harnesses={model.harnesses}
+              hidden={model.hidden}
+              agent={model.recipeAgent}
+              fixed={[]}
+              aria-label="Recipe agent"
+              onChange={(next) => next && next !== "off" && model.onRecipeAgentChange(next)}
+            />
+          </div>
+          <p className="pl-[108px] text-[11px] leading-relaxed text-faint">
+            A recipe task belongs to the project, so it has no task&apos;s agent to borrow: the recipe tasks below run
+            on this one. Not saved; the reviewer stays each task&apos;s own agent.
+          </p>
+        </div>
+      )}
+
       <textarea
         value={model.note}
         onChange={(event) => model.onNoteChange(event.target.value)}
@@ -388,10 +441,13 @@ const SECOND_FIXED: FixedChoice[] = [
   { key: "@@off", value: "off", label: "Off — one reviewer" },
 ]
 
+const DEFAULT_EFFORT = "@@default"
+
 /**
  * Who reviews: one of the fixed choices ("Each task's own agent"; for the
  * second reviewer "Same agent as the reviewer" and "Off"), or one harness and
- * model from the composer's model list.
+ * model from the composer's model list, with its effort beside it. With no
+ * fixed choices (the recipe agent) it always names an agent once it has one.
  */
 function AgentPicker({
   harnesses,
@@ -409,46 +465,90 @@ function AgentPicker({
   "aria-label": string
 }) {
   const named = agent && agent !== "off" ? agent : null
-  const choice = named ? null : fixed.find((option) => option.value === agent) ?? fixed[0]!
+  const choice = named ? null : fixed.find((option) => option.value === agent) ?? fixed[0] ?? null
   const selected = named?.model ? { harness: named.harness, model: named.model } : null
+  const harness = named ? harnesses.find((candidate) => candidate.name === named.harness) : undefined
   const label = named ? (
     <>
       {named.harness}
       {named.model && <span className="font-mono text-muted-foreground"> · {named.model}</span>}
     </>
   ) : (
-    choice!.label
+    choice?.label ?? "Choose an agent"
   )
   return (
-    <Menu icon={<Bot />} label={label} aria-label={ariaLabel}>
+    <span className="flex min-w-0 items-center gap-1.5">
+      <Menu icon={<Bot />} label={label} aria-label={ariaLabel}>
+        <MenuRadioGroup
+          value={named ? (named.model ? encode(named.harness, named.model) : named.harness) : choice?.key ?? ""}
+          onValueChange={(value) => {
+            const pick = fixed.find((option) => option.key === value)
+            if (pick) return onChange(pick.value)
+            const [harness = "", model = ""] = value.split("\t")
+            // the effort chosen for this harness survives a model change; another harness starts at its default
+            const effort = named?.harness === harness ? named.effort : undefined
+            onChange({ harness, ...(model ? { model } : {}), ...(effort ? { effort } : {}) })
+          }}
+        >
+          {fixed.map((option) => (
+            <MenuRadioItem key={option.key} value={option.key}>
+              {option.label}
+            </MenuRadioItem>
+          ))}
+          {fixed.length > 0 && <MenuSeparator />}
+          {harnesses.length === 0 ? (
+            <MenuNote>No harnesses reported by the daemon.</MenuNote>
+          ) : (
+            <ModelMenuGroups
+              harnesses={orderHarnesses(harnesses)}
+              hidden={hidden}
+              revealed={false}
+              selected={selected}
+              encode={encode}
+            />
+          )}
+        </MenuRadioGroup>
+      </Menu>
+      {named && harness?.hasEffort && <EffortMenu harness={harness} agent={named} aria-label={`${ariaLabel} effort`} onChange={onChange} />}
+    </span>
+  )
+}
+
+/**
+ * A named agent's effort: Harness default (saves none) and the harness's own
+ * levels, as the composer offers them. The current effort, set by the CLI or
+ * borrowed from a composer draft, always stays listed, so it can be seen and
+ * cleared even on a harness that names no levels.
+ */
+function EffortMenu({
+  harness,
+  agent,
+  onChange,
+  "aria-label": ariaLabel,
+}: {
+  harness: HarnessInfo
+  agent: ProjectVerifyAgent
+  onChange: (agent: ProjectVerifyAgent) => void
+  "aria-label": string
+}) {
+  const { connectionId } = useDaemonRuntime()
+  const efforts = effortOptions(connectionId, harness)
+  if (agent.effort && !efforts.includes(agent.effort)) efforts.push(agent.effort)
+  return (
+    <Menu icon={<Effort />} label={agent.effort ? `${agent.effort} effort` : "Default effort"} aria-label={ariaLabel}>
       <MenuRadioGroup
-        value={named ? (named.model ? encode(named.harness, named.model) : named.harness) : choice!.key}
+        value={agent.effort ?? DEFAULT_EFFORT}
         onValueChange={(value) => {
-          const pick = fixed.find((option) => option.key === value)
-          if (pick) return onChange(pick.value)
-          const [harness = "", model = ""] = value.split("\t")
-          // an effort chosen for this harness elsewhere (the CLI) survives a model change
-          const effort = named?.harness === harness ? named.effort : undefined
-          onChange({ harness, ...(model ? { model } : {}), ...(effort ? { effort } : {}) })
+          const effort = value === DEFAULT_EFFORT ? undefined : value
+          onChange({ harness: agent.harness, ...(agent.model ? { model: agent.model } : {}), ...(effort ? { effort } : {}) })
         }}
       >
-        {fixed.map((option) => (
-          <MenuRadioItem key={option.key} value={option.key}>
-            {option.label}
+        <MenuRadioItem value={DEFAULT_EFFORT}>Harness default</MenuRadioItem>
+        {efforts.map((effort) => (
+          <MenuRadioItem key={effort} value={effort}>
+            {effort}
           </MenuRadioItem>
         ))}
-        <MenuSeparator />
-        {harnesses.length === 0 ? (
-          <MenuNote>No harnesses reported by the daemon.</MenuNote>
-        ) : (
-          <ModelMenuGroups
-            harnesses={orderHarnesses(harnesses)}
-            hidden={hidden}
-            revealed={false}
-            selected={selected}
-            encode={encode}
-          />
-        )}
       </MenuRadioGroup>
     </Menu>
   )
