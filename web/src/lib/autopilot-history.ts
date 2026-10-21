@@ -47,6 +47,7 @@ const WORD: Record<string, string> = {
   judged: "Review judged",
   "judge-unavailable": "Review judge gave up",
   wake: "Fix round",
+  "network-resume": "Network resume",
   skipped: "Fix round skipped",
   held: "Held by Stop",
   resumed: "Resumed",

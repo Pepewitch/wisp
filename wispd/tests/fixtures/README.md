@@ -294,3 +294,16 @@ droid's Node warnings. Session ids and uuids were replaced with stable
 synthetic ones, and opencode's provider URL with `provider.example.invalid`.
 These pin `adapters/network.ts`'s markers: `wispd/tests/network-failure.test.ts`
 reads every case through the adapter's own error strategy.
+
+`network-live-frames.json` is the same outage on the two live protocols Wisp
+actually runs these harnesses through: the frames codex 0.162.1's `app-server`
+and droid 0.229.0's `exec --input-format stream-jsonrpc` sent back to Wisp's own
+`CodexLiveDriver` and `DroidLiveDriver`, captured the same way. Codex ends its
+turn on `workspace routing discovery failed`; droid sends its `Connection
+error.` as a notification the driver does not relay, then ends the turn with
+`agent_turn_completed` reason `model_provider_unreachable` — which is what the
+turn's detail says. Kept: the responses the drivers read (trimmed to the
+fields they use), the error notifications (codex's first and last retry of
+its own five), and the terminal frame. Dropped: MCP status, settings and
+thread-start notifications (server names, machine name, paths), and droid's
+user-only system message. Ids are synthetic.

@@ -87,7 +87,8 @@ export interface AutopilotHistoryEntry {
   at: string
   /**
    * armed, configured, bound, wait, blocked, rerun, judged, judge-unavailable,
-   * wake (a round sent), skipped, held, resumed, merging, merged,
+   * wake (a round sent), network-resume (a message that continues a task
+   * after the network dropped), skipped, held, resumed, merging, merged,
    * merge-failed, review (an auto-review round started or ended),
    * review-hold (the verification recipe needs fixing), and the row's own
    * active, paused and completed

@@ -426,7 +426,8 @@ const mergedDetail = (merged: { pr: number; base: string; byWisp: boolean }): st
 /**
  * The bound PR merged and the switches stay on: forget everything about that
  * PR (its heads, rounds, feedback ledger, reruns), keep what belongs to the
- * task (a Stop hold, when auto-fix was armed, turns never asked to sign), and
+ * task (a Stop hold, when auto-fix was armed, turns never asked to sign, its
+ * resumes in a row after the network dropped), and
  * look for the task's next PR. Always active again: a pause was about the PR
  * that is now merged.
  */
@@ -450,6 +451,8 @@ export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: s
       ...(previous.stopHold ? { stopHold: previous.stopHold } : {}),
       ...(previous.fixArmedAt ? { fixArmedAt: previous.fixArmedAt } : {}),
       ...(previous.unmarkedTurns ? { unmarkedTurns: previous.unmarkedTurns } : {}),
+      // a merge is not the task's turn ending another way: the count of resumes stands
+      ...(previous.network ? { network: previous.network } : {}),
       lastMerged: { ...merged, noted: false }, mergedHere: true, done: true,
       state: "waiting", about: "task", by: "auto-merge",
     }
@@ -667,6 +670,8 @@ export function reserveRound(row: WorkflowRow, round: {
   turnCount: number
   /** which switch sends it: auto-fix's rounds, or auto-review's bounce */
   by?: AutopilotBy
+  /** its history kind: a round is a `wake`; a resume after the network dropped is a `network-resume` */
+  kind?: "wake" | "network-resume"
   /** what its reason is about: the PR by default; a resume after the network dropped is about the task */
   about?: "pr" | "task"
   /** whether the task may take it now: settled `done` by default (taskIsIdle) */
@@ -695,7 +700,7 @@ export function reserveRound(row: WorkflowRow, round: {
     db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, wake_count = wake_count + 1, revision = revision + 1,
       last_checked_at = ?, updated_at = ? WHERE id = ?`,
     [JSON.stringify({ ...round.checkpoint, state: "waiting", about: round.about ?? "pr", by: round.by ?? "auto-fix" }), round.reason, at, at, row.id])
-    recordWorkflow(row.id, "wake", round.reason, at, id)
+    recordWorkflow(row.id, round.kind ?? "wake", round.reason, at, id)
     return id
   })()
   if (messageId) {

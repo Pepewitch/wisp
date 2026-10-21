@@ -5,8 +5,8 @@
  * network is the same event whichever CLI was talking. It holds the operating
  * system's own words, which every harness passes through in some form, and
  * each builtin's words for the same outage, taken from offline captures
- * (tests/fixtures/network-*.txt): a run with every route to a provider
- * blocked, so no request ever left the machine.
+ * (tests/fixtures/network-outages.json and network-live-frames.json): runs
+ * with every route to a provider blocked, so no request ever left the machine.
  *
  * A match prefixes the task's state_detail with `network: ` (turn-finalize.ts),
  * which autopilot reads as a pause it may resume (autopilot/network.ts).
@@ -21,8 +21,8 @@ const NETWORK_MARKERS = [
   "network is unreachable", "failed to lookup address", "dns error",
   // claude: "Can't reach the API server" and its API Error wordings
   "can't reach the api server", "unable to connect to api", "api error: connection error",
-  // droid: the provider SDK's connection failure
-  "connection error.",
+  // droid: the provider SDK's connection failure (exec), and how its live JSON-RPC turn ends on one
+  "connection error.", "model_provider_unreachable",
   // opencode: "Cannot connect to API: Unable to connect. Is the computer able to access the url?"
   "cannot connect to api",
   // codex: its transport gave up ("Reconnecting... 5/5" before it), or a request never left
@@ -42,12 +42,13 @@ const NEVER_NETWORK = [
 
 /**
  * True when a failed turn ended on the network. `exitCode` is the harness's
- * own: a turn that died to a signal (128 and up) or whose exit Wisp never saw
- * (null, e.g. one it recovered after a restart) did not end on the network,
- * whatever its last words were.
+ * own: a turn that died to a signal (128 and up) did not end on the network,
+ * whatever its last words were. Null is an exit Wisp did not see — a live
+ * turn settled while its process lingers, or one recovered after a restart —
+ * and its words decide.
  */
 export function isNetworkFailure(detail: string | null, exitCode: number | null): boolean {
-  if (detail === null || exitCode === null || exitCode >= 128) return false;
+  if (detail === null || (exitCode !== null && exitCode >= 128)) return false;
   const normalized = detail.toLowerCase();
   if (NEVER_NETWORK.some((pattern) => pattern.test(normalized))) return false;
   return NETWORK_MARKERS.some((marker) => normalized.includes(marker));

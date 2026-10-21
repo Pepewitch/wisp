@@ -16,7 +16,7 @@ import { listTasksRoute } from "../src/routes/tasks";
 import { startNextQueuedMessage } from "../src/runner";
 import { db, getTask, latestTurnForTask, messagesFor, runningTurn, setTaskFields } from "../src/store";
 import type { ApiTaskListItem } from "../src/types";
-import { doneTask, fakeGitHub, forgetTasks, pass, queue, runtime, until } from "./autopilot-harness";
+import { doneTask, fakeGitHub, forgetTasks, pass, queue, runtime, seed, until } from "./autopilot-harness";
 
 afterEach(forgetTasks);
 
@@ -51,8 +51,9 @@ async function armedTask(script: string[]) {
   expect(startNextQueuedMessage(task.id, net.adapters, loadConfig())).not.toBeNull();
   await settled(task.id);
   const clock = { now: Date.now() };
-  const rt = runtime(fakeGitHub().github, clock, net.adapters);
-  return { ...net, task, clock, rt };
+  const github = fakeGitHub();
+  const rt = runtime(github.github, clock, net.adapters);
+  return { ...net, task, clock, rt, github: github.state };
 }
 
 async function settled(taskId: string) {
@@ -92,7 +93,7 @@ describe("a turn that ended on the network, under autopilot", () => {
     await settled(t.task.id);
     expect(getTask(t.task.id)!.state).toBe("done");
     expect(t.prompts().at(-1)).toContain(NETWORK_RESUME_MESSAGE);
-    expect(autopilotHistory(t.task.id).map((entry) => entry.detail)).toContain("Resumed after the network dropped (1 of 3)");
+    expect(autopilotHistory(t.task.id).find((entry) => entry.kind === "network-resume")?.detail).toBe("Resumed after the network dropped (1 of 3)");
     expect(autopilotStatus(t.task.id).network).toBeNull();
   });
 
@@ -112,6 +113,32 @@ describe("a turn that ended on the network, under autopilot", () => {
     expect(workflowMessages(t.task.id)).toHaveLength(3);
     expect(autopilotStatus(t.task.id)).toMatchObject({ network: null, reason: "The task failed — waiting for you" });
     expect(getTask(t.task.id)!.turn_count).toBe(4);
+  });
+
+  test("a merge of its PR is not the task moving on: spent resumes stay spent", async () => {
+    const t = await armedTask(["net"]);
+    seed(t.task.id, t.clock);
+    for (const waitMs of [60_000, 120_000, 240_000]) {
+      await lookAfter(t, waitMs);
+      await settled(t.task.id);
+    }
+    expect(workflowMessages(t.task.id)).toHaveLength(3);
+    // someone merges the PR while the task waits for a person
+    t.github.pr = { ...t.github.pr, state: "MERGED", mergedBy: "owner" };
+    await lookAfter(t, 60 * 60_000);
+    expect(autopilotStatus(t.task.id).lastMerged).toEqual({ pr: 7, byWisp: false });
+    await lookAfter(t, 2 * 60 * 60_000);
+    expect(workflowMessages(t.task.id)).toHaveLength(3);
+    expect(autopilotStatus(t.task.id).network).toBeNull();
+  });
+
+  test("its resumes are their own history entries, never numbered as fix rounds", async () => {
+    const t = await armedTask(["net", "ok"]);
+    await lookAfter(t, 60_000);
+    await settled(t.task.id);
+    const kinds = autopilotHistory(t.task.id).map((entry) => entry.kind);
+    expect(kinds).toContain("network-resume");
+    expect(kinds).not.toContain("wake");
   });
 
   test("a turn that ends any other way starts the count over", async () => {

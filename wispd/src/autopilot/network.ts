@@ -114,7 +114,7 @@ export function networkLook(row: WorkflowRow, task: Task, checkpoint: AutopilotC
   const id = reserveRound(row, {
     key: plan.key, prompt: NETWORK_RESUME_MESSAGE, reason: `Resumed after the network dropped (${plan.resume} of ${NETWORK_RESUMES})`,
     checkpoint: { ...checkpoint, network: { messageId, resumes: plan.resume } }, turnCount: task.turn_count, messageId,
-    ready: taskIsNetworkPaused, about: "task", by: checkpoint.by,
+    ready: taskIsNetworkPaused, about: "task", by: checkpoint.by, kind: "network-resume",
   }, deps.now)
   if (id) deps.start(id)
   return true

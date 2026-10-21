@@ -444,7 +444,7 @@ were on for the task, not only the current one, up to 500 entries.
   always kept.
 - **Everything else,** the newest 100 entries: switched on or changed,
   the PR it bound to, each change of what it waits for or needs you for,
-  reruns, rounds sent or skipped, the review judge's needs-changes answers
+  reruns, rounds sent or skipped, resumes after the network dropped, the review judge's needs-changes answers
   and its give-ups, Stop holds, resumes, pauses, and the end (switched off,
   PR closed, task archived, or paused by an agent change).
 

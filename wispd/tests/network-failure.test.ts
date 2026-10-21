@@ -9,6 +9,8 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BUILTIN_ADAPTERS, errorDetail, isNetworkDetail, isNetworkFailure, type AdapterDef } from "../src/adapters";
+import { CodexLiveDriver } from "../src/adapters/live/codex";
+import { DroidLiveDriver } from "../src/adapters/live/droid";
 import { recordKillReason } from "../src/runner";
 import { createTask, createTurn, db, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
 import { finalizeTurn } from "../src/turn-finalize";
@@ -88,10 +90,9 @@ describe("never a network pause", () => {
     ]) expect({ detail, network: isNetworkFailure(detail, 1) }).toEqual({ detail, network: false });
   });
 
-  test("a turn that died to a signal, or whose exit Wisp never saw", () => {
+  test("a turn that died to a signal", () => {
     expect(isNetworkFailure("read ECONNRESET", 1)).toBe(true);
     expect(isNetworkFailure("read ECONNRESET", 137)).toBe(false);
-    expect(isNetworkFailure("read ECONNRESET", null)).toBe(false);
     expect(isNetworkFailure(null, 1)).toBe(false);
   });
 
@@ -100,8 +101,82 @@ describe("never a network pause", () => {
     expect(task.state_detail).toStartWith("limit: ");
   });
 
+  test("a turn whose exit Wisp never saw is judged by its words", async () => {
+    // a live turn settled while its process lingers, or one recovered after a restart
+    expect(isNetworkFailure("read ECONNRESET", null)).toBe(true);
+    const task = await settle(BUILTIN_ADAPTERS.droid!, null, OUTAGES["droid-refused"]!.stdout, "");
+    expect(task.state_detail).toStartWith("network: ");
+  });
+
   test("a turn Wisp killed is never a network pause, whatever its last words", async () => {
     const task = await settle(BUILTIN_ADAPTERS.droid!, 1, OUTAGES["droid-refused"]!.stdout, "", (turnId) => recordKillReason(turnId, "log cap exceeded (test)"));
     expect(task.state_detail).toBe("turn killed: log cap exceeded (test)");
+  });
+});
+
+describe("a live transport that broke on the harness's words", () => {
+  // turn-process.ts failLiveTurn records the harness's refusal as the kill reason, then signals the process
+  test("a refused setup that names a dropped connection is a network pause", async () => {
+    const task = await settle(BUILTIN_ADAPTERS.codex!, 143, "", "", (turnId) =>
+      recordKillReason(turnId, "live input setup failed: error sending request for url (https://provider.example.invalid/v1/responses)"));
+    expect(task.state_detail).toStartWith("network: turn killed: live input setup failed: ");
+  });
+
+  test("a broken pipe, or a refusal for another reason, is not", async () => {
+    const pipe = await settle(BUILTIN_ADAPTERS.droid!, 143, "", "", (turnId) => recordKillReason(turnId, "live output pump failed: EPIPE: broken pipe"));
+    expect(isNetworkDetail(pipe.state_detail)).toBe(false);
+    const auth = await settle(BUILTIN_ADAPTERS.codex!, 143, "", "", (turnId) =>
+      recordKillReason(turnId, "live input setup failed: 401 Unauthorized: ECONNRESET while refreshing the token"));
+    expect(isNetworkDetail(auth.state_detail)).toBe(false);
+  });
+});
+
+describe("the live protocols Wisp runs codex and droid through", () => {
+  const LIVE = JSON.parse(fixture("network-live-frames.json")) as Record<string, Record<string, unknown>[]>;
+
+  /**
+   * Replay what the harness sent back, through Wisp's own driver: each
+   * response waits for the request it answers. Returns the turn log the
+   * driver wrote, line for line.
+   */
+  async function replay(frames: Record<string, unknown>[], start: (sink: { write(d: string): void; flush(): void; end(): void }, emit: (e: unknown) => void, done: () => void) => { handle(frame: unknown): void; close(): Promise<void> }) {
+    const sent: string[] = [], log: string[] = [];
+    let terminal = false;
+    const driver = start({ write: (d) => sent.push(d), flush() {}, end() {} }, (event) => log.push(JSON.stringify(event)), () => { terminal = true; });
+    for (const frame of frames) {
+      if ("id" in frame && !("method" in frame)) {
+        await until(() => sent.some((line) => (JSON.parse(line) as { id?: unknown }).id === frame.id), `request ${String(frame.id)}`);
+      }
+      driver.handle(frame);
+    }
+    expect(terminal).toBe(true);
+    await driver.close();
+    return `${log.join("\n")}\n`;
+  }
+
+  async function until(check: () => boolean, what: string) {
+    for (let i = 0; i < 200 && !check(); i++) await Bun.sleep(5);
+    if (!check()) throw new Error(`timed out waiting for ${what}`);
+  }
+
+  const common = { cwd: "/fixture/repo", sessionId: null, model: null, effort: null, initialMessageId: "m-offline" };
+
+  test("codex app-server: the failed turn's detail is codex's own words, and a network pause", async () => {
+    const def = BUILTIN_ADAPTERS.codex!;
+    const out = await replay(LIVE["codex-dns"]!, (sink, emit, done) => new CodexLiveDriver({
+      ...common, sink, def, fast: false, emit, onTerminal: done, initialInput: [{ type: "text", text: "say hi", text_elements: [] }],
+    }));
+    expect(errorDetail(def, out, "")).toBe("workspace routing discovery failed");
+    // a live turn settled while app-server lingers has no exit of its own
+    expect((await settle(def, null, out, "")).state_detail).toBe("network: turn exited unknown: workspace routing discovery failed");
+  });
+
+  test("droid JSON-RPC: the turn ends model_provider_unreachable, and that is a network pause", async () => {
+    const def = BUILTIN_ADAPTERS.droid!;
+    const out = await replay(LIVE["droid-refused"]!, (sink, emit, done) => new DroidLiveDriver({
+      ...common, sink, def, emit, onTerminal: done, initialText: "say hi", initialImages: [],
+    }));
+    expect(errorDetail(def, out, "")).toBe("Droid turn model_provider_unreachable");
+    expect(isNetworkDetail((await settle(def, 0, out, "")).state_detail)).toBe(true);
   });
 });
