@@ -27,6 +27,7 @@ const FACTS: PublicationFacts = {
   releaseRunUrl: "https://github.com/Pepewitch/wisp/actions/runs/42",
   releaseRunAttempt: 1,
   promotionRunUrl: null,
+  postPublicationFailures: [],
   candidateRunUrl: "https://github.com/Pepewitch/wisp/actions/runs/41",
   sourceChecks: ["test", "browser-security", "Linux-contract", "supply-chain", "update-verifier"],
   promotedAt: "2026-09-26T01:04:05.000Z",
@@ -148,8 +149,70 @@ describe("renderPublicationSection", () => {
 
   test("a recovery run asks why the first promotion failed", () => {
     const section = renderPublicationSection({ ...FACTS, promotionRunUrl: "https://github.com/Pepewitch/wisp/actions/runs/99" });
-    expect(flat(section)).toContain("finished in a separate [recovery run](https://github.com/Pepewitch/wisp/actions/runs/99)");
+    expect(flat(section)).toContain(
+      "published the release, and its promotion finished in a separate [recovery run](https://github.com/Pepewitch/wisp/actions/runs/99)",
+    );
     expect(flat(section)).toContain("TODO say why the first promotion failed");
+  });
+
+  test("a recovery after a rerun names the attempt too", () => {
+    const section = flat(
+      renderPublicationSection({ ...FACTS, releaseRunAttempt: 2, promotionRunUrl: "https://github.com/Pepewitch/wisp/actions/runs/99" }),
+    );
+    expect(section).toContain("published the release on attempt 2, after TODO name the job that failed first");
+    expect(section).toContain("rerunning it was safe, and its promotion finished in a separate [recovery run]");
+  });
+
+  describe("a publish job that failed after the release became public", () => {
+    const failed: PublicationFacts = {
+      ...FACTS,
+      promotionRunUrl: "https://github.com/Pepewitch/wisp/actions/runs/99",
+      postPublicationFailures: [
+        { name: "verify anonymous public downloads", conclusion: "failure" },
+        { name: "install the published Formula the way a user does", conclusion: "skipped" },
+      ],
+    };
+
+    test("records it as published with post-publication verification failed, and asks why", () => {
+      const section = flat(renderPublicationSection(failed));
+      expect(section).toContain(
+        'Its `publish` job then failed after publication: "verify anonymous public downloads" failed and ' +
+          '"install the published Formula the way a user does" was skipped. TODO say why,',
+      );
+      expect(section).toContain("Promotion, which that failure skipped, finished in a separate [recovery run](https://github.com/Pepewitch/wisp/actions/runs/99)");
+      expect(section).toContain("The gates before publication passed; the post-publication checks did not:");
+      expect(section).not.toContain("completed every job successfully");
+      expect(section).not.toContain("TODO say why the first promotion failed");
+    });
+
+    test("never claims the checks that did not pass", () => {
+      const section = flat(renderPublicationSection(failed));
+      expect(section).not.toContain("were verified |");
+      expect(section).not.toContain("was installed the way a user does");
+      expect(section).toContain(
+        "anonymous public downloads of clean tagged commit `1234567` failed after publication, so this record does not claim it",
+      );
+      expect(section).toContain("install of the published Formula the way a user does was skipped after publication, so this record does not claim it");
+      expect(section).toContain("All ten assets matched all three checksum sets before publication");
+      expect(section).toContain('what the post-publication steps "verify anonymous public downloads" and');
+    });
+
+    test("withholds only the claim of the step that did not pass", () => {
+      const section = flat(
+        renderPublicationSection({
+          ...failed,
+          postPublicationFailures: [{ name: "install the published Formula the way a user does", conclusion: "failure" }],
+        }),
+      );
+      expect(section).toContain("anonymous public downloads of clean tagged commit `1234567` were verified");
+      expect(section).toContain("install of the published Formula the way a user does failed after publication");
+      expect(section).toContain('what the post-publication step "install the published Formula the way a user does" did not show');
+    });
+
+    test("names the rerun as well when the run took more than one attempt", () => {
+      const section = flat(renderPublicationSection({ ...failed, releaseRunAttempt: 2 }));
+      expect(section).toContain("published the release on attempt 2, after TODO name the job that failed first and why rerunning it was safe. Its `publish` job");
+    });
   });
 
   test("a missing PR becomes a TODO instead of a dead link", () => {

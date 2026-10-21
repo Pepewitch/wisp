@@ -3,6 +3,7 @@ import {
   candidateRunFor,
   gateOutcome,
   parseReceipt,
+  publishOutcome,
   passedSourceChecks,
   receiptArtifactName,
   recoveryCandidates,
@@ -10,6 +11,7 @@ import {
   releaseRunForTag,
   tapProblems,
   type ReleaseJob,
+  type ReleaseStep,
   type TapState,
   type WorkflowRun,
 } from "../scripts/release-closeout";
@@ -103,11 +105,11 @@ describe("gateOutcome", () => {
     RELEASE_JOBS.map((name) => ({ name, conclusion: name in overrides ? (overrides[name] ?? null) : "success" }));
 
   test("a fully green run needs no recovery", () => {
-    expect(gateOutcome(jobs())).toEqual({ needsRecovery: false, problems: [] });
+    expect(gateOutcome(jobs())).toEqual({ needsRecovery: false, postPublication: [], problems: [] });
   });
 
   test("a failed promote alone defers to a recovery run", () => {
-    expect(gateOutcome(jobs({ promote: "failure" }))).toEqual({ needsRecovery: true, problems: [] });
+    expect(gateOutcome(jobs({ promote: "failure" }))).toEqual({ needsRecovery: true, postPublication: [], problems: [] });
   });
 
   test("a failed publication job blocks the closeout", () => {
@@ -115,9 +117,108 @@ describe("gateOutcome", () => {
     expect(outcome.problems.join("\n")).toContain("publish ended failure");
   });
 
+  test("a publish job that failed only after publishing is recorded, with recovery", () => {
+    const run = jobs({ promote: "skipped" }).map((job) =>
+      job.name === "publish" ? { ...job, conclusion: "failure", steps: publishSteps({ 14: "failure", 15: "skipped" }) } : job,
+    );
+    expect(gateOutcome(run)).toEqual({
+      needsRecovery: true,
+      postPublication: [
+        { name: "verify anonymous public downloads", conclusion: "failure" },
+        { name: "install the published Formula the way a user does", conclusion: "skipped" },
+      ],
+      problems: [],
+    });
+  });
+
   test("a job the workflow no longer has is reported, not recorded", () => {
     const outcome = gateOutcome(jobs().filter((job) => job.name !== "promote"));
     expect(outcome.problems.join("\n")).toContain('no "promote" job');
+  });
+});
+
+/** The publish job's steps as GitHub reports them, with runner bookkeeping. */
+function publishSteps(conclusions: Record<number, string | null> = {}): ReleaseStep[] {
+  const names = [
+    "Set up job",
+    "Run actions/checkout",
+    "restore and verify the annotated release tag",
+    "Run oven-sh/setup-bun",
+    "Run bun install --frozen-lockfile",
+    "collect release artifacts",
+    "require independent byte-identical macOS payloads",
+    "resolve version and require release notes",
+    "verify all ten assets through their checksum sets",
+    "require an unused public release identity",
+    "clone the Homebrew tap read-only",
+    "prepare and audit the Homebrew Formula and Cask offline",
+    "publish the GitHub release",
+    "verify anonymous public downloads",
+    "install the published Formula the way a user does",
+  ];
+  const steps = names.map((name, index) => ({ number: index + 1, name, conclusion: "success" as string | null }));
+  steps.push(
+    { number: 29, name: "Post Run oven-sh/setup-bun", conclusion: "skipped" },
+    { number: 30, name: "Post Run actions/checkout", conclusion: "success" },
+    { number: 31, name: "Complete job", conclusion: "success" },
+  );
+  return steps.map((step) => (step.number in conclusions ? { ...step, conclusion: conclusions[step.number]! } : step));
+}
+
+describe("publishOutcome", () => {
+  const publish = (conclusions: Record<number, string | null>, conclusion: string | null = "failure"): ReleaseJob => ({
+    name: "publish",
+    conclusion,
+    steps: publishSteps(conclusions),
+  });
+
+  test("a failure after the release became public names the failed and skipped steps", () => {
+    expect(publishOutcome(publish({ 14: "failure", 15: "skipped" }))).toEqual({
+      postPublication: [
+        { name: "verify anonymous public downloads", conclusion: "failure" },
+        { name: "install the published Formula the way a user does", conclusion: "skipped" },
+      ],
+      problem: null,
+    });
+    expect(publishOutcome(publish({ 15: "cancelled" }, "cancelled")).postPublication).toEqual([
+      { name: "install the published Formula the way a user does", conclusion: "cancelled" },
+    ]);
+  });
+
+  test("a failure at or before the publish step is refused", () => {
+    const at = publishOutcome(publish({ 13: "failure", 14: "skipped", 15: "skipped" }));
+    expect(at.problem).toContain('publish ended failure at "publish the GitHub release" (failure); the release did not fully pass');
+    expect(at.postPublication).toEqual([]);
+    const before = publishOutcome(publish({ 10: "failure", 11: "skipped", 12: "skipped", 13: "skipped", 14: "skipped", 15: "skipped" }));
+    expect(before.problem).toContain('at "publish the GitHub release" (skipped)');
+    const continued = publishOutcome(publish({ 9: "failure", 14: "failure" }));
+    expect(continued.problem).toContain('at "verify all ten assets through their checksum sets" (failure), before publishing');
+  });
+
+  test("a job with no steps, no publish step, or still running is refused", () => {
+    expect(publishOutcome({ name: "publish", conclusion: "skipped" }).problem).toBe(
+      "release job publish ended skipped; the release did not fully pass",
+    );
+    const renamed = publishSteps({ 14: "failure" }).map((step) => (step.number === 13 ? { ...step, name: "create the release" } : step));
+    expect(publishOutcome({ name: "publish", conclusion: "failure", steps: renamed }).problem).toContain(
+      'has no "publish the GitHub release" step',
+    );
+    expect(publishOutcome(publish({}, null)).problem).toBe("release job publish has not finished");
+  });
+
+  test("a failed step after publishing that the ledger does not know is refused", () => {
+    const steps = [...publishSteps({ 14: "failure" }), { number: 16, name: "smoke-test the release", conclusion: "failure" }];
+    const outcome = publishOutcome({ name: "publish", conclusion: "failure", steps });
+    expect(outcome.problem).toContain('"smoke-test the release" ended failure after the release was published');
+    expect(outcome.problem).toContain("POST_PUBLICATION_STEPS");
+    expect(outcome.postPublication).toEqual([]);
+  });
+
+  test("a failed job whose real steps all passed is left for a person", () => {
+    const steps = publishSteps().map((step) => (step.number === 30 ? { ...step, conclusion: "failure" } : step));
+    expect(publishOutcome({ name: "publish", conclusion: "failure", steps }).problem).toContain(
+      "no step after publishing failed; read the run by hand",
+    );
   });
 });
 
