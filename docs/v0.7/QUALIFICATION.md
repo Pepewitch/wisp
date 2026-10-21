@@ -82,8 +82,12 @@ Gatekeeper, never checked its entitlements in the public bytes, never verified
 the public Desktop archive's updater signature or its rejection of an altered
 archive, and never verified the downloaded Desktop app's signature, staple, or
 Gatekeeper assessment. "install the published Formula the way a user does" was
-skipped, and this record does not claim an install of the published Formula. The
-anonymous re-verification of the public release was done locally by hand
-instead: the checksums matched, `codesign` verified the signature, `stapler
-validate` passed, and `spctl` accepted it as Notarized Developer ID. This record
-claims nothing beyond those four results.
+skipped, and this record does not claim an install of the published Formula. On
+2026-10-15 the daemon app was re-verified locally by hand instead:
+`wisp-v0.7.0-darwin-arm64.tar.gz` and `SHA256SUMS-darwin-arm64` were downloaded
+anonymously from the v0.7.0 release, and the tarball matched its checksum line.
+In the extracted `Wisp Daemon.app`, `codesign --verify --deep --strict` passed,
+`xcrun stapler validate` passed, and `spctl -a -vv -t execute` accepted it
+(`source=Notarized Developer ID`). Only the daemon app was checked by hand; the
+Desktop app (`Wisp.app`) was not, so its items above remain checks nobody ran,
+and this record claims nothing beyond those results.
