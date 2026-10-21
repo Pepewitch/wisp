@@ -1,0 +1,52 @@
+{
+  "claude-dns": {
+    "exit": 1,
+    "stdout": "{\"type\":\"system\",\"subtype\":\"api_retry\",\"attempt\":10,\"max_retries\":10,\"retry_delay_ms\":39076,\"error_status\":null,\"error\":\"unknown\",\"session_id\":\"94c95451-0757-55c0-90ef-5d14c5a785ed\",\"uuid\":\"1945c514-7065-596e-9566-2fed5f8eac0f\"}\n{\"type\":\"assistant\",\"message\":{\"diagnostics\":null,\"id\":\"7bdae06a-bd0b-55d4-8cf5-6f0f17b4d6bc\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_details\":null,\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"output_tokens_details\":null,\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null,\"fallback_credit\":null},\"content\":[{\"type\":\"text\",\"text\":\"API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"94c95451-0757-55c0-90ef-5d14c5a785ed\",\"uuid\":\"6fafadc3-4e03-5c08-a254-5b8c1e946b97\",\"timestamp\":\"2026-10-20T16:40:57.785Z\",\"error\":\"server_error\",\"is_api_error_message\":true}\n{\"duration_api_ms\":0,\"stop_reason\":\"stop_sequence\",\"session_id\":\"94c95451-0757-55c0-90ef-5d14c5a785ed\",\"total_cost_usd\":0,\"usage\":{\"output_tokens_details\":{\"thinking_tokens\":0},\"input_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"speed\":\"standard\",\"fallback_credit\":null},\"modelUsage\":{},\"permission_denials\":[],\"terminal_reason\":\"api_error\",\"fast_mode_state\":\"off\",\"fast_mode_disabled_reason\":\"sdk_opt_in_required\",\"subagent_stats\":{\"spawned\":0,\"requested\":{\"background\":0,\"foreground\":0,\"unset\":0},\"started_in_background\":0,\"max_depth\":0,\"spawned_by_subagents\":0,\"completed\":0,\"failed\":0,\"killed\":{\"parent\":0,\"user\":0,\"system\":0},\"refused\":{\"depth_limit\":0,\"concurrency_limit\":0,\"budget\":0},\"by_type\":{}},\"safety_stops\":0,\"is_error\":true,\"num_turns\":1,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)\",\"type\":\"result\",\"duration_ms\":182785,\"uuid\":\"09f9494c-f153-5205-8568-c43b466008dc\",\"queued_turn_count\":0,\"result_index\":0}\n",
+    "stderr": ""
+  },
+  "codex-dns": {
+    "exit": 1,
+    "stdout": "{\"type\":\"turn.started\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 2/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 3/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 4/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 5/5 (workspace routing discovery failed)\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Falling back from WebSockets to HTTPS transport. workspace routing discovery failed\"}}\n{\"type\":\"error\",\"message\":\"Reconnecting... 1/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 2/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 3/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 4/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 5/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"workspace routing discovery failed\"}\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"workspace routing discovery failed\"}}\n",
+    "stderr": "Reading additional input from stdin...\n"
+  },
+  "droid-dns": {
+    "exit": 1,
+    "stdout": "{\"type\":\"error\",\"source\":\"agent_loop\",\"message\":\"Connection error.\",\"timestamp\":1792514274883,\"session_id\":\"00301cf1-017e-5c60-948f-1011204847a4\"}\n{\"type\":\"error\",\"source\":\"cli\",\"message\":\"Exec failed\",\"timestamp\":1792514274889,\"session_id\":\"00301cf1-017e-5c60-948f-1011204847a4\"}\n",
+    "stderr": ""
+  },
+  "opencode-dns": {
+    "exit": 1,
+    "stdout": "{\"type\":\"error\",\"timestamp\":1792514418025,\"sessionID\":\"ses_networkfixture94917820\",\"error\":{\"name\":\"APIError\",\"data\":{\"message\":\"Cannot connect to API: Was there a typo in the url or port?\",\"isRetryable\":true,\"metadata\":{\"url\":\"https://provider.example.invalid/v1/chat/completions\"}}}}\n",
+    "stderr": ""
+  },
+  "cursor-dns": {
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error: [unavailable] getaddrinfo ENOTFOUND wisp-offline.invalid\n"
+  },
+  "claude-refused": {
+    "exit": 1,
+    "stdout": "{\"type\":\"system\",\"subtype\":\"api_retry\",\"attempt\":10,\"max_retries\":10,\"retry_delay_ms\":35226,\"error_status\":null,\"error\":\"unknown\",\"session_id\":\"059d0a2c-8c71-51a8-82b8-d1530686acb6\",\"uuid\":\"74b55576-2839-58ae-adb3-b7632d3f0f7c\"}\n{\"type\":\"assistant\",\"message\":{\"diagnostics\":null,\"id\":\"daa2e2a8-8c1b-5223-92e8-698fbe3567dd\",\"container\":null,\"model\":\"<synthetic>\",\"role\":\"assistant\",\"stop_details\":null,\"stop_reason\":\"stop_sequence\",\"stop_sequence\":\"\",\"type\":\"message\",\"usage\":{\"output_tokens_details\":null,\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":null,\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":null,\"iterations\":null,\"speed\":null,\"fallback_credit\":null},\"content\":[{\"type\":\"text\",\"text\":\"API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)\"}],\"context_management\":null},\"parent_tool_use_id\":null,\"session_id\":\"059d0a2c-8c71-51a8-82b8-d1530686acb6\",\"uuid\":\"173cafeb-5ec0-53b1-88e4-f65d88368e05\",\"timestamp\":\"2026-10-20T16:40:46.634Z\",\"error\":\"server_error\",\"is_api_error_message\":true}\n{\"duration_api_ms\":0,\"stop_reason\":\"stop_sequence\",\"session_id\":\"059d0a2c-8c71-51a8-82b8-d1530686acb6\",\"total_cost_usd\":0,\"usage\":{\"output_tokens_details\":{\"thinking_tokens\":0},\"input_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0,\"output_tokens\":0,\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"\",\"iterations\":[],\"speed\":\"standard\",\"fallback_credit\":null},\"modelUsage\":{},\"permission_denials\":[],\"terminal_reason\":\"api_error\",\"fast_mode_state\":\"off\",\"fast_mode_disabled_reason\":\"sdk_opt_in_required\",\"subagent_stats\":{\"spawned\":0,\"requested\":{\"background\":0,\"foreground\":0,\"unset\":0},\"started_in_background\":0,\"max_depth\":0,\"spawned_by_subagents\":0,\"completed\":0,\"failed\":0,\"killed\":{\"parent\":0,\"user\":0,\"system\":0},\"refused\":{\"depth_limit\":0,\"concurrency_limit\":0,\"budget\":0},\"by_type\":{}},\"safety_stops\":0,\"is_error\":true,\"num_turns\":1,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)\",\"type\":\"result\",\"duration_ms\":173611,\"uuid\":\"9ea43b69-f14e-5129-ad8d-06cf283998a6\",\"queued_turn_count\":0,\"result_index\":0}\n",
+    "stderr": ""
+  },
+  "codex-refused": {
+    "exit": 1,
+    "stdout": "{\"type\":\"turn.started\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 2/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 3/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 4/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 5/5 (workspace routing discovery failed)\"}\n{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"Falling back from WebSockets to HTTPS transport. workspace routing discovery failed\"}}\n{\"type\":\"error\",\"message\":\"Reconnecting... 1/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 2/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 3/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 4/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"Reconnecting... 5/5 (workspace routing discovery failed)\"}\n{\"type\":\"error\",\"message\":\"workspace routing discovery failed\"}\n{\"type\":\"turn.failed\",\"error\":{\"message\":\"workspace routing discovery failed\"}}\n",
+    "stderr": "Reading additional input from stdin...\n"
+  },
+  "droid-refused": {
+    "exit": 1,
+    "stdout": "{\"type\":\"error\",\"source\":\"agent_loop\",\"message\":\"Connection error.\",\"timestamp\":1792514272785,\"session_id\":\"8efc6e9a-386f-58de-a742-dc2baf9619c3\"}\n{\"type\":\"error\",\"source\":\"cli\",\"message\":\"Exec failed\",\"timestamp\":1792514272791,\"session_id\":\"8efc6e9a-386f-58de-a742-dc2baf9619c3\"}\n",
+    "stderr": ""
+  },
+  "opencode-refused": {
+    "exit": 1,
+    "stdout": "{\"type\":\"error\",\"timestamp\":1792514340616,\"sessionID\":\"ses_networkfixture80409429\",\"error\":{\"name\":\"APIError\",\"data\":{\"message\":\"Cannot connect to API: Unable to connect. Is the computer able to access the url?\",\"isRetryable\":true,\"metadata\":{\"url\":\"https://provider.example.invalid/v1/chat/completions\"}}}}\n",
+    "stderr": ""
+  },
+  "cursor-refused": {
+    "exit": 1,
+    "stdout": "",
+    "stderr": "Error: [unavailable] connect ECONNREFUSED 127.0.0.1:9\n"
+  }
+}

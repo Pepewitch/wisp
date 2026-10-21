@@ -21,11 +21,18 @@ still in progress, the task reads `running` with a detail that starts
 
 ## failed
 
-`state_detail` names the cause. Two prefixes change what to do:
+`state_detail` names the cause. Three prefixes change what to do:
 
 - `limit: ` is a usage or rate limit. `wisp limits` shows each harness's plan
   windows: wait for the window to reset and then `wisp send <id> "continue"`,
   or [move the work](supervise.md#steering) to another harness or model.
+- `network: ` means the turn lost its connection to the provider (DNS,
+  connection refused or reset, a timeout). The session and worktree are intact.
+  With auto-merge, auto-fix or auto-review on, Wisp resumes the task itself
+  after 1, 2, then 4 minutes, at most three times in a row, and `wisp ls` shows
+  it `paused` meanwhile; past that, or without autopilot, `wisp send <id>
+  "continue"` once the network is back. See
+  [When the network drops](../../../docs/PR-AUTOPILOT.md#when-the-network-drops).
 - `transient: ` is a provider or stream fault that is safe to retry a few
   times: `wisp send <id> "continue"`.
 

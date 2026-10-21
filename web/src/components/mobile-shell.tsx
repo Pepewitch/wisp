@@ -8,7 +8,7 @@ import { TaskActions } from "@/components/task-actions"
 import { Meta, StateDot, Tab } from "@/components/primitives"
 import { formatTokens } from "@/lib/format"
 import { useDaemonRuntime } from "@/lib/runtime"
-import { stateWord } from "@/lib/state"
+import { pausedOnNetwork, stateWord } from "@/lib/state"
 import type { ApiTask, PullRequestStatus } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
@@ -168,7 +168,7 @@ export function MobileShell({
                   className="mt-1"
                   items={[
                     <span key="state" className="flex shrink-0 items-center gap-1.5">
-                      <StateDot state={task.state} background={task.background} />
+                      <StateDot state={task.state} background={task.background} pausedOnNetwork={pausedOnNetwork(task)} />
                       <span className="text-fg-secondary">{stateWord(task)}</span>
                     </span>,
                     // Worktree is the default and says so on its own branch;

@@ -20,7 +20,8 @@ and the PR merges when it's ready.</p>
 - **Follow every PR to the end.** With auto-fix on, Wisp sends failing CI,
   merge conflicts and review comments back to the agent until the PR is green.
   With auto-merge on, Wisp merges it once its checks pass and reviews allow.
-  Both are switches on the task. [How it works](docs/PR-AUTOPILOT.md)
+  Both are switches on the task, and a turn the network cut off resumes on its
+  own once it is back. [How it works](docs/PR-AUTOPILOT.md)
 - **Never merge on the agent's word.** With auto-review on, every PR head gets
   a separate reviewer agent that runs the change, takes screenshots of what it
   touched, and passes it or sends its findings back. It follows a verification

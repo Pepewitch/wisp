@@ -269,3 +269,41 @@ model name). codex has no equivalent: its `thread.started` carries only
 `thread_id` (see the codex fixtures above; also upstream
 `codex-rs/exec/src/exec_events.rs` on main), so codex turns report no model
 and the UI falls back to the requested one, marked "(requested)".
+
+## network outages — captured 2026-10-20 with every route to a provider blocked
+
+`network-outages.json` holds, per harness, what a turn says when the machine
+cannot reach its provider: each CLI's exit code, stdout and stderr. Each ran
+`say hi` in its Wisp exec mode under a macOS sandbox that denied every
+outbound connection except to localhost, with `HTTPS_PROXY` (and its
+siblings) pointing at either a closed local port (`*-refused`) or an
+unresolvable `.invalid` host (`*-dns`). No request left the machine, so no
+provider saw a prompt and no tokens were spent.
+
+| harness | version | the turn's extracted failure detail |
+|---|---|---|
+| claude | Claude Code 2.1.296 | `API Error: Can't reach the API server — check your internet or DNS (ENOTFOUND)`, `API Error: Connection refused — a firewall or proxy may be blocking it (ECONNREFUSED)` (after its 10 retries, ~3 min) |
+| codex | codex-cli 0.162.1 | `workspace routing discovery failed` (after `Reconnecting... 5/5`) |
+| droid | 0.229.0 | `Connection error.` |
+| opencode | 1.18.33 | `Cannot connect to API: Unable to connect. Is the computer able to access the url?`, `Cannot connect to API: Was there a typo in the url or port?` |
+| cursor | cursor-agent 2026.10.01-e373342 | stderr `Error: [unavailable] getaddrinfo ENOTFOUND …` / `connect ECONNREFUSED …` |
+
+Kept: the error-bearing events only. Dropped: init events (tool and MCP
+inventories), codex's stderr MCP-worker log (third-party server URLs), and
+droid's Node warnings. Session ids and uuids were replaced with stable
+synthetic ones, and opencode's provider URL with `provider.example.invalid`.
+These pin `adapters/network.ts`'s markers: `wispd/tests/network-failure.test.ts`
+reads every case through the adapter's own error strategy.
+
+`network-live-frames.json` is the same outage on the two live protocols Wisp
+actually runs these harnesses through: the frames codex 0.162.1's `app-server`
+and droid 0.229.0's `exec --input-format stream-jsonrpc` sent back to Wisp's own
+`CodexLiveDriver` and `DroidLiveDriver`, captured the same way. Codex ends its
+turn on `workspace routing discovery failed`; droid sends its `Connection
+error.` as a notification the driver does not relay, then ends the turn with
+`agent_turn_completed` reason `model_provider_unreachable` — which is what the
+turn's detail says. Kept: the responses the drivers read (trimmed to the
+fields they use), the error notifications (codex's first and last retry of
+its own five), and the terminal frame. Dropped: MCP status, settings and
+thread-start notifications (server names, machine name, paths), and droid's
+user-only system message. Ids are synthetic.

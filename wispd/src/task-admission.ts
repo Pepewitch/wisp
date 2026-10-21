@@ -11,6 +11,16 @@ export function assertTaskCapacity(cfg: WispConfig, taskId?: string): void {
   const limit = cfg.maxConcurrentTasks ?? 100;
   if (active.size >= limit) throw new TaskCapacityError(`All ${limit} concurrent task slots are occupied. Finish or stop another task, then retry. No limit applies to the number of turns in a task. You can change maxConcurrentTasks in config.json and restart Wisp.`);
 }
+/** Whether a turn for this task would get a slot now: assertTaskCapacity's answer, without the throw. */
+export function hasTaskCapacity(cfg: WispConfig, taskId?: string): boolean {
+  try {
+    assertTaskCapacity(cfg, taskId);
+    return true;
+  } catch (error) {
+    if (error instanceof TaskCapacityError) return false;
+    throw error;
+  }
+}
 export function reserveTaskCapacity(id: string, cfg: WispConfig): () => void {
   assertTaskCapacity(cfg, id);
   preparing.add(id);

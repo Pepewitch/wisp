@@ -3,7 +3,9 @@ import {
   createIncrementalOutcomeReducer,
   errorDetail,
   isLimitError,
+  isNetworkFailure,
   isTransientError,
+  NETWORK_PREFIX,
   parseOutput,
   type AdapterDef,
   type ParsedTurn,
@@ -150,11 +152,28 @@ interface FailedTurnFacts {
   missingResult: boolean;
 }
 
+/**
+ * A live transport that broke on the harness's own words (turn-process.ts
+ * failLiveTurn: a refused `turn/start`, say): Wisp stopped the turn, but those
+ * words are the failure. Every other kill reason is Wisp's own (a log cap, a
+ * Stop), and never a dropped network.
+ */
+const LIVE_TRANSPORT_FAILED = /^live (?:input setup|output pump) failed: /;
+
+/** Whether the turn ended on the network (adapters/network.ts). */
+function endedOnNetwork(facts: FailedTurnFacts, detail: string | null): boolean {
+  if (!facts.killReason) return isNetworkFailure(detail, facts.exitCode);
+  // Wisp signalled the process itself, so its exit says nothing about why
+  return LIVE_TRANSPORT_FAILED.test(facts.killReason) && isNetworkFailure(facts.killReason.replace(LIVE_TRANSPORT_FAILED, ""), null);
+}
+
 async function finalizeFailedTurn(facts: FailedTurnFacts): Promise<void> {
   const detail = facts.recorderDetail ?? errorDetail(facts.def, facts.rawOut, await safeRead(facts.errPath));
   const limitPrefix = !facts.killReason && detail !== null && isLimitError(facts.def, detail) ? "limit: " : "";
+  // A dropped network outranks a provider fault: it is the one autopilot resumes on its own.
+  const networkPrefix = !limitPrefix && endedOnNetwork(facts, detail) ? NETWORK_PREFIX : "";
   const transientPrefix =
-    !limitPrefix && !facts.killReason && detail !== null && isTransientError(facts.def, detail) ? "transient: " : "";
+    !limitPrefix && !networkPrefix && !facts.killReason && detail !== null && isTransientError(facts.def, detail) ? "transient: " : "";
   const why = facts.killReason
     ? `turn killed: ${facts.killReason}`
     : facts.reportedFailure && facts.exitedCleanly
@@ -167,7 +186,7 @@ async function finalizeFailedTurn(facts: FailedTurnFacts): Promise<void> {
     { status: "failed", exitCode: facts.exitCode, result: facts.result },
     facts.taskId,
     "failed",
-    `${limitPrefix || transientPrefix}${why}`,
+    `${limitPrefix || networkPrefix || transientPrefix}${why}`,
   );
 }
 

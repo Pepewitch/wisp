@@ -82,6 +82,19 @@ describe("grouping by PR", () => {
     ]
     expect(recentHistory(entries).map(({ entry: e, round }) => historyTitle(e, round))).toEqual(["Fix round 1 sent", "Reran a check", "Review judged"])
   })
+
+  it("reads a resume after the network dropped as its own event, never a numbered fix round", () => {
+    minute = 1000
+    const entries = [
+      entry("wake", "lint failed", 318, { messageId: "m2" }),
+      entry("network-resume", "Resumed after the network dropped (1 of 3)", 318, { messageId: "m1" }),
+      entry("bound", "Watching PR #318", 318),
+    ]
+    expect(recentHistory(entries).map(({ entry: e, round }) => historyTitle(e, round)))
+      .toEqual(["Fix round 1 sent", "Network resume", "Watching #318"])
+    expect(historyDetail(entries[1]!)).toBe("Resumed after the network dropped (1 of 3)")
+    expect(groupHistory(entries)[0]!.rounds).toBe(1)
+  })
 })
 
 it("links only a GitHub pull request's own repository", () => {

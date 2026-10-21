@@ -204,6 +204,27 @@ describe("workflow state in the sidebar dot", () => {
   })
 })
 
+describe("a task autopilot resumes after the network dropped", () => {
+  const autopilot = {
+    autoMerge: false, autoFix: true, pr: null, state: "waiting" as const, reason: "The network dropped — resuming in 1 min (1 of 3)", about: "task" as const,
+    by: "auto-fix" as const, mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null,
+    network: { resumesAt: "2026-08-30T00:01:00Z", resume: 1, of: 3 },
+  }
+  const paused: ApiTask = { ...TASK, state: "failed", state_detail: "network: turn exited 1: Connection error.", autopilot }
+
+  it("is paused, not failed: the stuck hue on the dot, and a gray word", () => {
+    mount(<TaskRowTouch task={paused} selected={false} onSelect={() => {}} />)
+    expect(screen.getByRole("img", { name: "Paused · network" })).toHaveClass("bg-state-stuck")
+    expect(screen.getByText("Paused · network")).toHaveClass("text-muted-foreground")
+  })
+
+  it("reads failed again once its resumes are spent", () => {
+    mount(<TaskRowTouch task={{ ...paused, autopilot: { ...autopilot, network: null } }} selected={false} onSelect={() => {}} />)
+    expect(screen.getByRole("img", { name: "Failed" })).toHaveClass("bg-state-failed")
+    expect(screen.getByText("Failed")).toHaveClass("text-state-failed")
+  })
+})
+
 describe("the sidebar pull-request status", () => {
   it.each([
     {
