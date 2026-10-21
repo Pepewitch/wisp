@@ -161,12 +161,12 @@ which runs the current promotion code from `main` against the immutable tag:
 gh workflow run release.yml --ref main -f tag="v$version"
 ```
 
-The same holds when `publish` itself fails after its "publish the GitHub
-release" step: the release is public and `promote` was skipped. Do not rerun
-it: the rerun stops at "require an unused public release identity", and the
-closeout, which reads the latest attempt, would then refuse a publish job that
-failed before publishing. Check by hand what the failed post-publication step
-would have checked, then dispatch the recovery directly.
+Dispatch the recovery directly when `publish` itself fails after its "publish
+the GitHub release" step: the release is public and `promote` was skipped. Do
+not rerun it: the rerun stops at "require an unused public release identity",
+and the closeout, which reads the latest attempt, would then refuse a publish
+job that failed before publishing. Check by hand what the failed
+post-publication step would have checked before you dispatch.
 
 ### 6. Record the publication
 
