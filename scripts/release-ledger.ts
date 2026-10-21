@@ -28,6 +28,11 @@ export interface PublicationFacts {
   releaseRunAttempt: number;
   /** Set when promotion finished in a separate recovery run. */
   promotionRunUrl: string | null;
+  /**
+   * The publish job's steps that did not pass after the release became
+   * public; empty when the job succeeded. Their gate claims are withheld.
+   */
+  postPublicationFailures: PostPublicationStep[];
   candidateRunUrl: string | null;
   /** Labels of the release PR's passed checks, in SOURCE_CHECK_LABELS order. */
   sourceChecks: string[];
@@ -63,6 +68,26 @@ export const RELEASE_JOBS = [
   "publish",
   "promote",
 ] as const;
+
+/** The publish job's step that makes the release public. */
+export const PUBLISH_STEP = "publish the GitHub release";
+
+/**
+ * The publish job's steps after the release is public, each backing one claim
+ * in the gate table. A failed publish job is recordable only when every step
+ * that did not pass is one of these, so the entry can withhold its claim; a
+ * new step after publication must be added here and to the table together.
+ */
+export const POST_PUBLICATION_STEPS = {
+  downloads: "verify anonymous public downloads",
+  install: "install the published Formula the way a user does",
+} as const;
+
+export interface PostPublicationStep {
+  name: string;
+  /** The step's GitHub conclusion: failure, skipped, cancelled, ... */
+  conclusion: string;
+}
 
 export interface LedgerEdit {
   text: string;
@@ -123,6 +148,25 @@ export function migrationSentence(version: string, previousVersion: string, migr
   );
 }
 
+function stepOutcome(conclusion: string): string {
+  if (conclusion === "failure") return "failed";
+  if (conclusion === "skipped") return "was skipped";
+  return `ended ${conclusion}`;
+}
+
+function publicAssetsRow(commit: string, downloads: string | undefined): string {
+  const short = commit.slice(0, 7);
+  return downloads
+    ? `| Public assets | All ten assets matched all three checksum sets before publication; the release workflow's check of the anonymous public downloads of clean tagged commit \`${short}\` ${downloads} after publication, so this record does not claim it |`
+    : `| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit \`${short}\` were verified |`;
+}
+
+function homebrewRow(install: string | undefined): string {
+  return install
+    ? `| Homebrew installability | The Formula and Cask were audited offline before publication; the release workflow's install of the published Formula the way a user does ${install} after publication, so this record does not claim it |`
+    : "| Homebrew installability | The Formula and Cask were audited offline before publication, and the published Formula was installed the way a user does before the tap advanced |";
+}
+
 export function renderPublicationSection(facts: PublicationFacts, manual: readonly string[] = []): string {
   const site = `https://github.com/${REPOSITORY}`;
   const published = utcDate(facts.publishedAt);
@@ -147,16 +191,28 @@ export function renderPublicationSection(facts: PublicationFacts, manual: readon
   );
 
   const run = `[release workflow](${facts.releaseRunUrl})`;
+  const rerun =
+    facts.releaseRunAttempt > 1
+      ? ` on attempt ${facts.releaseRunAttempt}, after TODO name the job that failed first and why rerunning it was safe`
+      : "";
+  const unverified = new Map(facts.postPublicationFailures.map((step) => [step.name, stepOutcome(step.conclusion)]));
   let outcome: string;
-  if (facts.promotionRunUrl) {
+  if (unverified.size > 0) {
+    const steps = list(facts.postPublicationFailures.map((step) => `"${step.name}" ${stepOutcome(step.conclusion)}`));
+    const recovery = facts.promotionRunUrl
+      ? ` Promotion, which that failure skipped, finished in a separate [recovery run](${facts.promotionRunUrl}).`
+      : "";
     outcome =
-      `The ${run} published the release, and its promotion finished in a separate ` +
+      `The ${run} published the release${rerun}. Its \`publish\` job then failed after publication: ${steps}. ` +
+      `TODO say why, and why promoting the published release anyway was safe.${recovery} ` +
+      "The gates before publication passed; the post-publication checks did not:";
+  } else if (facts.promotionRunUrl) {
+    outcome =
+      `The ${run} published the release${rerun}, and its promotion finished in a separate ` +
       `[recovery run](${facts.promotionRunUrl}). TODO say why the first promotion failed and what changed ` +
       "before the recovery. The publication gates passed:";
   } else if (facts.releaseRunAttempt > 1) {
-    outcome =
-      `The ${run} completed every job successfully on attempt ${facts.releaseRunAttempt}, after TODO name ` +
-      "the job that failed first and why rerunning it was safe:";
+    outcome = `The ${run} completed every job successfully${rerun}:`;
   } else {
     outcome = `The ${run} completed every job successfully on its first run:`;
   }
@@ -172,8 +228,8 @@ export function renderPublicationSection(facts: PublicationFacts, manual: readon
     "| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |",
     "| Linux installation | Published-artifact installer and fixture activation contracts passed |",
     "| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |",
-    `| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit \`${facts.commit.slice(0, 7)}\` were verified |`,
-    "| Homebrew installability | The Formula and Cask were audited offline before publication, and the published Formula was installed the way a user does before the tap advanced |",
+    publicAssetsRow(facts.commit, unverified.get(POST_PUBLICATION_STEPS.downloads)),
+    homebrewRow(unverified.get(POST_PUBLICATION_STEPS.install)),
   ].join("\n");
 
   const promotion = [
@@ -198,7 +254,13 @@ export function renderPublicationSection(facts: PublicationFacts, manual: readon
   );
   const releaseSpecific = wrap(
     "TODO add to the list above any check specific to this release that nobody ran (for example a live run " +
-      "of its headline change against the published daemon), then delete this line.",
+      "of its headline change against the published daemon)" +
+      (unverified.size > 0
+        ? `, including what the post-publication ${unverified.size === 1 ? "step" : "steps"} ` +
+          `${list([...unverified.keys()].map((name) => `"${name}"`))} did not show and how, if at all, the ` +
+          "published release was verified instead"
+        : "") +
+      ", then delete this line.",
   );
 
   return [

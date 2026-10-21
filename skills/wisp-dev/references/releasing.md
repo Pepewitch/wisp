@@ -161,6 +161,13 @@ which runs the current promotion code from `main` against the immutable tag:
 gh workflow run release.yml --ref main -f tag="v$version"
 ```
 
+The same holds when `publish` itself fails after its "publish the GitHub
+release" step: the release is public and `promote` was skipped. Do not rerun
+it: the rerun stops at "require an unused public release identity", and the
+closeout, which reads the latest attempt, would then refuse a publish job that
+failed before publishing. Check by hand what the failed post-publication step
+would have checked, then dispatch the recovery directly.
+
 ### 6. Record the publication
 
 ```sh
@@ -190,6 +197,18 @@ branch.
 If it reports that the tap does not serve the version yet, promotion is still
 converging: wait a minute and run it again. If it reports that promotion has
 not finished, go back to step 5's recovery.
+
+A `publish` job that failed is recorded only when its "publish the GitHub
+release" step succeeded and every step that did not pass came after it and is
+listed in `POST_PUBLICATION_STEPS` (`scripts/release-ledger.ts`). The entry
+then says the release was published and its post-publication verification
+failed, withholds the gate-table claims those steps back (anonymous public
+downloads, installing the published Formula), and adds `TODO`s that name the
+failed and skipped steps: say why, and, among the checks nobody ran, what CI
+did not show and how the published release was checked instead. The
+closeout's own anonymous check of the tap and both update channels must still
+pass. Anything that failed before or at the publish step, or an unknown step
+after it, is refused.
 
 A superseded release keeps its evidence and loses only claims that are now
 false, such as "latest". Never copy a prior release's qualification receipts

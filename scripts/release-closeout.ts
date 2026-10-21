@@ -33,12 +33,15 @@ import {
   type CheckRun,
 } from "./release-github";
 import {
+  POST_PUBLICATION_STEPS,
+  PUBLISH_STEP,
   RELEASE_JOBS,
   SOURCE_CHECK_LABELS,
   diskLedgers,
   recordPublication,
   todoLocations,
   type LedgerWrite,
+  type PostPublicationStep,
   type PublicationFacts,
 } from "./release-ledger";
 import { PNG_INPUTS, pngInputChanges } from "./release-check";
@@ -67,9 +70,16 @@ export interface WorkflowRun {
   updated_at: string;
 }
 
+export interface ReleaseStep {
+  number: number;
+  name: string;
+  conclusion: string | null;
+}
+
 export interface ReleaseJob {
   name: string;
   conclusion: string | null;
+  steps?: ReleaseStep[];
 }
 
 export interface PromotionReceiptData {
@@ -129,17 +139,65 @@ export function recoveryCandidates(runs: readonly WorkflowRun[], after: string):
 export interface GateOutcome {
   /** True when promotion must come from a separate recovery run. */
   needsRecovery: boolean;
+  /** The publish job's steps that did not pass after the release became public. */
+  postPublication: PostPublicationStep[];
   problems: string[];
 }
 
+/** Runner bookkeeping, not a gate: setup, post-run cleanup, and completion. */
+function bookkeeping(step: ReleaseStep): boolean {
+  return step.name === "Set up job" || step.name === "Complete job" || step.name.startsWith("Post ");
+}
+
 /**
- * The immutable-publication jobs must all have succeeded; promotion may have
- * finished in the same run or in a recovery run. A job list that does not
- * match RELEASE_JOBS means the workflow changed and the ledger template's
- * gate table is stale — that is reported, not recorded as fact.
+ * A publish job that failed is still a publication when the step that made
+ * the release public succeeded and only known post-publication checks after
+ * it failed or were skipped: the release is immutable and public, and those
+ * checks' claims are withheld from the entry rather than recorded as passed.
+ * Anything that failed before or at publishing, or a step the ledger does not
+ * know, is refused.
+ */
+export function publishOutcome(job: ReleaseJob): { postPublication: PostPublicationStep[]; problem: string | null } {
+  const ended = `release job publish ended ${job.conclusion}`;
+  const refuse = (problem: string) => ({ postPublication: [], problem });
+  const failed = (where: string) => refuse(`${ended}${where}; the release did not fully pass`);
+  if (job.conclusion === null) return refuse("release job publish has not finished");
+  const steps = (job.steps ?? []).filter((step) => !bookkeeping(step));
+  const publish = steps.find((step) => step.name === PUBLISH_STEP);
+  if (!publish) return failed(steps.length > 0 ? ` and has no "${PUBLISH_STEP}" step` : "");
+  if (publish.conclusion !== "success") return failed(` at "${PUBLISH_STEP}" (${publish.conclusion})`);
+  const before = steps.find(
+    (step) => step.number < publish.number && step.conclusion !== "success" && step.conclusion !== "skipped",
+  );
+  if (before) return failed(` at "${before.name}" (${before.conclusion}), before publishing`);
+
+  const known: readonly string[] = Object.values(POST_PUBLICATION_STEPS);
+  const after = steps.filter((step) => step.number > publish.number && step.conclusion !== "success");
+  const unknown = after.find((step) => !known.includes(step.name));
+  if (unknown) {
+    return refuse(
+      `publish step "${unknown.name}" ended ${unknown.conclusion} after the release was published, and the ledger ` +
+        "does not know which gate it backs; add it to POST_PUBLICATION_STEPS in scripts/release-ledger.ts with the gate table",
+    );
+  }
+  if (after.length === 0) return refuse(`${ended}, but no step after publishing failed; read the run by hand`);
+  return {
+    postPublication: after.map((step) => ({ name: step.name, conclusion: step.conclusion ?? "unfinished" })),
+    problem: null,
+  };
+}
+
+/**
+ * The immutable-publication jobs must all have succeeded, except that publish
+ * may have failed after the release became public (see publishOutcome);
+ * promotion may have finished in the same run or in a recovery run. A job
+ * list that does not match RELEASE_JOBS means the workflow changed and the
+ * ledger template's gate table is stale — that is reported, not recorded as
+ * fact.
  */
 export function gateOutcome(jobs: readonly ReleaseJob[]): GateOutcome {
   const problems: string[] = [];
+  let postPublication: PostPublicationStep[] = [];
   const byName = new Map(jobs.map((job) => [job.name, job]));
   for (const name of RELEASE_JOBS) {
     const job = byName.get(name);
@@ -147,12 +205,17 @@ export function gateOutcome(jobs: readonly ReleaseJob[]): GateOutcome {
       problems.push(`the release run has no "${name}" job; update RELEASE_JOBS in scripts/release-ledger.ts with the workflow`);
       continue;
     }
-    if (name !== "promote" && job.conclusion !== "success") {
+    if (name === "promote" || job.conclusion === "success") continue;
+    if (name === "publish") {
+      const outcome = publishOutcome(job);
+      if (outcome.problem) problems.push(outcome.problem);
+      postPublication = outcome.postPublication;
+    } else {
       problems.push(`release job ${name} ended ${job.conclusion}; the release did not fully pass`);
     }
   }
   const promote = byName.get("promote");
-  return { needsRecovery: !promote || promote.conclusion !== "success", problems };
+  return { needsRecovery: !promote || promote.conclusion !== "success", postPublication, problems };
 }
 
 export function parseReceipt(value: unknown): PromotionReceiptData {
@@ -369,6 +432,7 @@ export async function gatherPublication(version: string): Promise<{ facts: Publi
       releaseRunUrl: pushRun.html_url,
       releaseRunAttempt: pushRun.run_attempt,
       promotionRunUrl,
+      postPublicationFailures: outcome.postPublication,
       candidateRunUrl: candidate.run?.html_url ?? null,
       sourceChecks: checks.labels,
       promotedAt: receipt.completedAt,
@@ -433,6 +497,10 @@ async function main(): Promise<number> {
   console.log(`release:closeout ${version}: collecting the release, its jobs, the promotion receipt, and the PR`);
   const { facts, manual } = await gatherPublication(version);
   console.log(`  ok    the tap and both update channels serve ${version}, verified anonymously`);
+  if (facts.postPublicationFailures.length > 0) {
+    const steps = facts.postPublicationFailures.map((step) => `"${step.name}" (${step.conclusion})`).join(", ");
+    console.log(`  note  publish failed after the release became public: ${steps}; the entry does not claim those checks`);
+  }
   const { writes } = recordPublication(diskLedgers(ROOT), facts, manual);
   const todos = todoLocations(writes);
 
