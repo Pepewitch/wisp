@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -46,7 +46,6 @@ const TASK: ApiTask = {
   mode: "worktree",
   created_at: "2026-09-28T09:00:00Z",
   updated_at: "2026-09-28T10:00:00Z",
-  briefEnabled: false,
   autopilot: OFF,
 }
 const withStatus = (autopilot: AutopilotStatus): ApiTask => ({ ...TASK, autopilot })
@@ -77,7 +76,7 @@ function stub(features: Record<string, boolean>, entries: AutopilotHistoryEntry[
     const path = String(input)
     const method = init?.method ?? "GET"
     calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-    const body = path.endsWith("/api/harnesses") ? { harnesses: [{ name: "codex", hasBriefs: true }], features }
+    const body = path.endsWith("/api/harnesses") ? { harnesses: [{ name: "codex" }], features }
       : path.endsWith("/autopilot/history") ? { history: entries }
       : path.endsWith("/auto-review") ? { rounds }
       : path.endsWith("/pull-request") ? {
@@ -92,7 +91,7 @@ function stub(features: Record<string, boolean>, entries: AutopilotHistoryEntry[
   return calls
 }
 
-const ALL = { taskBriefs: true, taskAutopilot: true, autopilotHistory: true }
+const ALL = { taskAutopilot: true, autopilotHistory: true }
 const asked = (calls: Call[], suffix: string) => calls.some((c) => c.path.endsWith(suffix))
 
 function mount(node: ReactNode) {
@@ -114,14 +113,10 @@ describe("the Autopilot tab", () => {
     expect(first.querySelector("[class*='bg-destructive']")).toBeNull()
   })
 
-  it("off: the brief comes first, then the line, then switches that teach what they do", async () => {
+  it("off: switches that teach what they do", async () => {
     const calls = stub(ALL)
     mount(<AutopilotPane task={TASK} />)
     const automation = await screen.findByRole("region", { name: "Automation" })
-    const brief = screen.getByRole("region", { name: "Task brief" })
-    expect(brief.compareDocumentPosition(automation) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    // the one full-width line, in the strongest border token
-    expect(screen.getByRole("heading", { name: "Automation" }).parentElement!.className).toContain("border-border-strong")
     expect(within(automation).getByText(AUTOPILOT_OFF_WORDS["auto-merge"])).toBeInTheDocument()
     expect(within(automation).getByText(AUTOPILOT_OFF_WORDS["auto-fix"])).toBeInTheDocument()
     expect(await within(automation).findByText(/^Nothing yet\./)).toBeInTheDocument()
@@ -234,7 +229,7 @@ describe("the Autopilot tab", () => {
   })
 
   it("an older daemon without autopilotHistory draws no History and never asks for it", async () => {
-    const calls = stub({ taskBriefs: true, taskAutopilot: true })
+    const calls = stub({ taskAutopilot: true })
     mount(<AutopilotPane task={withStatus(WAITING)} />)
     await screen.findByRole("region", { name: "Automation" })
     await new Promise((resolve) => setTimeout(resolve, 30))
@@ -481,74 +476,5 @@ describe("auto-review's evidence in the Autopilot tab", () => {
     expect(document.querySelectorAll("[data-evidence]")).toHaveLength(0)
     expect(screen.queryByRole("note")).toBeNull()
     expect(screen.queryByText(/Needs a capture/)).toBeNull()
-  })
-})
-
-describe("the docked Automation header", () => {
-  type Callback = (entries: Partial<IntersectionObserverEntry>[]) => void
-  function observe() {
-    const observers: Callback[] = []
-    vi.stubGlobal("IntersectionObserver", class {
-      constructor(callback: Callback) { observers.push(callback) }
-      observe() {}
-      disconnect() {}
-    })
-    return (below: boolean | "hidden") => act(() => {
-      for (const callback of observers) {
-        callback([{
-          isIntersecting: below === false,
-          boundingClientRect: { top: below === true ? 900 : below === "hidden" ? 0 : 300 } as DOMRectReadOnly,
-          // a pane under display:none has no box, so its root reads zero-height
-          rootBounds: (below === "hidden" ? { bottom: 0, height: 0 } : { bottom: 680, height: 640 }) as DOMRectReadOnly,
-        }])
-      }
-    })
-  }
-
-  it("docks with the live line, in red, while the section is below the fold, and scrolls there on a click", async () => {
-    const fold = observe()
-    stub(ALL)
-    mount(<AutopilotPane task={withStatus(PAUSED)} />)
-    const heading = await screen.findByRole("heading", { name: "Automation" })
-    expect(screen.queryByRole("button", { name: /^Show Automation/ })).toBeNull()
-
-    fold(true)
-    const docked = screen.getByRole("button", { name: "Show Automation: #318 · Paused — Merge failed twice: a required check never reported" })
-    expect(docked.className).toContain("text-destructive")
-    expect(heading.parentElement).toHaveAttribute("data-docked", "true")
-    expect(heading.parentElement!.className).toContain("sticky")
-    const scroller = heading.closest(".overflow-y-auto") as HTMLElement
-    // a sticky row docks only within its parent: it must be the scroller's own child
-    expect(heading.parentElement!.parentElement).toBe(scroller)
-    const scrollTo = vi.fn()
-    scroller.scrollTo = scrollTo as unknown as typeof scroller.scrollTo
-    fireEvent.click(docked)
-    expect(scrollTo).toHaveBeenCalledOnce()
-
-    // scrolled into place, it is a plain header again
-    fold(false)
-    expect(screen.queryByRole("button", { name: /^Show Automation/ })).toBeNull()
-    expect(heading.parentElement).not.toHaveAttribute("data-docked")
-  })
-
-  it("stays a plain header while the pane is hidden, so coming back to the tab never flashes it", async () => {
-    const fold = observe()
-    stub(ALL)
-    mount(<AutopilotPane task={withStatus(PAUSED)} />)
-    const heading = await screen.findByRole("heading", { name: "Automation" })
-    fold("hidden")
-    expect(screen.queryByRole("button", { name: /^Show Automation/ })).toBeNull()
-    expect(heading.parentElement).not.toHaveAttribute("data-docked")
-  })
-
-  it("docks in gray when nothing needs you", async () => {
-    const fold = observe()
-    stub(ALL)
-    mount(<AutopilotPane task={withStatus(WAITING)} />)
-    await screen.findByRole("heading", { name: "Automation" })
-    fold(true)
-    const docked = screen.getByRole("button", { name: /^Show Automation: #318 · Waiting for checks/ })
-    expect(docked.className).toContain("text-muted-foreground")
-    expect(docked.className).not.toContain("text-destructive")
   })
 })

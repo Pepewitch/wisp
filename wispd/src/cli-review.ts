@@ -7,7 +7,6 @@
 import type { AutoReviewReview, AutoReviewRound, AutoReviewRoundsResponse } from "../../shared/api/auto-review"
 import type { Flags } from "./cli-args"
 import { api, CliApiError, daemonRequest, exitApi } from "./cli-api"
-import { boundedStdin } from "./cli-brief"
 import { print, printError, printJson } from "./cli-print"
 import { wispCommand } from "./command"
 import { controlFree } from "./control-free"
@@ -22,6 +21,36 @@ export const REVIEW_USAGE = `usage: ${COMMAND} review show <task> [--round <n>] 
 
 const STDIN_LIMIT_BYTES = 64 * 1024
 const STDIN_IDLE_MS = 10_000
+
+/**
+ * Read stdin up to `limit` bytes. `null` when it is larger, `"idle"` when it
+ * stays open with nothing arriving — a tool shell whose stdin never closes
+ * must not hold the agent's turn.
+ */
+function boundedStdin(limit: number, idleMs: number): Promise<Uint8Array | null | "idle"> {
+  return new Promise((resolve) => {
+    const chunks: Uint8Array[] = []
+    let total = 0
+    let timer = setTimeout(() => done("idle"), idleMs)
+    const onData = (chunk: Uint8Array) => {
+      total += chunk.byteLength
+      if (total > limit) return done(null)
+      chunks.push(chunk)
+      clearTimeout(timer)
+      timer = setTimeout(() => done("idle"), idleMs)
+    }
+    const onEnd = () => done(Buffer.concat(chunks))
+    function done(value: Uint8Array | null | "idle") {
+      clearTimeout(timer)
+      process.stdin.off("data", onData)
+      process.stdin.off("end", onEnd)
+      process.stdin.pause()
+      resolve(value)
+    }
+    process.stdin.on("data", onData)
+    process.stdin.on("end", onEnd)
+  })
+}
 
 function say(line: string, code: 0 | 1 | 2): never {
   if (code === 0) print(line)

@@ -58,8 +58,8 @@ export interface ReviewerPromptInput {
   /** the last round number the budget allows (three, and three more after each Resume) */
   budget: number
   counted: boolean
-  /** the author task: what it was asked for, and what its agent last reported */
-  goal: { title: string; outcome: string | null }
+  /** the author task: what it was asked for */
+  goal: string
   repoPath: string
   recipe: {
     version: string | null
@@ -210,8 +210,7 @@ export function reviewerPrompt(input: ReviewerPromptInput): string {
     `Base ${pr.base}; head ${pr.head}. Your worktree is checked out at exactly that head.`,
     `Round ${input.round} of ${input.budget}${input.counted ? "" : " (a re-run of this head that spends no round)"}.`,
     "What the author task was asked to do, quoted (the person's request):",
-    ...relayed(input.goal.title, 2000),
-    ...(input.goal.outcome ? ["What the author's agent last reported, quoted (its own claim, which you are here to check):", ...relayed(input.goal.outcome, 600)] : []),
+    ...relayed(input.goal, 2000),
     "",
     input.changed === null
       ? "Wisp could not compute the files this PR changes (its head or base was not in the local repository): read the diff below to find them."

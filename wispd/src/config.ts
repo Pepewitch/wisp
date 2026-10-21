@@ -141,7 +141,7 @@ export interface WispConfig {
    */
   hiddenModels?: Record<string, string[]>;
   /**
-   * harness name -> model id -> where the composer starts a new task's brief,
+   * harness name -> model id -> where the composer starts a new task's
    * auto-fix and auto-merge switches. Overrides of the built-in defaults only
    * (shared/model-task-defaults.ts); the daemon itself never applies them, so
    * `wisp create` and the API keep their explicit-only behavior.

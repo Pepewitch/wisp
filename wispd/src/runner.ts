@@ -87,13 +87,9 @@ import { isTaskMerging } from "./autopilot/merging";
 import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot/store";
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
-import { pendingBriefRun, recordBriefRun } from "./brief-store";
 import { reviewTurnEnv } from "./verify/reviews";
-import { markPendingAnswersUncertain } from "./brief-inputs";
 import {
   AGENT_TURN_ENV,
-  BRIEF_RUN_ENV,
-  briefReminder,
   attachmentLines,
   envForCwd,
   framedMessage,
@@ -199,14 +195,7 @@ export function startTurn(
   // would kill the work it was kept for.
   const lingering = lingeringProcess(task);
   const autopilot = standingNotes(task.id, n, command);
-  // A task brief is asked for once per eligible turn, through this same
-  // standing-note path: never in the user's message, never on a steer, and
-  // never in front of a command. Its binding is chosen now, before the spawn,
-  // because the turn row it names does not exist until after it. A reused
-  // process keeps the environment it was spawned with, so it cannot carry a
-  // new binding; the brief waits for the next spawned turn.
-  const brief = lingering ? null : pendingBriefRun(task.id, def, command);
-  const notes = [...(autopilot?.notes ?? []), ...(brief ? [briefReminder()] : []), ...(command ? [] : [outputReminder(n)])];
+  const notes = [...(autopilot?.notes ?? []), ...(command ? [] : [outputReminder(n)])];
   const framed = framedMessage(messageOrigin(sourceMessageId), message);
   const prompt = withWispSection([...(n === 1 ? taskPreambleLines(task) : []), ...notes, ...framed.lines, ...attached], framed.words);
   if (lingering) {
@@ -264,7 +253,6 @@ export function startTurn(
         ...envForCwd({ ...process.env, ...taskEnv(task) }, task.worktree_path!),
         // only this turn's own bindings: envForCwd has already dropped any inherited ones
         [AGENT_TURN_ENV]: "1",
-        ...(brief ? { [BRIEF_RUN_ENV]: brief.runId } : {}),
         // an auto-review reviewer's turns carry its round's token: the verdict it submits must show it
         ...reviewTurnEnv(task),
       },
@@ -325,8 +313,6 @@ export function startTurn(
         { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
       );
       recordProcessGroup(id);
-      // same transaction as the turn row: no request can see one without the other
-      if (brief) recordBriefRun(brief, { taskId: task.id, turnId: id, n, contextN: task.context_n }, cfg.instanceId);
       return id;
     })();
   } catch (error) {
@@ -613,8 +599,6 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
   // before any queued message can start a turn beside one of them
   await stopOrphanedHarnesses();
   releaseOrphanedTaskMessageClaims();
-  // an answer recorded but not settled before the crash may or may not have arrived
-  markPendingAnswersUncertain();
   for (const turn of runningTurns()) {
     const task = getTask(turn.task_id);
     if (!task) continue;

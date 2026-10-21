@@ -1,14 +1,11 @@
-import { useEffect, useId, useRef, useState, type ReactNode, type RefObject } from "react"
+import { useId, useState, type ReactNode } from "react"
 
 import type { AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
 import { Reviews, type ReviewsModel } from "@/components/auto-review-view"
 import { History, HistoryLog, PrLink, Sep, Time, type HistoryLinks, type HistoryModel } from "@/components/autopilot-history-view"
-import { ChevronDown } from "@/components/icons"
 import { Button, PaneHeader, SwitchTrack } from "@/components/primitives"
-import { BriefSection, type BriefSectionProps, type Reveal } from "@/components/task-brief"
 import { useAutopilot } from "@/hooks/mutations"
 import { useAutopilotHistory, useAutoReviewRounds, useHarnessFeatures, usePullRequestStatus } from "@/hooks/queries"
-import { useBriefSwitch } from "@/hooks/useBriefSwitch"
 import { useTick } from "@/hooks/useTick"
 import { failureReason } from "@/lib/api"
 import { repositoryUrl } from "@/lib/autopilot-history"
@@ -23,7 +20,6 @@ import {
   fixRoundsWords,
   reviewRoundsWords,
 } from "@/lib/autopilot-words"
-import { briefBand, type BriefBandModel } from "@/lib/brief"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { ApiTask, HarnessesResponse } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
@@ -61,27 +57,15 @@ const NO_LINKS: HistoryLinks = { repository: null, pullRequest: null }
 
 /**
  * The Autopilot tab: the first tab of the task panel (frontend reference §5k).
- * Two sections in ONE scroller, split by the only full-width line in it:
+ * One section, **Automation**, in one scroller: the Auto-merge, Auto-fix and
+ * Auto-review switches, the live line and the one action the state asks for
+ * under the switch it speaks for, then auto-review's rounds for the PR
+ * (Reviews), then the three latest meaningful events of its History, and
+ * "All history", which swaps the pane for the dense per-PR log.
  *
- *  1. **Brief**, first. It is the part you read, so nothing sits above it but
- *     the tab strip, and nothing caps it (task-brief.tsx).
- *  2. **Automation**: the Auto-merge, Auto-fix and Auto-review switches, the live line and
- *     the one action the state asks for under the switch it speaks for, then
- *     auto-review's rounds for the PR (Reviews), then
- *     the three latest meaningful events of its History, and "All history",
- *     which swaps the pane for the dense per-PR log.
- *
- * A long brief pushes Automation below the fold. Its header then docks at the
- * foot of the pane with the live line, so a needs-you red is always on
- * screen; clicking it scrolls there, and scrolled into place it is a plain
- * header again. No second scroller, and nothing hidden behind "Show more".
- *
- * A daemon with briefs and no autopilot shows the Brief alone (and the tab is
- * labelled Brief); one with autopilot and no briefs starts with Automation.
- *
- * It used to be a Brief tab, with the switches in the task's `…` menu and
- * their reason as a menu note. A paragraph in a menu is why this tab exists:
- * the menu keeps the switches as shortcuts and nothing else.
+ * The switches used to live in the task's `…` menu, with their reason as a
+ * menu note. A paragraph in a menu is why this tab exists: the menu keeps the
+ * switches as shortcuts and nothing else.
  *
  * Kept mounted while another tab shows (`hidden`), like its siblings, so the
  * scroll position, an open comparison and the log survive a look at the diff.
@@ -98,14 +82,13 @@ export function AutopilotPane({
   header?: ReactNode
   hidden?: boolean
   touch?: boolean
-  /** Bring the transcript on screen before a find or a message reveal runs against it (touch, where it is another tab). */
+  /** Bring the transcript on screen before a message reveal runs against it (touch, where it is another tab). */
   onShowConversation?: () => void
 }) {
   const { connectionId } = useDaemonRuntime()
   const features = useHarnessFeatures()
   const autopilotSupported = features.data?.taskAutopilot === true
   const historySupported = autopilotSupported && features.data?.autopilotHistory === true
-  const brief = useBriefSwitch(task)
   const autopilot = useAutopilot()
   const history = useAutopilotHistory(task?.id ?? null, historySupported)
   const reviews = useReviewsModel(task, autopilotSupported, features.data, connectionId)
@@ -121,22 +104,6 @@ export function AutopilotPane({
     // a frame later, so the conversation it acts on is on screen
     requestAnimationFrame(then)
   }
-  const reveal: Reveal = (words, turn) => onConversation(() => intents.openFind(words, turn))
-
-  const model: BriefBandModel = brief.enabled ? briefBand(brief.query.data, brief.query.error, now) : { kind: "hidden" }
-  const briefProps: BriefSectionProps | null = task && brief.available ? {
-    switchable: brief.switchable,
-    enabled: brief.enabled,
-    disabled: brief.disabled,
-    // once a report or its empty line is showing, that says the same thing
-    note: brief.enabled && model.kind !== "hidden" ? null : brief.note,
-    error: brief.error,
-    model,
-    reportKey: task.id,
-    onChange: brief.set,
-    onReveal: reveal,
-    onRetry: () => void brief.query.refetch(),
-  } : null
 
   const automation: AutomationModel | null = task && autopilotSupported ? {
     status: task.autopilot ?? null,
@@ -163,7 +130,6 @@ export function AutopilotPane({
       touch={touch}
       now={now}
       empty={task ? null : "No task selected."}
-      brief={briefProps}
       automation={automation}
       links={links}
     />
@@ -204,7 +170,6 @@ export function AutopilotView({
   touch = false,
   now,
   empty = null,
-  brief,
   automation,
   links = NO_LINKS,
   initialView = "overview",
@@ -215,7 +180,6 @@ export function AutopilotView({
   now: number
   /** the one line to show instead, when there is no task */
   empty?: string | null
-  brief: BriefSectionProps | null
   automation: AutomationModel | null
   links?: HistoryLinks
   /** the gallery's way to draw the log without a click */
@@ -223,7 +187,6 @@ export function AutopilotView({
 }) {
   const [view, setView] = useState(initialView)
   const [routine, setRoutine] = useState(false)
-  const scroller = useRef<HTMLDivElement>(null)
   const headingId = useId()
   const entries = automation?.history?.entries
   const log = view === "log" && entries !== undefined && entries.length > 0
@@ -232,7 +195,7 @@ export function AutopilotView({
     <div className={cn("h-full min-h-0 flex-1 flex-col", hidden ? "hidden" : "flex")} aria-hidden={hidden || undefined}>
       {(!touch || header) && (
         <PaneHeader touch={touch} className={header ? "pl-2" : undefined}>
-          {header ?? <span className="text-[12.5px] font-medium text-foreground">{automation ? "Autopilot" : "Brief"}</span>}
+          {header ?? <span className="text-[12.5px] font-medium text-foreground">Autopilot</span>}
         </PaneHeader>
       )}
       {log && (
@@ -248,124 +211,25 @@ export function AutopilotView({
       )}
       {/* kept mounted under the log, as the tabs keep their panes: back
           returns to the same scroll position and an open comparison */}
-      <div ref={scroller} className={cn("scroll-slim @container relative min-h-0 flex-1 overflow-y-auto", log && "hidden")}>
+      <div className={cn("scroll-slim @container relative min-h-0 flex-1 overflow-y-auto", log && "hidden")}>
           {empty ? (
             <p className="px-3.5 py-3 text-[12.5px] text-muted-foreground">{empty}</p>
-          ) : (
-            <>
-              {brief && <BriefSection {...brief} touch={touch} />}
-              {automation && (
-                <>
-                  {/* a direct child of the scroller, not of the section: a sticky
-                      row only docks within its parent, and the section is the
-                      part that is below the fold */}
-                  <AutomationHead id={headingId} status={automation.status ?? OFF} divider={brief !== null} touch={touch} scroller={scroller} />
-                  <section aria-labelledby={headingId}>
-                    <Switches automation={automation} touch={touch} now={now} links={links} />
-                    {automation.reviews && automation.status?.autoReview && (
-                      <Reviews reviews={automation.reviews} pr={automation.status.pr} touch={touch} now={now} />
-                    )}
-                    {automation.history && (
-                      <History history={automation.history} touch={touch} now={now} links={links} onOpen={() => setView("log")} />
-                    )}
-                  </section>
-                </>
+          ) : automation && (
+            <section aria-labelledby={headingId}>
+              <div className={cn("flex items-center px-3.5", touch ? "min-h-12" : "h-10")}>
+                <h2 id={headingId} className="text-[12.5px] font-semibold text-foreground">Automation</h2>
+              </div>
+              <Switches automation={automation} touch={touch} now={now} links={links} />
+              {automation.reviews && automation.status?.autoReview && (
+                <Reviews reviews={automation.reviews} pr={automation.status.pr} touch={touch} now={now} />
               )}
-            </>
+              {automation.history && (
+                <History history={automation.history} touch={touch} now={now} links={links} onOpen={() => setView("log")} />
+              )}
+            </section>
           )}
       </div>
     </div>
-  )
-}
-
-/* ── the Automation header, and its docked form ─────────────────────────── */
-
-/**
- * True while `target`'s natural place is below `root`'s fold. One observer on
- * a 1px sentinel above the header; a browser without IntersectionObserver
- * never docks, and the header simply scrolls.
- */
-function useBelowFold(target: RefObject<HTMLElement | null>, root: RefObject<HTMLElement | null>): boolean {
-  const [below, setBelow] = useState(false)
-  useEffect(() => {
-    const el = target.current
-    const scroller = root.current
-    if (!el || !scroller || typeof IntersectionObserver === "undefined") return
-    const observer = new IntersectionObserver(([entry]) => {
-      // A hidden pane (another tab, the log, the phone's other surfaces) has
-      // no box: it reports a zero-height root, which is not "below the fold",
-      // and believing it would flash the docked header on the way back.
-      if (!entry?.rootBounds || entry.rootBounds.height === 0) return
-      setBelow(!entry.isIntersecting && entry.boundingClientRect.top >= entry.rootBounds.bottom - 1)
-    }, { root: scroller })
-    observer.observe(el)
-    return () => observer.disconnect()
-  }, [target, root])
-  return below
-}
-
-/**
- * The divider and the section's header, in one row that is `sticky bottom-0`
- * in the tab's scroller: while the section is below the fold it docks at the
- * foot of the pane and says the live line, in the rail's tone.
- */
-function AutomationHead({
-  id,
-  status,
-  divider,
-  touch,
-  scroller,
-}: {
-  id: string
-  status: AutopilotStatus
-  divider: boolean
-  touch: boolean
-  scroller: RefObject<HTMLDivElement | null>
-}) {
-  const sentinel = useRef<HTMLDivElement>(null)
-  const docked = useBelowFold(sentinel, scroller)
-  const tint = autopilotTint(status)
-  const words = tint === "off" ? "Off" : `${status.about === "pr" && status.pr !== null ? `#${status.pr} · ` : ""}${autopilotReason(status)}`
-  const scrollHere = () => {
-    const root = scroller.current
-    const mark = sentinel.current
-    if (!root || !mark) return
-    const reduced = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
-    root.scrollTo?.({ top: mark.offsetTop, behavior: reduced ? "auto" : "smooth" })
-  }
-  return (
-    <>
-      <div ref={sentinel} data-automation aria-hidden className="-mb-px h-px" />
-      <div
-        data-docked={docked || undefined}
-        className={cn(
-          // opaque, so a docked header hides the brief scrolling under it
-          "sticky bottom-0 z-10 flex items-center gap-3 px-3.5",
-          touch ? "min-h-12 bg-background" : "h-10 bg-sidebar",
-          // the one full-width line in the tab: every other rule is inset
-          divider && "border-t border-border-strong",
-        )}
-      >
-        <h2 id={id} className="shrink-0 text-[12.5px] font-semibold text-foreground">Automation</h2>
-        {docked && (
-          <button
-            type="button"
-            onClick={scrollHere}
-            aria-label={`Show Automation: ${words}`}
-            className={cn(
-              "-mr-1.5 flex min-w-0 flex-1 items-center justify-end gap-1.5 rounded-md px-1.5 text-[11.5px] transition-colors hover:bg-hover",
-              "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-              touch ? "min-h-11" : "h-7",
-              tint === "needs-you" ? "text-destructive" : "text-muted-foreground",
-            )}
-          >
-            {tint !== "off" && <TintDot tint={tint} />}
-            <span className={cn("truncate", tint === "off" && "text-faint")}>{words}</span>
-            <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-          </button>
-        )}
-      </div>
-    </>
   )
 }
 

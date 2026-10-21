@@ -172,14 +172,6 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       void opts.client.invalidateQueries({ queryKey: qk.terminals(evt.taskId) });
       return;
     }
-    // Any task's, like workflows: switching back to a task must not paint a
-    // brief that changed while it was not on screen.
-    if (evt.type === "brief") {
-      void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "brief"] });
-      // the switch lives on the task row (`briefEnabled`)
-      invalidateTasks(evt.taskId);
-      return;
-    }
     if (evt.type === "workflow") {
       void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "workflows"] });
       // auto-merge and auto-fix are a workflow: each entry of their history announces one

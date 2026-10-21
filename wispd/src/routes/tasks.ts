@@ -72,6 +72,7 @@ export function listTasksRoute(url: URL): Response {
   );
 }
 
+/** A field this build does not read — an older client's `briefEnabled`, say — is ignored, never refused. */
 interface CreateTaskBody {
   repoPath?: unknown;
   prompt?: unknown;
@@ -84,7 +85,6 @@ interface CreateTaskBody {
   suffixPromptId?: unknown;
   attachments?: unknown;
   autopilot?: unknown;
-  briefEnabled?: unknown;
 }
 
 function createTaskBodyError(body: CreateTaskBody): Response | null {
@@ -107,10 +107,8 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
     return err(`effort must be a string, got ${typeName(body.effort)}`, 400);
   }
   if (body.effort === "") return err("effort must not be empty", 400);
-  for (const flag of ["fast", "briefEnabled"] as const) {
-    if (body[flag] !== undefined && typeof body[flag] !== "boolean") {
-      return err(`${flag} must be a boolean, got ${typeName(body[flag])}`, 400);
-    }
+  if (body.fast !== undefined && typeof body.fast !== "boolean") {
+    return err(`fast must be a boolean, got ${typeName(body.fast)}`, 400);
   }
   if (body.base !== undefined && typeof body.base !== "string") {
     return err(`base must be a string, got ${typeName(body.base)}`, 400);
@@ -173,7 +171,6 @@ export function createTaskRoute(
         model: body.model as string | undefined,
         effort: body.effort as string | undefined,
         fast: body.fast === true,
-        brief: body.briefEnabled === true,
         mode,
         base: body.base as string | undefined,
         attachments: body.attachments,

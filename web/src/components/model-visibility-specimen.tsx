@@ -17,7 +17,6 @@ const HARNESSES: HarnessInfo[] = [
     hasModel: true,
     hasEffort: true,
     hasImage: true,
-    hasBriefs: true,
     defaults: { model: "claude-opus-5" },
     models: {
       list: ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
@@ -30,7 +29,6 @@ const HARNESSES: HarnessInfo[] = [
     hasModel: true,
     hasEffort: true,
     hasImage: true,
-    hasBriefs: true,
     defaults: { model: "gpt-5.6-luna" },
     models: {
       list: ["gpt-5.6-luna", "gpt-5.6-luna-codex", "gpt-6-astra", "gpt-6-astra-mini", "o4-mini"],
@@ -43,7 +41,6 @@ const HARNESSES: HarnessInfo[] = [
     hasModel: true,
     hasEffort: false,
     hasImage: true,
-    hasBriefs: true,
     defaults: {},
     models: {
       list: ["auto", "composer-2.5", "cursor-muse-1", "claude-opus-4-8-high", "gpt-5.6-sol"],
@@ -61,7 +58,7 @@ const HIDDEN: HiddenModels = {
 
 const TASK_DEFAULTS: ModelTaskDefaultsMap = {
   claude: { "claude-opus-5": { autoFix: true, autoMerge: true } },
-  codex: { "gpt-5.6-luna": { brief: false } },
+  codex: { "gpt-5.6-luna": { autoFix: true } },
 }
 
 const encode = (harness: string, model: string) => `${harness}\t${model}`
@@ -134,7 +131,7 @@ export function ModelVisibilitySpecimen() {
           harnesses={HARNESSES}
           hidden={hidden}
           onApply={setHidden}
-          taskDefaults={{ defaults: taskDefaults, briefs: true, autopilot: true, onApply: setTaskDefaults }}
+          taskDefaults={{ defaults: taskDefaults, onApply: setTaskDefaults }}
           empty="No harnesses reported by the daemon."
           error={null}
         />

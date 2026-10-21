@@ -30,12 +30,11 @@ export function buildTaskSurfaces({
 }): {
   changes: ReactNode
   /** Touch only: on the desktop, Autopilot is a tab inside `changes`' task panel. */
-  autopilot?: { label: "Autopilot" | "Brief"; render: (showConversation: () => void, hidden: boolean) => ReactNode }
+  autopilot?: (showConversation: () => void, hidden: boolean) => ReactNode
   workflows?: ReactNode
   terminal: ReactNode
 } {
   const workflowsSupported = features?.taskWorkflows === true
-  const briefsSupported = features?.taskBriefs === true
   const autopilotSupported = features?.taskAutopilot === true
   // The diff pane's double-click opens a file the way a path in prose does,
   // so it gets the same provider. An archived task's worktree is gone, which
@@ -62,27 +61,23 @@ export function buildTaskSurfaces({
     </FileViewerProvider>
   )
   // Its own surface on touch, so it needs the same provider as the diff and
-  // a way to bring the chat forward before a find runs against it.
-  // A daemon with briefs and no autopilot keeps the tab's old name.
-  const autopilot = mobile && (briefsSupported || autopilotSupported)
-    ? {
-      label: autopilotSupported ? "Autopilot" as const : "Brief" as const,
-      // `hidden` while another surface shows: its clock stops, and its docked header rests
-      render: (showConversation: () => void, hidden: boolean) => (
-        <FileViewerProvider
-          taskId={archived ? null : taskId}
-          onReveal={revealFileHandler(connectionId, task?.worktree_path ?? null)}
-        >
-          <AutopilotPane
-            key={`${connectionId}:${taskId ?? ""}`}
-            task={task}
-            touch
-            hidden={hidden}
-            onShowConversation={showConversation}
-          />
-        </FileViewerProvider>
-      ),
-    }
+  // a way to bring the chat forward before a message reveal runs against it.
+  const autopilot = mobile && autopilotSupported
+    // `hidden` while another surface shows: its clock stops
+    ? (showConversation: () => void, hidden: boolean) => (
+      <FileViewerProvider
+        taskId={archived ? null : taskId}
+        onReveal={revealFileHandler(connectionId, task?.worktree_path ?? null)}
+      >
+        <AutopilotPane
+          key={`${connectionId}:${taskId ?? ""}`}
+          task={task}
+          touch
+          hidden={hidden}
+          onShowConversation={showConversation}
+        />
+      </FileViewerProvider>
+    )
     : undefined
   const workflows = workflowsSupported ? (
     <WorkflowsPane

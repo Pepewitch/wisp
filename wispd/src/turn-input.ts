@@ -31,13 +31,6 @@ function portEnv(task: Task): Record<string, string> {
 }
 
 /**
- * The one variable that binds a turn to its brief (brief-store.ts). Named to
- * stay clear of the KEY/SECRET/TOKEN patterns a harness may filter out of its
- * tool environment; it is a scope check, not a credential.
- */
-export const BRIEF_RUN_ENV = "WISP_BRIEF_RUN"
-
-/**
  * Set only in a harness turn's environment, never in a task's terminal or its
  * setup and archive scripts, which share taskEnv. The CLI reads it to tell an
  * agent driving Wisp from a person typing in the task's terminal (cli-api.ts).
@@ -47,25 +40,13 @@ export const AGENT_TURN_ENV = "WISP_AGENT_TURN"
 export const REVIEW_TOKEN_ENV = "WISP_REVIEW_TOKEN"
 
 /**
- * The single line an eligible turn is given. Short on purpose — the schema,
- * the limits and the example live in `wisp brief --help`, read only when the
- * agent needs them — and scoped to THIS turn, never phrased as a standing
- * session policy, so an agent that remembers it after briefs are switched off
- * was told nothing about later turns.
- */
-export function briefReminder(): string {
-  const cmd = wispCommand()
-  return `Before ending this turn, save a JSON brief with \`${cmd} brief set --stdin\`; help: \`${cmd} brief --help\`.`
-}
-
-/**
  * Everything Wisp itself writes into a harness input — the first turn's task
  * preamble, standing notes, the attached-files note, a workflow's own words —
  * goes out as one `<wisp>` section, and a blank line separates it from the
  * person's words. The tag is what tells the agent (and anyone reading a raw
  * prompt) which text is Wisp's and which the person typed:
  *
- *   <wisp>Before ending this turn, save a JSON brief …</wisp>   ← one line, inline
+ *   <wisp>To show an image you created as a file …</wisp>       ← one line, inline
  *
  *   <wisp>                                                      ← several lines, one block
  *   You are working on task …
@@ -139,14 +120,13 @@ export function framedMessage(origin: MessageOrigin | undefined, text: string): 
  * two cannot drift apart.
  */
 export function envForCwd<T extends Record<string, string | undefined>>(env: T, cwd: string): T & { PWD: string } {
-  // A brief binding is never inherited. Every child Wisp spawns into a task —
-  // a turn, a setup script, a terminal — builds its environment here, so a
-  // daemon started from inside some agent's shell cannot hand that agent's
-  // binding to anything. The runner adds a turn's OWN binding after this.
-  // The agent-turn marker is dropped for the same reason: only the runner
-  // may say a child is a turn.
-  // An auto-review token is dropped too: only a reviewer's own turn gets one.
-  const { [BRIEF_RUN_ENV]: _inherited, [AGENT_TURN_ENV]: _turn, [REVIEW_TOKEN_ENV]: _review, ...rest } = env
+  // A turn's bindings are never inherited. Every child Wisp spawns into a
+  // task — a turn, a setup script, a terminal — builds its environment here,
+  // so a daemon started from inside some agent's shell cannot hand that
+  // agent's markers to anything. The runner adds a turn's OWN after this:
+  // only the runner may say a child is a turn, and only a reviewer's own turn
+  // gets an auto-review token.
+  const { [AGENT_TURN_ENV]: _turn, [REVIEW_TOKEN_ENV]: _review, ...rest } = env
   return { ...rest, PWD: cwd } as T & { PWD: string }
 }
 

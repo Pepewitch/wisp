@@ -37,7 +37,6 @@ export interface NewTaskInput {
   model?: string;
   effort?: string;
   fast: boolean;
-  brief: boolean;
   mode: TaskMode;
   /** the ref a worktree task forks from, instead of the project's */
   base?: string;
@@ -75,11 +74,10 @@ const refuse = (kind: Exclude<NewTaskRefusal["kind"], "attachment">, error: stri
 function unsupportedRequest(
   def: AdapterDef,
   harness: string,
-  asked: { effort: string | null; fast: boolean; brief: boolean },
+  asked: { effort: string | null; fast: boolean },
 ): string | null {
   if (asked.effort !== null && !def.effort) return `harness '${harness}' has no effort support`;
   if (asked.fast && !def.fastMode) return `harness '${harness}' has no fast mode`;
-  if (asked.brief && def.briefs !== true) return `harness '${harness}' can't write task briefs`;
   return null;
 }
 
@@ -138,7 +136,6 @@ function insertTaskRow(input: NewTaskInput, model: string | null, effort: string
         effort,
         fast: input.fast,
         mode: input.mode,
-        brief: input.brief,
         verify_role: input.verifyRole ?? null,
         slot: freeSlot(),
       });
@@ -176,7 +173,7 @@ export async function createAndLaunchTask(
   const resolved = resolveHarnessDefaults(cfg, harness, input.model, input.effort);
   const model = resolved.model ?? wispDefaultModel(def, models?.snapshot(harness).models?.list ?? null);
   const effort = resolved.effort;
-  const unsupported = unsupportedRequest(def, harness, { effort, fast: input.fast, brief: input.brief });
+  const unsupported = unsupportedRequest(def, harness, { effort, fast: input.fast });
   if (unsupported) return refuse("invalid", unsupported);
   const local = localTaskRefusal(input);
   if (local) return local;

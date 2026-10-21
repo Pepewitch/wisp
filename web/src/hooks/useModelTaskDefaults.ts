@@ -18,7 +18,7 @@ export function useChoiceTaskDefaults(choice: { harness: string; model: string }
 }
 
 /**
- * Where each model starts a new task's brief, auto-fix and auto-merge
+ * Where each model starts a new task's auto-fix and auto-merge
  * switches, and the one way to change it.
  *
  * Every PATCH carries the whole map, so an edit must build on the newest map

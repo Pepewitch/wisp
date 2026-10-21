@@ -1,8 +1,8 @@
 /**
- * Text from outside Wisp — an agent's brief, a CI log, a person's message —
+ * Text from outside Wisp — an agent's reply, a CI log, a person's message —
  * made safe to print to a terminal: CSI and OSC escape sequences removed
  * whole, then every remaining control character except tab and newline. An
- * OSC 52 sequence in a stored brief would otherwise write to the reader's
+ * OSC 52 sequence in a stored reply would otherwise write to the reader's
  * clipboard, and CSI could repaint their screen, whenever someone printed it.
  *
  * A carriage return becomes a line break (CRLF one break), so a progress line

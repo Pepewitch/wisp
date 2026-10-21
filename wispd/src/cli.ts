@@ -13,7 +13,6 @@ import {
 import { workflowCommand } from "./cli-workflow";
 import { PR_USAGE, prCommand } from "./cli-pr";
 import { AUDIT_USAGE, auditCommand } from "./cli-audit";
-import { briefCommand } from "./cli-brief";
 import { reviewCommand } from "./cli-review";
 import { verifyCommand } from "./cli-verify";
 import { createCommand } from "./cli-create";
@@ -532,7 +531,6 @@ export const COMMANDS = {
       exitApi(error);
     }
   },
-  brief: (positional, flags) => briefCommand(positional, flags),
   review: (positional, flags) => reviewCommand(positional, flags),
   verify: (positional, flags) => verifyCommand(positional, flags),
   fresh: async (positional) => {

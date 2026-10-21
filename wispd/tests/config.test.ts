@@ -183,12 +183,14 @@ describe("validateConfig (a prior audit)", () => {
       validateConfig({
         modelTaskDefaults: {
           codex: {
-            "gpt-5": { brief: false, autoFix: true, autoMerge: false },
+            "gpt-5": { autoFix: true, autoMerge: false },
             // the same model once trimmed, so its switches join the entry above
             " gpt-5 ": { autoMerge: true },
             // every value is the built-in default, so nothing is stored for it
-            "gpt-5-mini": { brief: true, autoFix: false },
+            "gpt-5-mini": { autoFix: false },
           },
+          // the retired `brief` switch an older Wisp wrote loads, and is dropped
+          claude: { opus: { brief: false }, sonnet: { brief: "no", autoFix: true } },
           droid: {},
           // a switch from a newer Wisp is dropped rather than refused
           nosuch: { " x ": { autoMerge: true, someday: true } },
@@ -196,15 +198,16 @@ describe("validateConfig (a prior audit)", () => {
       }),
     ).toEqual({
       modelTaskDefaults: {
-        codex: { "gpt-5": { brief: false, autoFix: true, autoMerge: true } },
+        claude: { sonnet: { autoFix: true } },
+        codex: { "gpt-5": { autoFix: true, autoMerge: true } },
         nosuch: { x: { autoMerge: true } },
       },
     });
     expect(thrownMessage(() => validateConfig({ modelTaskDefaults: [] }))).toBe(
       "config.json: modelTaskDefaults must be an object mapping harness names to objects of model ids, got array",
     );
-    expect(thrownMessage(() => validateConfig({ modelTaskDefaults: { codex: { "gpt-5": { brief: "no" } } } }))).toBe(
-      "config.json: modelTaskDefaults['codex']['gpt-5'].brief must be a boolean, got string",
+    expect(thrownMessage(() => validateConfig({ modelTaskDefaults: { codex: { "gpt-5": { autoFix: "no" } } } }))).toBe(
+      "config.json: modelTaskDefaults['codex']['gpt-5'].autoFix must be a boolean, got string",
     );
   });
 

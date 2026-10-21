@@ -38,14 +38,11 @@ import {
 } from "../../../shared/model-task-defaults"
 
 /**
- * The per-model switches a new task starts with. Each is offered only where
- * the composer would offer it: a brief on a daemon with briefs and a harness
- * that can publish one, auto-fix and auto-merge on a daemon with autopilot.
+ * The per-model switches a new task starts with: auto-fix and auto-merge,
+ * offered only on a daemon with autopilot, as the composer offers them.
  */
 export interface TaskDefaultsControl {
   defaults: ModelTaskDefaultsMap
-  briefs: boolean
-  autopilot: boolean
   /** Takes an edit rather than a map, so back-to-back clicks each build on the one before. */
   onApply: (edit: (current: ModelTaskDefaultsMap) => ModelTaskDefaultsMap) => void
 }
@@ -126,11 +123,9 @@ function ModelVisibilityBody({
   const taskDefaults = useModelTaskDefaults()
   const features = useHarnessFeatures()
   const harnesses = useMemo(() => orderHarnesses(harnessQuery.data ?? []), [harnessQuery.data])
-  const briefs = features.data?.taskBriefs === true
-  const autopilot = features.data?.taskAutopilot === true
   const defaultsControl: TaskDefaultsControl | undefined =
-    taskDefaults.supported && (briefs || autopilot)
-      ? { defaults: taskDefaults.defaults, briefs, autopilot, onApply: taskDefaults.updateDefaults }
+    taskDefaults.supported && features.data?.taskAutopilot === true
+      ? { defaults: taskDefaults.defaults, onApply: taskDefaults.updateDefaults }
       : undefined
   const failure = error ?? taskDefaults.error
 
@@ -172,7 +167,7 @@ export function ModelCuration({
   harnesses: HarnessInfo[]
   hidden: HiddenModels
   onApply: (next: HiddenModels) => void
-  /** absent on a daemon that cannot store per-model task defaults */
+  /** absent on a daemon that cannot store per-model task defaults, or has no autopilot */
   taskDefaults?: TaskDefaultsControl
   empty: string
   error: string | null
@@ -222,7 +217,7 @@ export function ModelCuration({
       </p>
       {taskDefaults && (
         <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
-          New tasks start with a task brief and without auto-fix or auto-merge. To change that for one
+          New tasks start without auto-fix or auto-merge. To change that for one
           model, use the <span className="text-fg-secondary">…</span> on its row; the row then says how it
           differs. The composer can still switch them for any one task.
         </p>
@@ -381,15 +376,11 @@ function ModelToggle({
   )
 }
 
-/**
- * How this model's new tasks differ from the usual start (a brief, no
- * autopilot), naming only the switches the composer would offer here.
- */
-function differences(values: ModelTaskDefaults, brief: boolean, autopilot: boolean): string | null {
+/** How this model's new tasks differ from the usual start (no autopilot). */
+function differences(values: ModelTaskDefaults): string | null {
   const parts = [
-    brief && !values.brief && "No brief",
-    autopilot && values.autoFix && "Auto-fix",
-    autopilot && values.autoMerge && "Auto-merge",
+    values.autoFix && "Auto-fix",
+    values.autoMerge && "Auto-merge",
   ].filter((part): part is string => typeof part === "string")
   return parts.length > 0 ? parts.join(" · ") : null
 }
@@ -411,9 +402,7 @@ function TaskDefaultsMenu({
   control: TaskDefaultsControl
 }) {
   const values = modelTaskDefaultsFor(control.defaults, harness.name, model)
-  const brief = control.briefs && harness.hasBriefs === true
-  if (!brief && !control.autopilot) return null
-  const note = differences(values, brief, control.autopilot)
+  const note = differences(values)
   const set = (key: keyof ModelTaskDefaults) => (value: boolean) =>
     control.onApply((current) => setModelTaskDefault(current, harness.name, model, key, value))
   const touch = hasCoarsePointer()
@@ -429,21 +418,12 @@ function TaskDefaultsMenu({
         className={touch ? undefined : "model-row-action mx-1 h-[22px] w-[22px]"}
       >
         <MenuNote>New tasks on {model} start with</MenuNote>
-        {brief && (
-          <MenuCheckboxItem checked={values.brief} onCheckedChange={set("brief")}>
-            Task brief
-          </MenuCheckboxItem>
-        )}
-        {control.autopilot && (
-          <>
-            <MenuCheckboxItem checked={values.autoFix} onCheckedChange={set("autoFix")}>
-              Auto-fix
-            </MenuCheckboxItem>
-            <MenuCheckboxItem checked={values.autoMerge} onCheckedChange={set("autoMerge")}>
-              Auto-merge
-            </MenuCheckboxItem>
-          </>
-        )}
+        <MenuCheckboxItem checked={values.autoFix} onCheckedChange={set("autoFix")}>
+          Auto-fix
+        </MenuCheckboxItem>
+        <MenuCheckboxItem checked={values.autoMerge} onCheckedChange={set("autoMerge")}>
+          Auto-merge
+        </MenuCheckboxItem>
       </Menu>
     </>
   )

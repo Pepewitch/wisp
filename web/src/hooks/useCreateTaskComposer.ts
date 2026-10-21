@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 
 import { useAutopilotChoice } from "@/hooks/useAutopilotChoice"
-import { useBriefChoice } from "@/hooks/useBriefChoice"
 import { useChoiceTaskDefaults } from "@/hooks/useModelTaskDefaults"
 import { useSuffixPrompts } from "@/hooks/queries"
 import { usePendingAttachments } from "@/lib/attachments"
@@ -36,7 +35,6 @@ export function useCreateTaskComposer(
   const [suffixPromptId, setSuffixPromptId] = useState<string | null>(saved?.suffixPromptId ?? null)
 
   const harness = harnesses.find((h) => h.name === choice?.harness) ?? null
-  const brief = useBriefChoice(harness, saved, taskDefaults.brief)
   const modelAvailable = !!harness && !!choice && modelOptionsFor(harness).includes(choice.model)
   const suffixPrompts = useSuffixPrompts(suffixPromptId !== null)
   // If discovery failed, let the daemon make the final decision at submit.
@@ -54,9 +52,9 @@ export function useCreateTaskComposer(
 
   useEffect(() => {
     writeCreateTaskDraft(connectionId, repoPath, {
-      prompt, choice, effort, fast, brief: brief.chosen, mode, base, suffixPromptId, autopilot: autopilot.chosen,
+      prompt, choice, effort, fast, mode, base, suffixPromptId, autopilot: autopilot.chosen,
     })
-  }, [connectionId, repoPath, prompt, choice, effort, fast, brief.chosen, mode, base, suffixPromptId, autopilot.chosen])
+  }, [connectionId, repoPath, prompt, choice, effort, fast, mode, base, suffixPromptId, autopilot.chosen])
   useEffect(() => {
     writePendingAttachmentCount(connectionId, createTaskScope(repoPath), attachments.list.length)
   }, [connectionId, repoPath, attachments.list.length])
@@ -66,13 +64,12 @@ export function useCreateTaskComposer(
     setEffort(destination?.defaults.reasoningEffort ?? "")
     if (!destination?.hasFastMode) setFast(false)
     // another model brings its own task defaults, the way it brings its effort
-    brief.reset()
     autopilot.reset()
   }
 
   return {
     prompt, setPrompt, choice, setChoice, effort, setEffort, fast, setFast,
-    mode, setMode, base, setBase, autopilot, brief, suffixPromptId, setSuffixPromptId,
+    mode, setMode, base, setBase, autopilot, suffixPromptId, setSuffixPromptId,
     harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForHarness,
   }
 }

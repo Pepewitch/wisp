@@ -23,18 +23,13 @@ type PanelTab = "autopilot" | "changes" | "workflows"
  * workflow is standing state you want to SEE: the button only said how many
  * were active, and "what is it waiting for?" cost a modal over the whole app.
  *
- * The brief joined them for the same reason. As a band above the conversation
- * it took height from the one column you read in, on every task, whether or
- * not you wanted it. Here it costs nothing until you look, and it is the tab
- * the panel opens on: it is the answer to "where did this leave off?". The
- * auto-merge and auto-fix switches moved in under it from the task menu, with
- * the room to say what they did; a daemon with briefs and no autopilot keeps
- * the tab's old name, Brief.
+ * The auto-merge and auto-fix switches moved in from the task menu, with the
+ * room to say what they did, and Autopilot is the tab the panel opens on.
  *
  * All panes stay mounted. Switching to Workflows and back must not close the
  * diff you had open — the same rule the mobile shell's tabs already follow.
  *
- * A daemon with none of `taskBriefs`, `taskAutopilot` and `taskWorkflows`
+ * A daemon with neither `taskAutopilot` nor `taskWorkflows`
  * gets no strip at all: one pane, its own label, exactly as before.
  */
 export function TaskPanel({
@@ -54,14 +49,13 @@ export function TaskPanel({
   const features = useHarnessFeatures()
   const workflowsSupported = Boolean(features.data?.taskWorkflows)
   const autopilotSupported = Boolean(features.data?.taskAutopilot)
-  const firstSupported = Boolean(features.data?.taskBriefs) || autopilotSupported
   const tabs: PanelTab[] = [
-    ...(firstSupported ? (["autopilot"] as const) : []),
+    ...(autopilotSupported ? (["autopilot"] as const) : []),
     "changes",
     ...(workflowsSupported ? (["workflows"] as const) : []),
   ]
   const label: Record<PanelTab, string> = {
-    autopilot: autopilotSupported ? "Autopilot" : "Brief",
+    autopilot: "Autopilot",
     changes: "Changes",
     workflows: "Workflows",
   }
@@ -106,9 +100,9 @@ export function TaskPanel({
     // h-full AND flex-1: this root fills a resizable panel (which sets a
     // height) as well as a flex column (which does not) — frontend reference §6b
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      {firstSupported && (
+      {autopilotSupported && (
         <AutopilotPane
-          // a task's brief and history belong to ONE task on ONE daemon; the
+          // a task's autopilot history belongs to ONE task on ONE daemon; the
           // prefix keeps it apart from its siblings, whose keys would otherwise be identical
           key={`autopilot:${connectionId}:${taskId ?? ""}`}
           task={task}

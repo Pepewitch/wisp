@@ -19,8 +19,6 @@ export type WispEvent =
   | { type: "outputs"; taskId: string; n: number; outputs: OutputImage[] }
   | { type: "message"; taskId: string; messageId: string }
   | { type: "workflow"; taskId: string }
-  /** The task's brief or its switch changed; clients re-ask GET /api/tasks/:id/brief. Never carries the payload. */
-  | { type: "brief"; taskId: string }
   /** The task's shell tabs changed — opened, closed, renamed, or now running something else. */
   | { type: "terminals"; taskId: string }
   /** a project was added or removed, or its settings or verification recipe changed */

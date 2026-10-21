@@ -21,7 +21,7 @@ const CONTROL = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
 const WISPD = resolve(import.meta.dir, "..");
 
 async function run(args: string[], home: string) {
-  const { NODE_ENV: _node, WISP_BRIEF_RUN: _run, WISP_TASK_ID: _task, WISP_COMMAND_NAME: _name, ...inherited } = process.env;
+  const { NODE_ENV: _node, WISP_TASK_ID: _task, WISP_COMMAND_NAME: _name, ...inherited } = process.env;
   const child = Bun.spawn({
     cmd: [process.execPath, "src/index.ts", ...args],
     cwd: WISPD,

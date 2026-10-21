@@ -100,18 +100,14 @@ export interface Task {
   /** NULL in rows written before the column existed — read it through taskMode() */
   mode: TaskMode | null;
   /**
-   * Task briefs (brief-store.ts): 1 = each eligible turn is asked for one.
-   * SQLite's 0/1; `briefEnabled` at the API boundary. Optional in the type
-   * only because rows from older fixtures predate the column; the database
-   * always has it.
+   * Retired with task briefs: the columns stay so a downgrade still opens the
+   * profile, but nothing reads or writes them. apiTask strips them.
    */
   brief_enabled?: number;
-  /** Advances on every off→on, so a re-enable never revives an old turn's binding. */
   brief_generation?: number;
-  /** The last admission order handed to a message or answer (store-messages admitTaskInput). */
-  input_seq?: number;
-  /** Moves whenever a person's input is added, edited, cancelled or changes delivery. */
   input_rev?: number;
+  /** The last admission order handed to a message (store-messages admitTaskInput). */
+  input_seq?: number;
   /**
    * A task Wisp started for verification (verify/): 'reviewer' (an
    * auto-review round) or 'recipe' (setting up or fixing a project's
@@ -293,11 +289,11 @@ export interface TaskMessage {
    * Who wrote it, fixed at creation: 'human'; 'workflow' for Wisp's own
    * (auto-fix, heartbeat); 'scheduled' for a schedule-steer (the person's
    * words, sent later); 'plugin' for a workflow plugin's wake; 'legacy' for a
-   * row older than the column. Internal — delivery frames by it and briefs
-   * read it; `workflow_id` stays the API's (clearable) link.
+   * row older than the column. Internal — delivery frames by it;
+   * `workflow_id` stays the API's (clearable) link.
    */
   origin?: import("./turn-input").MessageOrigin;
-  /** Admission order among the task's inputs (messages and answers); internal. */
+  /** Admission order among the task's messages; internal. */
   source_seq?: number | null;
   created_at: string;
   updated_at: string;

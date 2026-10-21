@@ -1,24 +1,22 @@
 /**
- * What a new task starts with on each model: a task brief, auto-fix and
- * auto-merge. The daemon stores them (settings' `modelTaskDefaults`), the
- * Models modal edits them, and the create composer seeds its switches from
- * them. A task is free to differ; these only decide where its switches start.
+ * What a new task starts with on each model: auto-fix and auto-merge. The
+ * daemon stores them (settings' `modelTaskDefaults`), the Models modal edits
+ * them, and the create composer seeds its switches from them. A task is
+ * free to differ; these only decide where its switches start.
  *
  * Stored as OVERRIDES of the built-in defaults, so a model nobody touched
- * (including one a later probe discovers) starts with a brief and neither
- * autopilot switch, and the stored map stays small and comparable.
+ * (including one a later probe discovers) starts with neither autopilot
+ * switch, and the stored map stays small and comparable.
  */
 
 export interface ModelTaskDefaults {
-  brief: boolean;
   autoFix: boolean;
   autoMerge: boolean;
 }
 
-export const MODEL_TASK_DEFAULT_KEYS = ["brief", "autoFix", "autoMerge"] as const satisfies readonly (keyof ModelTaskDefaults)[];
+export const MODEL_TASK_DEFAULT_KEYS = ["autoFix", "autoMerge"] as const satisfies readonly (keyof ModelTaskDefaults)[];
 
 export const BUILTIN_MODEL_TASK_DEFAULTS: Readonly<ModelTaskDefaults> = Object.freeze({
-  brief: true,
   autoFix: false,
   autoMerge: false,
 });

@@ -23,7 +23,7 @@ test("CLI add, list and save roundtrip actual task-owned bytes without overwriti
   const source = join(scratch, "plot.png"), destination = join(scratch, "saved.png");
   writeFileSync(source, samplePng());
   const run = async (args: string[]) => {
-    const { NODE_ENV: _node, WISP_COMMAND_NAME: _name, WISP_BRIEF_RUN: _brief, ...inherited } = process.env;
+    const { NODE_ENV: _node, WISP_COMMAND_NAME: _name, ...inherited } = process.env;
     const child = Bun.spawn({ cmd: [process.execPath, "src/index.ts", ...args], cwd: resolve(import.meta.dir, ".."), env: { ...inherited, WISP_HOME: home, WISP_TASK_ID: task.id }, stdout: "pipe", stderr: "pipe" });
     const [out, err, exit] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
     return { out, err, exit };

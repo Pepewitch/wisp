@@ -86,7 +86,7 @@ describe("the mobile header", () => {
   })
 
   it("puts Autopilot level with Changes, and keeps the chat first", () => {
-    mount({ autopilot: { label: "Autopilot", render: () => <div>Autopilot content</div> }, workflows: <div /> })
+    mount({ autopilot: () => <div>Autopilot content</div>, workflows: <div /> })
 
     const tabs = screen.getAllByRole("button", { name: /^(Chat|Autopilot|Changes|Workflows|Terminal)$/ })
     expect(tabs.map((tab) => tab.textContent)).toEqual(["Chat", "Autopilot", "Changes", "Workflows", "Terminal"])
@@ -100,7 +100,7 @@ describe("the mobile header", () => {
 
   it("tells the Autopilot pane when another surface hides it, so its clock can stop", () => {
     const seen: boolean[] = []
-    mount({ autopilot: { label: "Autopilot", render: (_showChat, hidden) => { seen.push(hidden); return <div>Autopilot content</div> } } })
+    mount({ autopilot: (_showChat, hidden) => { seen.push(hidden); return <div>Autopilot content</div> } })
     expect(seen.at(-1)).toBe(true)
     fireEvent.click(screen.getByRole("button", { name: "Autopilot" }))
     expect(seen.at(-1)).toBe(false)
@@ -108,15 +108,8 @@ describe("the mobile header", () => {
     expect(seen.at(-1)).toBe(true)
   })
 
-  it("keeps the name Brief on a daemon with briefs and no autopilot", () => {
-    mount({ autopilot: { label: "Brief", render: () => <div>Brief content</div> } })
-
-    const tabs = screen.getAllByRole("button", { name: /^(Chat|Autopilot|Brief|Changes|Terminal)$/ })
-    expect(tabs.map((tab) => tab.textContent)).toEqual(["Chat", "Brief", "Changes", "Terminal"])
-  })
-
   it("hands the Autopilot tab a way back to the chat", () => {
-    mount({ autopilot: { label: "Autopilot", render: (showChat) => <button onClick={showChat}>Back to chat</button> }, conversation: <div>Transcript</div> })
+    mount({ autopilot: (showChat) => <button onClick={showChat}>Back to chat</button>, conversation: <div>Transcript</div> })
 
     fireEvent.click(screen.getByRole("button", { name: "Autopilot" }))
     expect(screen.getByText("Transcript").parentElement).toHaveAttribute("aria-hidden", "true")
@@ -125,7 +118,7 @@ describe("the mobile header", () => {
   })
 
   it("brings the chat forward for a find from elsewhere, and asks again once it is on screen", async () => {
-    mount({ autopilot: { label: "Autopilot", render: () => <div>Autopilot content</div> }, conversation: <div>Transcript</div> })
+    mount({ autopilot: () => <div>Autopilot content</div>, conversation: <div>Transcript</div> })
     const intents = uiIntentsFor("test-connection")
 
     fireEvent.click(screen.getByRole("button", { name: "Autopilot" }))
@@ -139,7 +132,7 @@ describe("the mobile header", () => {
   })
 
   it("leaves other tabs alone when a find arrives", async () => {
-    mount({ autopilot: { label: "Autopilot", render: () => <div>Autopilot content</div> }, conversation: <div>Transcript</div> })
+    mount({ autopilot: () => <div>Autopilot content</div>, conversation: <div>Transcript</div> })
     const intents = uiIntentsFor("test-connection")
 
     fireEvent.click(screen.getByRole("button", { name: "Changes" }))
@@ -151,11 +144,10 @@ describe("the mobile header", () => {
     expect(intents.findRequest()?.seq ?? 0).toBe(before + 1)
   })
 
-  it("omits the Autopilot tab when the connected daemon has neither briefs nor autopilot", () => {
+  it("omits the Autopilot tab when the connected daemon has no autopilot", () => {
     mount()
 
     expect(screen.queryByRole("button", { name: "Autopilot" })).not.toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: "Brief" })).not.toBeInTheDocument()
   })
 
   it("omits Workflows when the connected daemon does not support it", () => {

@@ -182,8 +182,6 @@ export interface ApiTask {
   mode: TaskMode | null;
   created_at: string;
   updated_at: string;
-  /** Task briefs are on for this task. */
-  briefEnabled: boolean;
   /** False once archive deleted this task's stored attachments. */
   attachmentsRetained: boolean;
   deletionPending: boolean;
