@@ -4,11 +4,13 @@
 import { mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
+import { createCommand } from "../src/cli-create";
 import type { WispConfig } from "../src/config";
-import { projectCheckoutFor } from "../src/domain/project-checkout";
+import { baseFromCaller, projectCheckoutFor } from "../src/domain/project-checkout";
 import { createAndLaunchTask, type NewTaskInput } from "../src/domain/task-create";
+import { createTaskRoute } from "../src/routes/tasks";
 import { hasRunningTurn } from "../src/runner";
 import { getTask, turnsFor } from "../src/store";
 
@@ -29,11 +31,20 @@ const adapters: Record<string, AdapterDef> = {
   quick: { bin: "bash", exec: ["-c", "printf done"], parse: { format: "text" }, attach: null },
 };
 
-async function git(cwd: string, ...args: string[]): Promise<void> {
+async function git(cwd: string, ...args: string[]): Promise<string> {
   const proc = Bun.spawn(["git", "-c", "user.name=Checkout Test", "-c", "user.email=checkout@example.invalid", ...args], {
-    cwd, stdout: "ignore", stderr: "pipe",
+    cwd, stdout: "pipe", stderr: "pipe",
   });
   if ((await proc.exited) !== 0) throw new Error(`git ${args.join(" ")}: ${await new Response(proc.stderr).text()}`);
+  return (await new Response(proc.stdout).text()).trim();
+}
+
+async function settle(id: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (getTask(id)!.state === "creating" || hasRunningTurn(id) !== null || turnsFor(id).some((t) => t.status === "running")) {
+    if (Date.now() > deadline) throw new Error(`task ${id} did not settle`);
+    await Bun.sleep(25);
+  }
 }
 
 /** A checkout with two linked worktrees beside it, the way task worktrees sit. */
@@ -72,29 +83,63 @@ describe("the project a creation path belongs to", () => {
   test("a task's worktree recorded as a repository by the old behaviour is never chosen", async () => {
     const { checkout, linked, other } = await project();
     expect(await projectCheckoutFor(other, [], [linked])).toBe(other);
-    // the main checkout wins over a configured linked worktree of the same repository
-    expect(await projectCheckoutFor(other, [linked], [checkout])).toBe(checkout);
-    expect(await projectCheckoutFor(other, [linked], [])).toBe(linked);
+    expect(await projectCheckoutFor(other, [], [linked, checkout])).toBe(checkout);
+    // configured projects come before task history; a configured linked worktree is a project too
+    expect(await projectCheckoutFor(other, [linked], [checkout])).toBe(linked);
+    expect(await projectCheckoutFor(other, [linked, checkout], [])).toBe(checkout);
+  });
+
+  test("a base that depends on the directory is pinned where the caller asked; a branch is kept as typed", async () => {
+    const { checkout, linked } = await project();
+    await git(linked, "commit", "-q", "--allow-empty", "-m", "only in the worktree");
+    const callerHead = await git(linked, "rev-parse", "HEAD");
+    const callerParent = await git(linked, "rev-parse", "HEAD~1");
+    expect(await baseFromCaller(linked, checkout, "HEAD")).toBe(callerHead);
+    expect(await baseFromCaller(linked, checkout, "HEAD~1")).toBe(callerParent);
+    expect(await baseFromCaller(linked, checkout, "a")).toBe("a");
+    expect(await baseFromCaller(linked, checkout, "no-such-ref")).toBe("no-such-ref");
+    expect(await baseFromCaller(linked, checkout, undefined)).toBeUndefined();
+    expect(await baseFromCaller(checkout, checkout, "HEAD")).toBe("HEAD");
   });
 
   test("a worktree task created from inside another worktree is created for the checkout; a local one stays", async () => {
     const { checkout, linked } = await project();
-    const input = (mode: NewTaskInput["mode"]): NewTaskInput => ({
-      repoPath: linked, prompt: "from inside a worktree", harness: "quick", fast: false, mode, actor: "cli",
+    await git(linked, "commit", "-q", "--allow-empty", "-m", "the caller's work");
+    const callerHead = await git(linked, "rev-parse", "HEAD");
+    const input = (mode: NewTaskInput["mode"], extra: Partial<NewTaskInput> = {}): NewTaskInput => ({
+      repoPath: linked, prompt: "from inside a worktree", harness: "quick", fast: false, mode, actor: "cli", ...extra,
     });
-    const created = await createAndLaunchTask(input("worktree"), { ...cfg, repos: [checkout] }, adapters, null);
+    const created = await createAndLaunchTask(input("worktree", { base: "HEAD" }), { ...cfg, repos: [checkout] }, adapters, null);
     if ("error" in created) throw new Error(created.error);
     expect(created.task.repo_path).toBe(checkout);
     const local = await createAndLaunchTask(input("local"), { ...cfg, repos: [checkout] }, adapters, null);
     if ("error" in local) throw new Error(local.error);
     expect(local.task.repo_path).toBe(linked);
-    for (const id of [created.task.id, local.task.id]) {
-      const deadline = Date.now() + 10_000;
-      while (getTask(id)!.state === "creating" || hasRunningTurn(id) !== null || turnsFor(id).some((t) => t.status === "running")) {
-        if (Date.now() > deadline) throw new Error(`task ${id} did not settle`);
-        await Bun.sleep(25);
-      }
-    }
-    expect(getTask(created.task.id)!.worktree_path).not.toBe(linked);
+    for (const id of [created.task.id, local.task.id]) await settle(id);
+    const launched = getTask(created.task.id)!;
+    expect(launched).toMatchObject({ state: "done", base_commit: callerHead });
+    expect(launched.worktree_path).toBeTruthy();
+    expect(launched.worktree_path).not.toBe(linked);
+    expect(turnsFor(created.task.id)[0]).toMatchObject({ status: "done" });
+    expect(getTask(local.task.id)).toMatchObject({ state: "done", worktree_path: linked });
+  });
+
+  test("wisp new says which repository the task was created for", async () => {
+    const { checkout, linked } = await project();
+    const config = { ...cfg, repos: [checkout] };
+    let response: Response | undefined;
+    // the CLI's request goes to the route in-process, the way the daemon would serve it
+    const fetched = spyOn(globalThis, "fetch").mockImplementation((async (url: string, init: RequestInit) => {
+      response = await createTaskRoute(new Request(url, init), config, adapters, null);
+      return response.clone();
+    }) as unknown as typeof fetch);
+    const lines: string[] = [];
+    const log = spyOn(console, "log").mockImplementation((line: unknown) => { lines.push(String(line)); });
+    try {
+      await createCommand([linked, "from the CLI"], { harness: "quick" });
+      await createCommand([checkout, "at the checkout"], { harness: "quick" });
+    } finally { fetched.mockRestore(); log.mockRestore(); }
+    expect(lines.filter((line) => line.startsWith("repository:"))).toEqual([`repository: ${checkout} (${linked} is inside a worktree of it)`]);
+    for (const id of lines.flatMap((line) => /^created (t[a-z0-9]+)/.exec(line)?.[1] ?? [])) await settle(id);
   });
 });

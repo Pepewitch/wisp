@@ -24,7 +24,7 @@ import { autopilotSwitchDetail, recordAudit, type TaskAuditActor } from "../task
 import { TASK_TITLE_MAX } from "../task-update";
 import { taskMode, type Task, type TaskMode } from "../types";
 import type { ModelProbeCache } from "../model-probes";
-import { projectCheckoutFor } from "./project-checkout";
+import { baseFromCaller, projectCheckoutFor } from "./project-checkout";
 import { launchTask } from "./task-launch";
 
 export interface NewTaskInput {
@@ -171,7 +171,8 @@ export async function createAndLaunchTask(
   // A local task runs in the directory it was given, so it keeps it.
   if (input.mode === "worktree") {
     const configured = (cfg.repos ?? []).map((entry) => (typeof entry === "string" ? entry : entry.path));
-    input = { ...input, repoPath: await projectCheckoutFor(input.repoPath, configured, listTasks().map((t) => t.repo_path)) };
+    const checkout = await projectCheckoutFor(input.repoPath, configured, listTasks().map((t) => t.repo_path));
+    input = { ...input, repoPath: checkout, base: await baseFromCaller(input.repoPath, checkout, input.base) };
   }
   const { repoPath } = input;
   if (isProjectRemovalInProgress(repoPath)) return refuse("conflict", `project is being removed from Wisp: ${resolve(repoPath)}`);

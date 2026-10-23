@@ -80,7 +80,7 @@ function reportCreated(task: ApiTask, flags: Flags, asked: string): void {
   const merge = [autopilot?.autoMerge && ", auto-merge", autopilot?.autoFix && ", auto-fix", autopilot?.autoReview && ", auto-review"].filter(Boolean).join("");
   print(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}) — ${task.title}`);
   // the daemon takes a path inside another worktree back to its project's checkout
-  if (task.repo_path !== asked) print(`repository: ${task.repo_path}, the project ${asked} belongs to`);
+  if (task.repo_path !== asked) print(`repository: ${task.repo_path} (${asked} is inside a worktree of it)`);
   const askedAutopilot = flags["auto-merge"] === true || flags["auto-fix"] === true;
   if (askedAutopilot && !autopilot?.autoMerge && !autopilot?.autoFix) printError("warning: this daemon did not arm auto-merge or auto-fix (it may be older than this CLI)");
   if (flags["auto-review"] === true && !autopilot?.autoReview) printError("warning: this daemon did not arm auto-review (it may be older than this CLI)");
