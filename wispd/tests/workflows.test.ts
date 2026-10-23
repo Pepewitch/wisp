@@ -350,9 +350,15 @@ test("only a person may allow a merge; an agent's resume keeps it but makes it t
   const refused = await create("tagent");
   expect(refused.status).toBe(409);
   expect(await refused.json()).toEqual({ error: expect.stringContaining("Only a person may allow a merge") });
-  // an agent may still start one that allows no merge
+  // an agent may still start one, which then allows no merge: a heartbeat's default is not the agent's to take
+  const defaulted = await request(`/api/tasks/${item.taskId}/workflows`, "POST", { type: "heartbeat", params: { prompt: "Keep going" } }, "tagent");
+  expect(defaulted.status).toBe(201);
+  expect(((await defaulted.json()) as { params: { allowMerge: boolean } }).params.allowMerge).toBe(false);
   const plain = await (await create("tagent", false)).json() as { id: string; revision: number };
   expect(allowedBy(plain.id)).toBeNull();
+  // a person's heartbeat keeps the default, recorded as theirs
+  const persons = await (await request(`/api/tasks/${item.taskId}/workflows`, "POST", { type: "heartbeat", params: { prompt: "Mine" } })).json() as { id: string; params: { allowMerge: boolean } };
+  expect([persons.params.allowMerge, allowedBy(persons.id)]).toEqual([true, "cli"]);
   expect((await request(`/api/workflows/${plain.id}`, "PATCH", { revision: plain.revision, params: { allowMerge: true } }, "tagent")).status).toBe(409);
   // a person (the CLI outside a turn) may, and is recorded
   const raised = await (await request(`/api/workflows/${plain.id}`, "PATCH", { revision: plain.revision, params: { allowMerge: true } })).json() as { revision: number };

@@ -20,9 +20,12 @@ async function taskWorkflows(req: Request, taskId: string): Promise<Response> {
   if (body instanceof Response) return body;
   const definition = workflowById(body.type)?.definition;
   if (!definition) return err("Unknown workflow type", 400);
-  const params = validateWorkflowParams(definition, body.params ?? {});
   const actor = requestActor(req);
-  if (params.allowMerge === true && isAgentActor(actor)) return err(MERGE_IS_A_PERSONS, 409);
+  const asked = isRecord(body.params) ? body.params : {};
+  if (isAgentActor(actor) && asked.allowMerge === true) return err(MERGE_IS_A_PERSONS, 409);
+  // a heartbeat allows a merge by default; one an agent starts does not, unless a person turns it on later
+  const params = validateWorkflowParams(definition, isAgentActor(actor) && definition.parameters.some((p) => p.key === "allowMerge")
+    ? { ...asked, allowMerge: false } : body.params ?? {});
   const created = createWorkflow(task.id, definition, params, new Date(), actor);
   recordAudit(task.id, "workflow-start", actor, `${created.id} (${created.type})`);
   return json(created, 201);
