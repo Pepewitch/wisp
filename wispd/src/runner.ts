@@ -281,6 +281,8 @@ export function startTurn(
       attachmentManifest(attachments),
       null,
       { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
+      null,
+      sourceMessageId ?? null,
     );
     setTaskFields(task.id, { turn_count: n });
     settleTurn(
@@ -313,6 +315,8 @@ export function startTurn(
         attachmentManifest(attachments),
         recorderEligible ? "recorder-v1" : null,
         { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
+        null,
+        sourceMessageId ?? null,
       );
       recordProcessGroup(id);
       return id;
@@ -428,6 +432,8 @@ export async function submitTaskMessage(
   adapters: Readonly<Record<string, AdapterDef>> = { [task.harness]: def },
   agent?: TaskAgentSelection,
   deliveryPolicy: DeliveryPolicy = "allow-steer",
+  /** who sent it (the task audit's actor), stored on the message */
+  actor: string | null = null,
 ): Promise<SendResult> {
   const currentTask = getTask(task.id);
   if (!currentTask || currentTask.archived) throw new Error("task is archived — archived tasks are read-only");
@@ -436,7 +442,7 @@ export async function submitTaskMessage(
   task = currentTask;
   const existing = clientMessageId ? getTaskMessage(clientMessageId) : null;
   if (!existing) assertTaskCapacity(cfg, task.id);
-  const persisted = await persistTaskSubmission(task, text, attachments, clientMessageId, agent, deliveryPolicy === "hold");
+  const persisted = await persistTaskSubmission(task, text, attachments, clientMessageId, agent, deliveryPolicy === "hold", actor);
   task = persisted.task;
   const message = persisted.message;
   if (message.status !== "queued") {

@@ -362,6 +362,8 @@ export function createTurn(
   },
   /** Who asked for it when a message did not (TurnOrigin). */
   origin: TurnOrigin | null = null,
+  /** The message that started it, written with the row so even a spawn failure or a crash keeps it. */
+  source_message_id: string | null = null,
 ): number {
   const captureState: TurnCaptureState = capture_mode === null ? "legacy" : "complete";
   const task = getTask(task_id);
@@ -373,9 +375,9 @@ export function createTurn(
   const res = db.run(
     `INSERT INTO turns
        (task_id, n, context_n, harness, requested_model, requested_effort, requested_fast,
-        prompt, origin, status, pid, pid_start_time, log_file, started_at, attachments_json,
+        prompt, origin, source_message_id, status, pid, pid_start_time, log_file, started_at, attachments_json,
         capture_mode, capture_state, captured_bytes, omitted_bytes, omitted_records, diagnostic_state)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'unavailable')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'unavailable')`,
     [
       task_id,
       n,
@@ -386,6 +388,7 @@ export function createTurn(
       requestedFast,
       prompt,
       origin,
+      source_message_id,
       pid,
       pid_start_time,
       log_file,

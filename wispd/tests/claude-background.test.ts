@@ -477,6 +477,8 @@ describe("Claude background work outliving its turn", () => {
     const [first, second] = turnsFor(task.id);
     expect(first).toMatchObject({ status: "done", result: "SERVER_UP" });
     expect(second).toMatchObject({ n: 2, status: "done", result: "SECOND_ANSWER", prompt: "NEXT_PROMPT: add a route", pid: first!.pid });
+    // the adopted turn still names the message that started it; turn 1 had none
+    expect([first!.source_message_id, second!.source_message_id]).toEqual([null, sent.message.id]);
     // each turn's transcript holds its own call
     expect(readFileSync(first!.log_file, "utf8")).not.toContain("SECOND_ANSWER");
     expect(readFileSync(second!.log_file, "utf8")).toContain("SECOND_ANSWER");

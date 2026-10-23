@@ -179,6 +179,7 @@ export function openSlot(
   prompt: string,
   attachments: StoredAttachment[],
   origin: TurnOrigin | null = null,
+  sourceMessageId: string | null = null,
 ): TurnSlot {
   const outPath = join(LOG_DIR, `${taskId}-turn${n}.out.log`);
   const errPath = join(LOG_DIR, `${taskId}-turn${n}.err.log`);
@@ -193,7 +194,7 @@ export function openSlot(
   let turnId: number;
   try {
     turnId = db.transaction(() => {
-      const id = createTurn(taskId, n, prompt, proc.child.pid, outPath, proc.pidStartTime, attachmentManifest(attachments), "recorder-v1", proc.agent, origin);
+      const id = createTurn(taskId, n, prompt, proc.child.pid, outPath, proc.pidStartTime, attachmentManifest(attachments), "recorder-v1", proc.agent, origin, sourceMessageId);
       transferProcessGroup(proc.slot.turnId, id);
       return id;
     })();
@@ -229,7 +230,7 @@ export function adoptTurn(
 ): void {
   const settled = proc.slot;
   const before = getTask(task.id);
-  const slot = openSlot(proc, task.id, n, message, attachments);
+  const slot = openSlot(proc, task.id, n, message, attachments, null, messageId ?? null);
   setTaskFields(task.id, { turn_count: n });
   transition(task.id, "running", `turn ${n}`);
   const turn: LiveTurn = { turnId: slot.turnId, turn: n, sink: slot.sink };

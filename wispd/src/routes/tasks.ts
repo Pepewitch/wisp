@@ -264,6 +264,7 @@ async function sendTaskResponse(
       adapters,
       agent,
       operation ? "next-turn-only" : body.when === "now" ? "now" : body.when === "next-turn" ? "hold" : "allow-steer",
+      requestActor(req),
     );
     recordSendAudit(task.id, result, requestActor(req));
     return json<SendResponse>({
