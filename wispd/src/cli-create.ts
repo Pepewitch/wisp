@@ -70,16 +70,18 @@ export async function createCommand(positional: string[], flags: Flags): Promise
     if (attachments) await discardAttachmentPayloads(attachments, discardAttachment);
     exitApi(error);
   }
-  reportCreated(task, flags);
+  reportCreated(task, flags, resolve(repo));
 }
 
 /** What the daemon armed, not what was asked: an older daemon ignores the fields it does not know. */
-function reportCreated(task: ApiTask, flags: Flags): void {
+function reportCreated(task: ApiTask, flags: Flags, asked: string): void {
   const where = task.mode === "local" ? ", local" : "";
   const autopilot = (task as ApiTask & { autopilot?: { autoMerge?: boolean; autoFix?: boolean; autoReview?: boolean } }).autopilot;
   const merge = [autopilot?.autoMerge && ", auto-merge", autopilot?.autoFix && ", auto-fix", autopilot?.autoReview && ", auto-review"].filter(Boolean).join("");
   print(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}) — ${task.title}`);
-  const asked = flags["auto-merge"] === true || flags["auto-fix"] === true;
-  if (asked && !autopilot?.autoMerge && !autopilot?.autoFix) printError("warning: this daemon did not arm auto-merge or auto-fix (it may be older than this CLI)");
+  // the daemon takes a path inside another worktree back to its project's checkout
+  if (task.repo_path !== asked) print(`repository: ${task.repo_path} (${asked} is inside a worktree of it)`);
+  const askedAutopilot = flags["auto-merge"] === true || flags["auto-fix"] === true;
+  if (askedAutopilot && !autopilot?.autoMerge && !autopilot?.autoFix) printError("warning: this daemon did not arm auto-merge or auto-fix (it may be older than this CLI)");
   if (flags["auto-review"] === true && !autopilot?.autoReview) printError("warning: this daemon did not arm auto-review (it may be older than this CLI)");
 }

@@ -79,6 +79,10 @@ wisp new /path/to/repo "Fix the flaky retry test and open a PR." --harness claud
 wisp token
 ```
 
+Without a path, `wisp new` uses the current directory. Inside a worktree of
+a project Wisp knows (a task's own, during its turn), the task is created for
+that project's checkout.
+
 `wisp token` prints the address of the web UI and a token to sign in with.
 Keep the token private. `wisp help` lists every command.
 
