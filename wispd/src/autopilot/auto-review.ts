@@ -21,6 +21,7 @@ import { TASKS_DIR } from "../config"
 import { outputImagePath } from "../outputs"
 import { startNextQueuedMessage } from "../runner"
 import { getTask, randomId } from "../store"
+import type { Workload } from "../task-admission"
 import type { Task } from "../types"
 import { historySays, recordWorkflow, seenWake, getWorkflow, type WorkflowRow } from "../workflows/store"
 import { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
@@ -54,7 +55,7 @@ export interface ReviewLook {
   autoFix: boolean
   now: Date
   start: ReviewerStart
-  hasSlot(task: Task): boolean
+  hasSlot(task: Task, workload?: Workload): boolean
   /** save this look's answer, spoken by auto-review */
   say(state: AutopilotState, reason: string, delayMs: number, patient?: boolean): null
 }
@@ -188,7 +189,7 @@ async function actOn(look: ReviewLook, round: RoundRow): Promise<"passed" | null
 /** Plan a round (its panel written at once), then start what can start. */
 async function startRound(look: ReviewLook, number: number, counted: boolean, carried?: ReviewRow[]): Promise<null> {
   const { row, task, checkpoint, pr, now } = look
-  if (!look.hasSlot(task)) return look.say("waiting", "Waiting for a free task slot to start the reviewers", MOVING_MS)
+  if (!look.hasSlot(task, "reviewer")) return look.say("waiting", "Waiting for a free task slot to start the reviewers", MOVING_MS)
   const round = await planRound(look.start, { author: task, workflowId: row.id, pr, round: number, counted, carried })
   if (counted) checkpoint.reviewRounds = number
   delete checkpoint.reviewRetry
@@ -239,7 +240,7 @@ function escalate(look: ReviewLook, round: RoundRow): void {
 }
 
 async function launchPending(look: ReviewLook, round: RoundRow, review: ReviewRow): Promise<string> {
-  if (!look.hasSlot(look.task)) return `${letter(review)} waiting for a free task slot`
+  if (!look.hasSlot(look.task, "reviewer")) return `${letter(review)} waiting for a free task slot`
   const started = await launchReview(look.start, { author: look.task, round, review, pr: look.pr, budget: budgetOf(look.checkpoint) })
   if ("launched" in started) return `${letter(review)} reviewing`
   return "wait" in started ? `${letter(review)} waiting for a free task slot` : `${letter(review)}: ${started.error}`
@@ -442,7 +443,7 @@ async function repairRecipe(look: ReviewLook, round: RoundRow, holding: boolean)
   if (busyVerifyTask(task.repo_path) || latestDraft(task.repo_path, draftTaskExists)) return false
   const current = currentVerifyTask(task.repo_path)
   if (current && verifyTaskOf(current.id)?.round_id === round.id) return false
-  if (!look.hasSlot(task)) {
+  if (!look.hasSlot(task, "recipe")) {
     if (holding) look.say("waiting", "Waiting for a free task slot to fix the verification recipe", MOVING_MS)
     return false
   }

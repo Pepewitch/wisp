@@ -18,16 +18,29 @@ import { resolveHarnessDefaults, type WispConfig } from "../config";
 import { pathExists } from "../fsutil";
 import { backgroundPass } from "../home-lifetime";
 import { isProjectRemovalInProgress } from "../project-removals";
-import { createTask, freeSlot, listTasks, newTaskId } from "../store";
-import { assertTaskCapacity, reserveTaskCapacity, TaskCapacityError } from "../task-admission";
+import { drainSubtaskQueues } from "../runner";
+import { createTask, freeSlot, listTasks, newTaskId, turnForTask } from "../store";
+import { assertTaskCapacity, reserveTaskCapacity, SubtaskCapError, TaskCapacityError } from "../task-admission";
 import { autopilotSwitchDetail, recordAudit, type TaskAuditActor } from "../task-audit";
-import { TASK_TITLE_MAX } from "../task-update";
+import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
 import { taskMode, type Task, type TaskMode } from "../types";
 import type { ModelProbeCache } from "../model-probes";
 import { baseFromCaller, projectCheckoutFor } from "./project-checkout";
+import {
+  defaultSubtaskDeps,
+  parentRefusal,
+  resolveSubtask,
+  subtaskFirstPrompt,
+  SubtaskRefused,
+  type PinnedBase,
+  type ResolvedSubtask,
+  type SubtaskDeps,
+  type SubtaskRequest,
+} from "./subtask-create";
 import { launchTask } from "./task-launch";
 
 export interface NewTaskInput {
+  /** a subtask's is its parent's: "" (omitted) takes it, and any other is refused */
   repoPath: string;
   /** the caller's own words; the title is cut from these */
   prompt: string;
@@ -39,8 +52,10 @@ export interface NewTaskInput {
   effort?: string;
   fast: boolean;
   mode: TaskMode;
-  /** the ref a worktree task forks from, instead of the project's */
-  base?: string;
+  /** the ref a worktree task forks from, instead of the project's; pinned when Wisp already resolved it */
+  base?: string | PinnedBase;
+  /** the parent this task is a subtask of (subtask-create.ts) */
+  subtask?: SubtaskRequest;
   /** turn-1 attachments as they arrived, validated here against the harness */
   attachments?: unknown;
   autopilot?: { autoMerge: boolean; autoFix: boolean; autoReview?: boolean };
@@ -60,7 +75,7 @@ export interface NewTaskInput {
  * chose (an expired upload is not the same failure as a bad one).
  */
 export type NewTaskRefusal =
-  | { kind: "invalid" | "conflict" | "at-capacity" | "no-free-id"; error: string }
+  | { kind: "invalid" | "conflict" | "at-capacity" | "subtask-cap" | "no-free-id"; error: string }
   | { kind: "attachment"; error: string; status: number };
 
 export interface NewTask {
@@ -125,7 +140,7 @@ function armRequestedAutopilot(taskId: string, requested: NewTaskInput["autopilo
 }
 
 /** L4: 5-char ids are birthday-bound (~1.7% collision at 1k tasks), so retry on a UNIQUE violation. */
-function insertTaskRow(input: NewTaskInput, model: string | null, effort: string | null): Task | null {
+function insertTaskRow(input: NewTaskInput, model: string | null, effort: string | null, sub: ResolvedSubtask | null, cfg: WispConfig): Task | null {
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       return createTask({
@@ -138,13 +153,57 @@ function insertTaskRow(input: NewTaskInput, model: string | null, effort: string
         fast: input.fast,
         mode: input.mode,
         verify_role: input.verifyRole ?? null,
+        ...(sub ? {
+          subtask: { parent_task_id: sub.parent.id, subtask_kind: sub.kind, report_to_parent: sub.report, base_from: sub.baseFrom },
+          // the parent can be archived, nested or filled up while the request was checked
+          guard: () => {
+            const refused = parentRefusal(sub.parent.id, sub.reviewer, cfg);
+            if (refused) throw new SubtaskRefused(refused);
+          },
+        } : {}),
         slot: freeSlot(),
       });
     } catch (e) {
-      if (!String(e instanceof Error ? e.message : e).includes("UNIQUE constraint")) throw e;
+      if (e instanceof SubtaskRefused || !String(e instanceof Error ? e.message : e).includes("UNIQUE constraint")) throw e;
     }
   }
   return null;
+}
+
+/**
+ * The repository and base a task is created with: a subtask's parent's, or
+ * for a worktree task named by a path inside another worktree (a task's own,
+ * when `wisp new` runs in a turn), that project's checkout (#412). A local
+ * task runs in the directory it was given, so it keeps it.
+ */
+async function placement(input: NewTaskInput, cfg: WispConfig, sub: ResolvedSubtask | null): Promise<NewTaskInput | NewTaskRefusal> {
+  if (sub) return { ...input, repoPath: sub.parent.repo_path, base: sub.base };
+  if (!(await pathExists(input.repoPath))) return refuse("invalid", `repoPath does not exist: ${input.repoPath}`);
+  if (input.mode !== "worktree" || typeof input.base === "object") return input;
+  const configured = (cfg.repos ?? []).map((entry) => (typeof entry === "string" ? entry : entry.path));
+  const checkout = await projectCheckoutFor(input.repoPath, configured, listTasks().map((t) => t.repo_path));
+  const base = await baseFromCaller(input.repoPath, checkout, input.base);
+  if ("error" in base) return refuse("invalid", base.error);
+  return { ...input, repoPath: checkout, base: base.base };
+}
+
+/** Admission for the new task: the global limit, and its parent's running cap unless it is Wisp's reviewer. */
+function capacityRefusal(cfg: WispConfig, sub: ResolvedSubtask | null): NewTaskRefusal | null {
+  try {
+    assertTaskCapacity(cfg, undefined, { parentId: sub && !sub.reviewer ? sub.parent.id : null });
+    return null;
+  } catch (error) {
+    if (error instanceof SubtaskCapError) return refuse("subtask-cap", error.message);
+    if (error instanceof TaskCapacityError) return refuse("at-capacity", error.message);
+    throw error;
+  }
+}
+
+/** What a first turn is sent: a subtask's also quotes its parent (Wisp's reviewers get their own prompt as is). */
+function firstTurnPrompt(input: NewTaskInput, sub: ResolvedSubtask | null): string {
+  const prompt = input.firstTurnPrompt ?? input.prompt;
+  if (!sub || sub.reviewer) return prompt;
+  return subtaskFirstPrompt(prompt, sub.parent, turnForTask(sub.parent.id, 1)?.prompt ?? null);
 }
 
 /**
@@ -161,21 +220,16 @@ export async function createAndLaunchTask(
   adapters: Record<string, AdapterDef>,
   /** The daemon's probe cache; null only where there is none (Wisp's default then never applies to a probed harness). */
   models: ModelProbeCache | null,
+  deps: SubtaskDeps = defaultSubtaskDeps,
 ): Promise<NewTask | NewTaskRefusal> {
   const { harness } = input;
   const def = adapters[harness];
   if (!def) return refuse("invalid", `unknown harness '${harness}' (known: ${Object.keys(adapters).join(", ")})`);
-  if (!(await pathExists(input.repoPath))) return refuse("invalid", `repoPath does not exist: ${input.repoPath}`);
-  // #412: a worktree task named by a path inside another worktree (a task's
-  // own, when `wisp new` runs in a turn) belongs to that project's checkout.
-  // A local task runs in the directory it was given, so it keeps it.
-  if (input.mode === "worktree") {
-    const configured = (cfg.repos ?? []).map((entry) => (typeof entry === "string" ? entry : entry.path));
-    const checkout = await projectCheckoutFor(input.repoPath, configured, listTasks().map((t) => t.repo_path));
-    const base = await baseFromCaller(input.repoPath, checkout, input.base);
-    if ("error" in base) return refuse("invalid", base.error);
-    input = { ...input, repoPath: checkout, base: base.base };
-  }
+  const sub = await resolveSubtask(input, cfg, deps);
+  if (sub && "error" in sub) return sub;
+  const placed = await placement(input, cfg, sub);
+  if ("error" in placed) return placed;
+  input = placed;
   const { repoPath } = input;
   if (isProjectRemovalInProgress(repoPath)) return refuse("conflict", `project is being removed from Wisp: ${resolve(repoPath)}`);
   // Explicit values win; then config harnessDefaults; then Wisp's default
@@ -203,23 +257,32 @@ export async function createAndLaunchTask(
     // A removal can begin while attachment decoding and defaults are resolved.
     // Check again at the last point before the row exists.
     if (isProjectRemovalInProgress(repoPath)) return refuse("conflict", `project is being removed from Wisp: ${resolve(repoPath)}`);
+    const full = capacityRefusal(cfg, sub);
+    if (full) return full;
+    let task: Task | null;
     try {
-      assertTaskCapacity(cfg);
+      task = insertTaskRow(input, model, effort, sub, cfg);
     } catch (error) {
-      if (error instanceof TaskCapacityError) return refuse("at-capacity", error.message);
+      if (error instanceof SubtaskRefused) return error.refusal;
       throw error;
     }
-    const task = insertTaskRow(input, model, effort);
     if (!task) return refuse("no-free-id", "could not allocate a unique task id after 5 attempts");
+    // the parent's own row did not change, but its list of children did
+    if (sub) updateTaskAndEmit(sub.parent.id, {});
     recordAudit(task.id, "create", input.actor, `${harness}${model ? ` ${model}` : ""}, ${input.mode}`);
     armRequestedAutopilot(task.id, input.autopilot, input.actor);
     input.prepare?.(task);
     const release = reserveTaskCapacity(task.id, cfg);
     handedOff = true;
-    const prompt = input.firstTurnPrompt ?? input.prompt;
+    const prompt = firstTurnPrompt(input, sub);
+    const created = task;
     void backgroundPass(
       `launch of task ${task.id}`,
-      () => launchTask(task, prompt, def, adapters, cfg, attachments, input.base).finally(release),
+      () => launchTask(created, prompt, def, adapters, cfg, attachments, input.base).finally(() => {
+        release();
+        // a creation slot freed, or setup failed: a sibling waiting on the parent's cap may start
+        drainSubtaskQueues(created.parent_task_id, adapters, cfg);
+      }),
     );
     return { task, autopilot: autopilotStatus(task.id) };
   } finally {

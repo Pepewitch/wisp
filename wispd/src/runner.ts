@@ -1,4 +1,6 @@
-import { assertTaskCapacity } from "./task-admission";
+import { assertTaskCapacity, SubtaskCapError } from "./task-admission";
+import { liveNonReviewerChildren } from "./subtasks";
+import { updateTaskAndEmit } from "./task-update";
 import { pauseTaskWorkflows } from "./workflows/store";
 import { backgroundPass, homeIsDraining } from "./home-lifetime";
 import { openSync, writeSync } from "node:fs";
@@ -326,7 +328,10 @@ export function startTurn(
   const slot: TurnSlot = { turnId, n, outPath, errPath, fds: [outFd, errFd], recorder: null, sink: legacyLiveOutput(outFd) };
   const proc: TurnProcess = {
     taskId: task.id, child, def, cfg, agent: agentOf(task), pidStartTime, slot, settled: false, ending: false,
-    startQueue: () => void startNextQueuedMessage(task.id, adapters, cfg),
+    startQueue: () => {
+      startNextQueuedMessage(task.id, adapters, cfg);
+      drainSubtaskQueues(task.parent_task_id, adapters, cfg);
+    },
   };
   const { outputPump, stderrPump } = attachCapture(proc, task, {
     recorderEligible,
@@ -500,6 +505,22 @@ function warnIfNothingWillRun(taskId: string, messageId: string, started: TaskMe
 }
 
 /**
+ * A subtask's slot came free (a turn settled, setup failed, a child was
+ * archived): start any sibling whose queued message was waiting on the
+ * parent's running cap.
+ */
+export function drainSubtaskQueues(
+  parentId: string | null | undefined,
+  adapters: Readonly<Record<string, AdapterDef>>,
+  cfg: WispConfig,
+): void {
+  if (!parentId) return;
+  for (const child of liveNonReviewerChildren(parentId)) {
+    if (!hasRunningTurn(child.id)) startNextQueuedMessage(child.id, adapters, cfg);
+  }
+}
+
+/**
  * Start exactly one FIFO message when a task has no running turn.
  *
  * Force-archive is judged on the killed TURN, never on the task's
@@ -574,6 +595,12 @@ export function startNextQueuedMessage(
   } catch (error) {
     if (!turnForTask(taskId, turn)) restoreMessageAttachments(taskId, message.id, turn);
     releaseTaskMessageClaim(message.id, taskId);
+    // A sibling holds the parent's last running slot: the message stays queued
+    // and starts when one of them settles (drainSubtaskQueues), never failing.
+    if (error instanceof SubtaskCapError) {
+      updateTaskAndEmit(taskId, { state_detail: `waiting for a subtask slot under ${error.parentId}` });
+      return null;
+    }
     const detail = error instanceof Error ? error.message : String(error);
     console.error(`[wisp] task ${taskId}: queued message could not start: ${detail}`);
     if (!getTask(taskId)?.archived) {

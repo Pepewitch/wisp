@@ -4,6 +4,7 @@ export { latestTurnOutcomes, listTasksWithLatestTurn, type LatestTurnOutcome } f
 import { emit } from "./events";
 import type {
   OutboxRow,
+  SubtaskKind,
   Task,
   TaskContext,
   TaskMode,
@@ -66,15 +67,23 @@ export function createTask(t: {
   mode?: TaskMode;
   /** a task Wisp started for verification (verify/); omitted = an ordinary task */
   verify_role?: "reviewer" | "recipe" | null;
+  /** the parent of a subtask (subtasks.ts); these four are fixed here and never written again */
+  subtask?: { parent_task_id: string; subtask_kind: SubtaskKind; report_to_parent: boolean; base_from: string };
+  /** run inside the insert's transaction, before the row: a check that throws refuses the insert */
+  guard?: () => void;
   slot: number;
 }): Task {
   return db.transaction((input: typeof t): Task => {
+    input.guard?.();
     const timestamp = now();
     const fast = input.fast === true ? 1 : 0;
+    const sub = input.subtask;
     db.run(
-      `INSERT INTO tasks (id, title, repo_path, harness, model, effort, fast, mode, slot, state, context_n, verify_role, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'creating', 1, ?, ?, ?)`,
-      [input.id, input.title, input.repo_path, input.harness, input.model, input.effort ?? null, fast, input.mode ?? "worktree", input.slot, input.verify_role ?? null, timestamp, timestamp],
+      `INSERT INTO tasks (id, title, repo_path, harness, model, effort, fast, mode, slot, state, context_n, verify_role,
+         parent_task_id, subtask_kind, report_to_parent, base_from, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'creating', 1, ?, ?, ?, ?, ?, ?, ?)`,
+      [input.id, input.title, input.repo_path, input.harness, input.model, input.effort ?? null, fast, input.mode ?? "worktree", input.slot, input.verify_role ?? null,
+        sub?.parent_task_id ?? null, sub?.subtask_kind ?? null, sub?.report_to_parent ? 1 : 0, sub?.base_from ?? null, timestamp, timestamp],
     );
     // A task's first durable context is born with it — one row, one boundary.
     db.run(

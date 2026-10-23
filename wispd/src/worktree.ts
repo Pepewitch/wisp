@@ -283,15 +283,22 @@ export async function createWorktree(
   repoPath: string,
   taskId: string,
   cfg: WispConfig,
-  base?: string,
+  /** a ref to resolve, or a base already resolved and pinned (a subtask's), used exactly as given */
+  base?: string | { ref: string; commit: string },
 ): Promise<WorktreeInfo> {
   const repo = resolve(repoPath);
   must(await git(["rev-parse", "--git-dir"], repo), `not a git repository: ${repo}`);
   if ((await git(["submodule", "status"], repo)).out !== "") {
     throw new Error("repos with submodules are not supported yet (failing loudly rather than half-working)");
   }
-  await fetchBaseRefs(repo);
-  const chosen = await resolveBase(repo, base, repoConfigFor(cfg, repo)?.baseBranch);
+  let chosen: BaseChoice;
+  if (typeof base === "object") {
+    if ((await commitFor(repo, base.commit)) === null) throw new Error(`base commit ${base.commit.slice(0, 12)} is not in ${repo}`);
+    chosen = { ref: base.ref, commit: base.commit, note: null };
+  } else {
+    await fetchBaseRefs(repo);
+    chosen = await resolveBase(repo, base, repoConfigFor(cfg, repo)?.baseBranch);
+  }
   const base_commit = chosen.commit;
   const branch = branchFor(taskId);
   const path = join(WORKTREE_ROOT, `${basename(repo)}-${taskId}`);

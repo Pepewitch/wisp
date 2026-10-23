@@ -49,6 +49,7 @@ import { conversationDetail, conversationResponse, taskUsageResponse } from "./t
 import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
 import { recordAudit, recordSendAudit, requestActor } from "../task-audit";
 import { taskAuditRoute } from "./task-audit";
+import { subtaskBodyError, subtaskRequest, subtasksRoute, type SubtaskBody } from "./subtasks";
 
 /** GET /api/tasks */
 export function listTasksRoute(url: URL): Response {
@@ -73,7 +74,7 @@ export function listTasksRoute(url: URL): Response {
 }
 
 /** A field this build does not read — an older client's `briefEnabled`, say — is ignored, never refused. */
-interface CreateTaskBody {
+interface CreateTaskBody extends SubtaskBody {
   repoPath?: unknown;
   prompt?: unknown;
   harness?: unknown;
@@ -88,10 +89,12 @@ interface CreateTaskBody {
 }
 
 function createTaskBodyError(body: CreateTaskBody): Response | null {
-  if (body.repoPath === undefined || body.prompt === undefined || body.harness === undefined) {
-    return err("repoPath, prompt, and harness are required", 400);
-  }
-  if (typeof body.repoPath !== "string") return err(`repoPath must be a string, got ${typeName(body.repoPath)}`, 400);
+  const subtask = subtaskBodyError(body);
+  if (subtask) return subtask;
+  // a subtask's repository is its parent's: it may be omitted
+  if (body.repoPath === undefined && body.parentTaskId === undefined) return err("repoPath, prompt, and harness are required", 400);
+  if (body.prompt === undefined || body.harness === undefined) return err("repoPath, prompt, and harness are required", 400);
+  if (body.repoPath !== undefined && typeof body.repoPath !== "string") return err(`repoPath must be a string, got ${typeName(body.repoPath)}`, 400);
   if (body.repoPath === "") return err("repoPath must not be empty", 400);
   if (typeof body.prompt !== "string") return err(`prompt must be a string, got ${typeName(body.prompt)}`, 400);
   if (body.prompt === "") return err("prompt must not be empty", 400);
@@ -132,7 +135,7 @@ function autopilotBodyError(body: CreateTaskBody): Response | null {
   return null;
 }
 
-const REFUSAL_STATUS = { invalid: 400, conflict: 409, "at-capacity": 429, "no-free-id": 500 } as const;
+const REFUSAL_STATUS = { invalid: 400, conflict: 409, "at-capacity": 429, "subtask-cap": 429, "no-free-id": 500 } as const;
 
 const refusalStatus = (refusal: NewTaskRefusal): number =>
   refusal.kind === "attachment" ? refusal.status : REFUSAL_STATUS[refusal.kind];
@@ -164,7 +167,7 @@ export function createTaskRoute(
     }
     const created = await createAndLaunchTask(
       {
-        repoPath: body.repoPath as string,
+        repoPath: (body.repoPath as string | undefined) ?? "",
         prompt: rawPrompt,
         firstTurnPrompt: prompt,
         harness: body.harness as string,
@@ -181,6 +184,7 @@ export function createTaskRoute(
             autoReview: body.autopilot.autoReview === true,
           }
           : undefined,
+        subtask: subtaskRequest(body),
         actor: requestActor(req),
       },
       cfg,
@@ -336,6 +340,7 @@ function basicTaskAction(
     return (async () => {
       if (task.archived) return err("task is archived — archived tasks are read-only", 409);
       if (!task.worktree_path || !task.branch) return err("task has no worktree/branch", 409);
+      if (task.subtask_kind === "review") return err("a review subtask never pushes: its review covers the parent's pushed head", 409);
       try {
         const output = await pushBranch(task.worktree_path, task.branch);
         recordAudit(task.id, "push", requestActor(req), task.branch);
@@ -347,6 +352,7 @@ function basicTaskAction(
     })();
   }
   if (action === "audit" && method === "GET") return taskAuditRoute(task, url);
+  if (action === "subtasks" && method === "GET") return subtasksRoute(task);
   if (action === "attach" && method === "GET") {
     const def = adapters[task.harness];
     if (!def || !task.session_id) return json<AttachResponse>({ argv: null, cwd: null, message: "no session yet" });

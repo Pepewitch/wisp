@@ -1,5 +1,6 @@
 import { COMPACT_STRATEGIES, IMAGE_DELIVERY_STRATEGIES, offeredModels, probeCommands, type AdapterDef } from "../adapters";
 import type { WispConfig } from "../config";
+import { subtasksEnabled } from "../config-subtasks";
 import type { CachedModels, ModelCacheEntry, ModelProbeCache } from "../model-probes";
 import { undeliveredOutbox } from "../store";
 import { json } from "./http";
@@ -60,6 +61,9 @@ export function harnessesRoute(
       reviewPanel: true,
       // POST /api/tasks/:id/capture, GET /api/tasks/:id/captures, and capture provenance on review evidence
       capture: true,
+      // POST /api/tasks with parentTaskId, archive's `subtasks`, GET /api/tasks/:id/subtasks;
+      // off until the feature is finished, unless config.json's subtasksPreview turns it on
+      subtasks: subtasksEnabled(cfg),
     },
     harnesses: Object.entries(adapters).map(([name, def]) => ({
       name,

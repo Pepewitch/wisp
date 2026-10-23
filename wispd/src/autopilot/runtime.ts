@@ -17,7 +17,7 @@ import { bunProbeSpawn } from "../probes"
 import { taskBranches } from "../pull-request-branches"
 import { startNextQueuedMessage } from "../runner"
 import { getTask } from "../store"
-import { hasTaskCapacity } from "../task-admission"
+import { hasTaskCapacity, type Workload } from "../task-admission"
 import { recordAudit } from "../task-audit"
 import type { Task } from "../types"
 import { announceWorkflow, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
@@ -452,7 +452,7 @@ export class AutopilotRuntime {
     const launch: Launch = this.options.launch ?? ((input) => createAndLaunchTask(input, this.cfg, this.adapters, this.options.models ?? null))
     return autoReviewLook({
       row, task, checkpoint, pr, required, autoFix, now: this.now(), start: { cfg: this.cfg, adapters: this.adapters, launch },
-      hasSlot: (t) => this.hasSlot(t),
+      hasSlot: (t, workload) => this.hasSlot(t, workload),
       say: (state, reason, delayMs, patient) => {
         this.saveCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-review", patient })
         return null
@@ -592,8 +592,9 @@ export class AutopilotRuntime {
     return null
   }
 
-  private hasSlot(task: Task): boolean {
-    return hasTaskCapacity(this.cfg, task.id)
+  /** A reviewer or recipe launch is held to the global limit only; the task's own turn also to its parent's cap. */
+  private hasSlot(task: Task, workload: Workload = "turn"): boolean {
+    return hasTaskCapacity(this.cfg, task.id, { workload })
   }
 
   /** A held row whose merge was under way: settle it if the PR is no longer open. */

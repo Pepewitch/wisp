@@ -212,6 +212,26 @@ export interface ApiTask {
   merge_granted_by: string | null;
 }
 
+/** GET /api/tasks/:id/subtasks: one child, archived ones included. */
+export interface ApiSubtask {
+  id: string;
+  title: string;
+  /** Null only for a reviewer from before subtasks whose kind was never recorded. */
+  kind: SubtaskKind | null;
+  /** One of Wisp's auto-review reviewers: never counted toward caps or "live subtasks". */
+  reviewer: boolean;
+  state: TaskState;
+  archived: boolean;
+  report_to_parent: boolean;
+  base_from: string | null;
+  /** The newest turn result, clipped; the whole one is `wisp result <id>`. */
+  result: string | null;
+  /** What it reported to its parent and where each report stands. */
+  reports: { pending: number; queued: number; dropped: number };
+  created_at: string;
+  updated_at: string;
+}
+
 /** GET /api/tasks: each task plus the facts only the list carries. */
 export interface ApiTaskListItem extends ApiTask {
   /** True while at least one active or paused workflow is attached. */

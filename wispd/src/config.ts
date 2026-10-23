@@ -17,6 +17,7 @@ import { isInstanceId, loadOrCreateInstanceId } from "./instance-id";
 import { isRecord, readUserJson, stringArray, typeName } from "./validate";
 import { chromePathConfig } from "./config-verify";
 import { validateRepos } from "./config-repos";
+import { SUBTASK_CONFIG_KEYS, subtaskConfig, type SubtaskConfig } from "./config-subtasks";
 import type { WispPreferences } from "../../shared/api/settings";
 import type { ModelTaskDefaultsMap } from "../../shared/model-task-defaults";
 import { validateModelTaskDefaults } from "./model-task-defaults";
@@ -93,7 +94,7 @@ export function repoConfigFor(cfg: WispConfig, repoPath: string): RepoConfig | u
   return undefined;
 }
 
-export interface WispConfig {
+export interface WispConfig extends SubtaskConfig {
   /** Stable, non-secret Wisp-home identity used to detect a changed daemon behind a saved URL. */
   instanceId: string;
   port: number;
@@ -305,6 +306,7 @@ const CONFIG_KEYS = [
   "harnessDefaults",
   "jevApiKey",
   "factoryApiKey",
+  ...SUBTASK_CONFIG_KEYS,
 ] as const;
 
 export const MIN_CONFIGURED_PORT = 1024;
@@ -538,7 +540,7 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = warnO
     const defaults = validateHarnessDefaults(raw.harnessDefaults, warn);
     if (defaults) out.harnessDefaults = defaults;
   }
-  Object.assign(out, chromePathConfig(raw.chromePath));
+  Object.assign(out, chromePathConfig(raw.chromePath), subtaskConfig(raw));
   return out;
 }
 
