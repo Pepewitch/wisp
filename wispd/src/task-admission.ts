@@ -38,7 +38,7 @@ export function assertTaskCapacity(cfg: WispConfig, taskId?: string, scope: Capa
   const cap = runningSubtaskCap(cfg);
   const running = liveNonReviewerChildren(parentId).filter((child) => active.has(child.id)).length;
   if (running >= cap) {
-    throw new SubtaskCapError(parentId, `Task ${parentId} already has ${running} subtasks starting or running, its limit. This one waits for one of them to finish. You can change maxRunningSubtasks in config.json.`);
+    throw new SubtaskCapError(parentId, `Task ${parentId} already has ${running} subtasks starting or running, its limit. Try again when one finishes, or raise maxRunningSubtasks in config.json.`);
   }
 }
 /** Whether a turn for this task would get a slot now: assertTaskCapacity's answer, without the throw. */
