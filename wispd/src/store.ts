@@ -126,6 +126,7 @@ const TASK_FIELDS = [
   "archive_assets_retained",
   "purge_pending",
   "state_detail",
+  "merge_granted_by",
 ] as const;
 
 export function setTaskFields(id: string, fields: Partial<Pick<Task, (typeof TASK_FIELDS)[number]>>): void {
