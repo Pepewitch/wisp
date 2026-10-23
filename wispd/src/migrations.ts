@@ -29,6 +29,7 @@ import { TURN_OUTPUTS } from "./migration-turn-outputs";
 import { AUTO_REVIEW, CAPTURES, REVIEW_PANEL } from "./migration-auto-review";
 import { TURN_ORIGIN } from "./migration-turn-origin";
 import { TASK_WORKFLOWS } from "./migration-task-workflows";
+import { SUBTASKS } from "./migration-subtasks";
 
 /** `ALTER TABLE … ADD COLUMN`, unless a partly upgraded profile already has the column. */
 function addColumn(db: Database, table: string, column: string, definition: string): void {
@@ -655,6 +656,7 @@ CREATE INDEX IF NOT EXISTS idx_task_answer_observations_task ON task_answer_obse
   TURN_ORIGIN,
   TURN_OUTPUTS,
   AUTO_REVIEW, REVIEW_PANEL, CAPTURES,
+  SUBTASKS,
 ];
 
 /** The newest schema this build knows how to run. */
