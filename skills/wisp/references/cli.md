@@ -136,7 +136,8 @@ project's settings and verification recipe apply, and the CLI prints
 forks from the project's base like any other (the checkout's HEAD when the
 repository has no remote), and a `--base` that depends on the directory
 (`HEAD`, `HEAD~1`) is pinned to the commit it names where you ran the
-command. A `--local` task keeps the directory given.
+command, and refused if it names nothing there. A `--local` task keeps the
+directory given.
 `--model`/`--effort` fall back to `harnessDefaults` in `~/.wisp/config.json`,
 then to Wisp's default model for that harness (when the installed CLI offers
 it), then to the harness's own default. `--fast` runs the same model in the

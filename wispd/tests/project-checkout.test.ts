@@ -12,7 +12,7 @@ import { baseFromCaller, projectCheckoutFor } from "../src/domain/project-checko
 import { createAndLaunchTask, type NewTaskInput } from "../src/domain/task-create";
 import { createTaskRoute } from "../src/routes/tasks";
 import { hasRunningTurn } from "../src/runner";
-import { getTask, turnsFor } from "../src/store";
+import { getTask, listTasks, turnsFor } from "../src/store";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000",
@@ -94,12 +94,28 @@ describe("the project a creation path belongs to", () => {
     await git(linked, "commit", "-q", "--allow-empty", "-m", "only in the worktree");
     const callerHead = await git(linked, "rev-parse", "HEAD");
     const callerParent = await git(linked, "rev-parse", "HEAD~1");
-    expect(await baseFromCaller(linked, checkout, "HEAD")).toBe(callerHead);
-    expect(await baseFromCaller(linked, checkout, "HEAD~1")).toBe(callerParent);
-    expect(await baseFromCaller(linked, checkout, "a")).toBe("a");
-    expect(await baseFromCaller(linked, checkout, "no-such-ref")).toBe("no-such-ref");
-    expect(await baseFromCaller(linked, checkout, undefined)).toBeUndefined();
-    expect(await baseFromCaller(checkout, checkout, "HEAD")).toBe("HEAD");
+    expect(await baseFromCaller(linked, checkout, "HEAD")).toEqual({ base: callerHead });
+    expect(await baseFromCaller(linked, checkout, "HEAD~1")).toEqual({ base: callerParent });
+    expect(await baseFromCaller(linked, checkout, "a")).toEqual({ base: "a" });
+    expect(await baseFromCaller(linked, checkout, undefined)).toEqual({ base: undefined });
+    expect(await baseFromCaller(checkout, checkout, "HEAD")).toEqual({ base: "HEAD" });
+  });
+
+  test("a base that does not resolve where the caller asked is refused, even when the checkout resolves it", async () => {
+    const { checkout, other } = await project();
+    // the worktree has one commit, so its HEAD~1 names nothing; the checkout's names its first commit
+    await git(checkout, "commit", "-q", "--allow-empty", "-m", "only in the checkout");
+    const refused = { error: `base 'HEAD~1' does not resolve in ${other}` };
+    expect(await baseFromCaller(other, checkout, "HEAD~1")).toEqual(refused);
+    expect(await baseFromCaller(other, checkout, "no-such-ref")).toEqual({ error: `base 'no-such-ref' does not resolve in ${other}` });
+    const created = await createAndLaunchTask(
+      { repoPath: other, prompt: "relative base", harness: "quick", fast: false, mode: "worktree", actor: "cli", base: "HEAD~1" },
+      { ...cfg, repos: [checkout] },
+      adapters,
+      null,
+    );
+    expect(created).toEqual({ kind: "invalid", ...refused });
+    expect(listTasks(true).filter((task) => task.repo_path === checkout)).toEqual([]);
   });
 
   test("a worktree task created from inside another worktree is created for the checkout; a local one stays", async () => {

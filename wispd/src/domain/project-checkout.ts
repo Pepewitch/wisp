@@ -97,12 +97,19 @@ export async function projectCheckoutFor(
  * The base to hand on once the repository changed from `given` to `checkout`.
  * Branches and tags name the same commit in both, so they are kept as typed;
  * a ref that depends on the directory (`HEAD`, `HEAD~1`, `@`) is pinned to the
- * commit it names where the caller asked, never re-read in the checkout.
+ * commit it names where the caller asked, never re-read in the checkout. A base
+ * that does not resolve where the caller asked is refused, naming that
+ * directory, even when the checkout could resolve it to something else.
  */
-export async function baseFromCaller(given: string, checkout: string, base: string | undefined): Promise<string | undefined> {
-  if (base === undefined || base.trim() === "" || real(given) === real(checkout)) return base;
+export async function baseFromCaller(
+  given: string,
+  checkout: string,
+  base: string | undefined,
+): Promise<{ base: string | undefined } | { error: string }> {
+  if (base === undefined || base.trim() === "" || real(given) === real(checkout)) return { base };
   // --end-of-options, as worktree.ts does: guards a ref that starts with "-"
   const commitIn = (dir: string) => gitOut(["rev-parse", "--verify", "--quiet", "--end-of-options", `${base.trim()}^{commit}`], dir);
   const [there, here] = await Promise.all([commitIn(given), commitIn(checkout)]);
-  return there && there !== here ? there : base;
+  if (!there) return { error: `base '${base.trim()}' does not resolve in ${given}` };
+  return { base: there !== here ? there : base };
 }

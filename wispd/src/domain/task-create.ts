@@ -172,7 +172,9 @@ export async function createAndLaunchTask(
   if (input.mode === "worktree") {
     const configured = (cfg.repos ?? []).map((entry) => (typeof entry === "string" ? entry : entry.path));
     const checkout = await projectCheckoutFor(input.repoPath, configured, listTasks().map((t) => t.repo_path));
-    input = { ...input, repoPath: checkout, base: await baseFromCaller(input.repoPath, checkout, input.base) };
+    const base = await baseFromCaller(input.repoPath, checkout, input.base);
+    if ("error" in base) return refuse("invalid", base.error);
+    input = { ...input, repoPath: checkout, base: base.base };
   }
   const { repoPath } = input;
   if (isProjectRemovalInProgress(repoPath)) return refuse("conflict", `project is being removed from Wisp: ${resolve(repoPath)}`);
