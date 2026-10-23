@@ -24,6 +24,9 @@ test("local manifests expose parameter schemas, protect built-ins, and pin effec
   expect(installedWorkflows(path).find(type => type.definition.id === plugin.id)!.definition.version).not.toBe(version);
   writeFileSync(path, JSON.stringify([{ ...plugin, id: "heartbeat" }]));
   expect(() => installedWorkflows(path)).toThrow();
+  // autopilot's rows share the table, so its type is reserved too
+  writeFileSync(path, JSON.stringify([{ ...plugin, id: "pr-autopilot" }]));
+  expect(() => installedWorkflows(path)).toThrow();
   writeFileSync(path, JSON.stringify([{ ...plugin, command: ["relative-executable"] }]));
   expect(() => installedWorkflows(path)).toThrow();
   writeFileSync(path, JSON.stringify([{ ...plugin, parameters: [{ ...plugin.parameters[0], key: "maxWakeups" }] }]));

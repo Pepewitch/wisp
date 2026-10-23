@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import type { WorkflowDecision, WorkflowDefinition, WorkflowParameter } from "../../../shared/workflows";
+import { AUTOPILOT_TYPE } from "../autopilot/type";
 import { WISP_HOME } from "../config";
 import { runBounded } from "../subprocess";
 import { isRecord } from "../validate";
@@ -20,7 +21,8 @@ export function installedWorkflows(path = WORKFLOW_PLUGINS_PATH): InstalledWorkf
   if (statSync(path).size > 256_000) throw new Error("workflows.json exceeds 256 KB");
   const input: unknown = JSON.parse(readFileSync(path, "utf8"));
   if (!Array.isArray(input) || input.length > 30) throw new Error("workflows.json must contain an array of at most 30 trusted plugins");
-  const ids = new Set(builtins.map(p => p.definition.id));
+  // autopilot's rows share the workflows table: a plugin under its id could arm one through the plugin route
+  const ids = new Set([...builtins.map(p => p.definition.id), AUTOPILOT_TYPE]);
   const plugins = input.map(raw => {
     if (!isRecord(raw) || raw.protocol !== 1 || typeof raw.id !== "string" || !/^[a-z][a-z0-9-]{0,63}$/.test(raw.id) ||
       ids.has(raw.id) || typeof raw.name !== "string" || raw.name.length > 80 || typeof raw.description !== "string" ||

@@ -36,8 +36,10 @@ const TASK_ID = /^[a-z0-9]{1,32}$/;
  * `agent:<its task>`.
  *
  * This is a self-report for accountability, NOT authentication: any holder of
- * the token can send any value. It must never gate or widen what a request may
- * do; it only records what the caller said it was. Anything unrecognised is
+ * the token can send any value. It must never widen what a request may do. It
+ * may narrow it: an `agent:` request is refused what only a person may do
+ * (isAgentActor), and `web`, `desktop`, `cli` (a person typing in a task's
+ * terminal included) and `api` all count as a person. Anything unrecognised is
  * `api`.
  */
 export function requestActor(req: Request): TaskAuditActor {
@@ -45,6 +47,16 @@ export function requestActor(req: Request): TaskAuditActor {
   if (!CLIENTS.has(client)) return "api";
   const task = req.headers.get(TASK_HEADER)?.trim() ?? "";
   return client === "cli" && TASK_ID.test(task) ? `agent:${task}` : client;
+}
+
+/**
+ * A request an agent made from its own turn. This only ever NARROWS what a
+ * request may do (an agent cannot grant merge permission); every other actor
+ * keeps what it had, so a forged header can refuse its own sender and gain
+ * nothing.
+ */
+export function isAgentActor(actor: TaskAuditActor): boolean {
+  return actor.startsWith("agent:");
 }
 
 export function workflowActor(workflowId: string, type: string): TaskAuditActor {
