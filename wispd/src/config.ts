@@ -15,7 +15,8 @@ import type { AdapterDef } from "./adapters";
 import { wispCommand } from "./command";
 import { isInstanceId, loadOrCreateInstanceId } from "./instance-id";
 import { isRecord, readUserJson, stringArray, typeName } from "./validate";
-import { chromePathConfig, validateCapturePublic, validateVerifyAgent } from "./config-verify";
+import { chromePathConfig } from "./config-verify";
+import { validateRepos } from "./config-repos";
 import type { WispPreferences } from "../../shared/api/settings";
 import type { ModelTaskDefaultsMap } from "../../shared/model-task-defaults";
 import { validateModelTaskDefaults } from "./model-task-defaults";
@@ -564,43 +565,6 @@ export function validateHiddenModels(raw: unknown, label: string): Record<string
     if (ids.length > 0) out[harness] = [...new Set(ids)].sort();
   }
   return out;
-}
-
-function validateRepos(raw: unknown): (string | RepoConfig)[] {
-  if (!Array.isArray(raw)) throw new Error(`config.json: repos must be an array of strings, got ${typeName(raw)}`);
-  return raw.map((entry, index) => {
-    const label = `config.json: repos[${index}]`;
-    if (typeof entry === "string") return entry;
-    if (!isRecord(entry)) {
-      throw new Error(`${label} must be a string, got ${typeName(entry)}`);
-    }
-    if (typeof entry.path !== "string") {
-      throw new Error(`${label}.path must be a string, got ${typeName(entry.path)}`);
-    }
-    if (entry.name !== undefined && typeof entry.name !== "string") {
-      throw new Error(`${label}.name must be a string, got ${typeName(entry.name)}`);
-    }
-    for (const key of ["setupScript", "archiveScript", "baseBranch"] as const) {
-      if (entry[key] !== undefined && typeof entry[key] !== "string") {
-        throw new Error(`${label}.${key} must be a string, got ${typeName(entry[key])}`);
-      }
-    }
-    const out: RepoConfig = { path: entry.path };
-    if (entry.name !== undefined) out.name = entry.name;
-    if (typeof entry.setupScript === "string" && entry.setupScript !== "") out.setupScript = entry.setupScript;
-    if (typeof entry.archiveScript === "string" && entry.archiveScript !== "") out.archiveScript = entry.archiveScript;
-    if (typeof entry.baseBranch === "string" && entry.baseBranch.trim() !== "") out.baseBranch = entry.baseBranch.trim();
-    if (entry.copyFiles !== undefined) {
-      const patterns = stringArray(entry.copyFiles, `${label}.copyFiles`).filter((v) => v.trim() !== "");
-      if (patterns.length > 0) out.copyFiles = patterns;
-    }
-    const verify = validateVerifyAgent(entry.verify, `${label}.verify`);
-    if (verify) out.verify = verify;
-    const second = entry.verifySecond === "off" ? "off" : validateVerifyAgent(entry.verifySecond, `${label}.verifySecond`);
-    if (second) out.verifySecond = second;
-    if (validateCapturePublic(entry.capturePublic, label) === false) out.capturePublic = false;
-    return out;
-  });
 }
 
 /**
