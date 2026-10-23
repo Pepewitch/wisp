@@ -49,6 +49,15 @@ export function cappedParent(task: Pick<Task, "parent_task_id" | "verify_role"> 
   return task.parent_task_id;
 }
 
+/** Parents with a live child that has a queued message and no running turn: what a backstop drain looks at. */
+export function parentsWithWaitingChildren(): string[] {
+  return (db.query(`SELECT DISTINCT t.parent_task_id AS parent FROM tasks t
+    WHERE t.parent_task_id IS NOT NULL AND t.archived = 0 AND t.verify_role IS NULL
+      AND EXISTS (SELECT 1 FROM task_messages m WHERE m.task_id = t.id AND m.status = 'queued')
+      AND NOT EXISTS (SELECT 1 FROM turns r WHERE r.task_id = t.id AND r.status = 'running')`).all() as { parent: string }[])
+    .map((row) => row.parent);
+}
+
 /** A clipped result is all a list needs; the whole one is `wisp result <id>`. */
 const RESULT_CLIP = 300;
 

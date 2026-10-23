@@ -26,6 +26,7 @@ import { PullRequestCache, type PullRequestCacheOptions } from "./pull-requests"
 import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
+import { startSubtaskQueueLoop } from "./subtask-queue";
 import { settleStrandedTasks } from "./turn-finalize";
 import { startArchiveCleanupLoop } from "./archive-worker";
 import { startTurnTextBackfillLoop } from "./turn-text-backfill";
@@ -744,6 +745,7 @@ async function serveOwned(
     intervalService("stuck turns", startStuckLoop(cfg)),
     intervalService("archive cleanup", startArchiveCleanupLoop()),
     intervalService("attachment uploads", startAttachmentUploadCleanupLoop()),
+    intervalService("subtask queues", startSubtaskQueueLoop(adapters, cfg)),
   );
   // Catch-up work for turns that ended before the prose index existed. After
   // Bun.serve on purpose: listening never waits on a disk sweep.

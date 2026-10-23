@@ -13,6 +13,8 @@ import { createAndLaunchTask, type NewTask, type NewTaskInput, type NewTaskRefus
 import { subscribe } from "../src/events";
 import { hasRunningTurn, submitTaskMessage } from "../src/runner";
 import { getTask, getTaskMessage, turnsFor } from "../src/store";
+import { drainWaitingSubtasks } from "../src/subtask-queue";
+import { parentsWithWaitingChildren } from "../src/subtasks";
 import { SubtaskCapError } from "../src/task-admission";
 import { portRange, taskPreambleLines } from "../src/turn-input";
 import type { Task } from "../src/types";
@@ -230,6 +232,10 @@ describe("creating a subtask", () => {
     await until(() => getTask(a.id)!.state_detail === `waiting for a subtask slot under ${parent.id}`, "A to wait for a slot");
     expect(getTaskMessage(queued.message.id)).toMatchObject({ status: "queued" });
     expect(getTask(a.id)!.state).not.toBe("failed");
+    // the backstop sees it, and draining while B still runs changes nothing
+    expect(parentsWithWaitingChildren()).toContain(parent.id);
+    drainWaitingSubtasks(gated, config);
+    expect(getTaskMessage(queued.message.id)).toMatchObject({ status: "queued" });
     // a direct send to an idle sibling is refused outright
     await expect(submitTaskMessage(getTask(a.id)!, "now", gated.heldA, config, [], undefined, gated)).rejects.toBeInstanceOf(SubtaskCapError);
     // B settles: A's message starts on its own
