@@ -128,7 +128,12 @@ wisp new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast]
          [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--attach <path>]…
 ```
 
-Create and start a task. `repo` defaults to the current directory.
+Create and start a task. `repo` defaults to the current directory. A path
+inside a linked worktree of a project Wisp knows (a task's own worktree, when
+run inside a turn) creates the task for that project's checkout, so the
+project's settings and verification recipe apply, and the CLI prints
+`repository: <checkout>, the project <path> belongs to`. A `--local` task
+keeps the directory given.
 `--model`/`--effort` fall back to `harnessDefaults` in `~/.wisp/config.json`,
 then to Wisp's default model for that harness (when the installed CLI offers
 it), then to the harness's own default. `--fast` runs the same model in the

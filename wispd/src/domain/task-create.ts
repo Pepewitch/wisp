@@ -24,6 +24,7 @@ import { autopilotSwitchDetail, recordAudit, type TaskAuditActor } from "../task
 import { TASK_TITLE_MAX } from "../task-update";
 import { taskMode, type Task, type TaskMode } from "../types";
 import type { ModelProbeCache } from "../model-probes";
+import { projectCheckoutFor } from "./project-checkout";
 import { launchTask } from "./task-launch";
 
 export interface NewTaskInput {
@@ -161,10 +162,18 @@ export async function createAndLaunchTask(
   /** The daemon's probe cache; null only where there is none (Wisp's default then never applies to a probed harness). */
   models: ModelProbeCache | null,
 ): Promise<NewTask | NewTaskRefusal> {
-  const { repoPath, harness } = input;
+  const { harness } = input;
   const def = adapters[harness];
   if (!def) return refuse("invalid", `unknown harness '${harness}' (known: ${Object.keys(adapters).join(", ")})`);
-  if (!(await pathExists(repoPath))) return refuse("invalid", `repoPath does not exist: ${repoPath}`);
+  if (!(await pathExists(input.repoPath))) return refuse("invalid", `repoPath does not exist: ${input.repoPath}`);
+  // #412: a worktree task named by a path inside another worktree (a task's
+  // own, when `wisp new` runs in a turn) belongs to that project's checkout.
+  // A local task runs in the directory it was given, so it keeps it.
+  if (input.mode === "worktree") {
+    const configured = (cfg.repos ?? []).map((entry) => (typeof entry === "string" ? entry : entry.path));
+    input = { ...input, repoPath: await projectCheckoutFor(input.repoPath, configured, listTasks().map((t) => t.repo_path)) };
+  }
+  const { repoPath } = input;
   if (isProjectRemovalInProgress(repoPath)) return refuse("conflict", `project is being removed from Wisp: ${resolve(repoPath)}`);
   // Explicit values win; then config harnessDefaults; then Wisp's default
   // where this install offers it; then the harness's own defaults (null).
