@@ -218,6 +218,11 @@ export function err(message: string, status: number): Response {
   return json({ error: message }, status);
 }
 
+/** A refusal that carries more than its sentence (an archive's refused subtasks); `error` is still the sentence a client shows. */
+export function jsonError(message: string, status: number, detail: Record<string, unknown>): Response {
+  return json({ ...detail, error: message }, status);
+}
+
 /**
  * The 500 for a route that threw. The client gets the message, as before; the
  * daemon log gets the method, the path and the stack, which are what tie a

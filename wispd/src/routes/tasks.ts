@@ -35,10 +35,10 @@ import { diffStat, fullDiff, pushBranch, readWorktreeFile, worktreeHealth } from
 import { taskIdsWithAttachedWorkflows } from "../workflows/store";
 import { autopilotStatuses } from "../autopilot/store";
 import { autopilotUpdateError } from "./autopilot";
-import { archiveTaskRows } from "../domain/archive";
+import { archiveTaskRows, drainAfterArchive } from "../domain/archive";
 import { createAndLaunchTask, type NewTaskRefusal } from "../domain/task-create";
 import { invalidateStatus } from "./projects";
-import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
+import { apiTask, apiTaskMessage, err, json, jsonError, jsonObjectBody } from "./http";
 import {
   agentSwitch,
   resolveSendAgent,
@@ -594,11 +594,16 @@ export function taskRoute(
       if (typeof force !== "boolean") return err(`force must be a boolean, got ${typeName(force)}`, 400);
       const stopAutopilot = parsed.stopAutopilot ?? false;
       if (typeof stopAutopilot !== "boolean") return err(`stopAutopilot must be a boolean, got ${typeName(stopAutopilot)}`, 400);
+      const subtasks = parsed.subtasks;
+      if (subtasks !== undefined && subtasks !== "archive" && subtasks !== "force") return err(`subtasks must be "archive" or "force"`, 400);
       const archiveTask = getTask(task.id) ?? task;
-      const result = await archiveTaskRows([archiveTask], force, cfg, { stopAutopilot, actor: requestActor(req) });
-      if ("error" in result) return err(result.error, result.status);
+      const result = await archiveTaskRows([archiveTask], force, cfg, { stopAutopilot, subtasks, actor: requestActor(req) });
+      if ("error" in result) {
+        return result.refusedSubtasks ? jsonError(result.error, result.status, { refusedSubtasks: result.refusedSubtasks }) : err(result.error, result.status);
+      }
+      drainAfterArchive(result.archived, adapters, cfg);
       const archived = result.archived[0]!;
-      return json({ ok: true, branch: archived.branch, note: archived.note });
+      return json({ ok: true, branch: archived.branch, note: archived.note, ...(result.archived.length > 1 ? { subtasks: result.archived.slice(1).map((row) => row.task.id) } : {}) });
     })();
   }
 
