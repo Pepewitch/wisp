@@ -9,7 +9,7 @@ export interface WorkflowRow {
   checkpoint_json: string; state: WorkflowState; reason: string; revision: number;
   context_n: number; wake_count: number; check_count: number; failures: number;
   last_checked_at: string | null; next_check_at: string; expires_at: string;
-  /** who last made params.allowMerge true (migration 26); internal, and NULL confers no merge rights */
+  /** who last made params.allowMerge true (migration 26); internal, for subtask merge rights (a later step) to read */
   merge_allowed_by?: string | null;
   created_at: string; updated_at: string;
 }

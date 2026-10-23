@@ -116,7 +116,7 @@ export async function archiveCommand(id: string | undefined, flags: Flags): Prom
   if (subtasks !== undefined) {
     await requireSubtasks();
     const live = ((await api(`/api/tasks/${id}/subtasks`)) as ApiSubtask[]).filter((child) => !child.archived && !child.reviewer);
-    if (live.length > 0) print(`${subtasks === "force" ? "force-archiving" : "archiving"} with it: ${live.map((child) => `${child.id} (${child.kind ?? "subtask"})`).join(", ")}`);
+    if (live.length > 0) print(`${subtasks === "force" ? "will force-archive" : "will archive"} with it: ${live.map((child) => `${child.id} (${child.kind ?? "subtask"})`).join(", ")}`);
   }
   let data: { branch: string | null; note: string | null; subtasks?: string[] };
   try {

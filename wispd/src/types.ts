@@ -124,7 +124,7 @@ export interface Task {
   report_to_parent?: number;
   /** Where the pinned base came from (subtasks.ts). Fixed at creation. */
   base_from?: string | null;
-  /** Who turned auto-merge on: person, parent:<id> or agent:<id>. NULL confers no merge rights. */
+  /** Who turned auto-merge on: person, parent:<id> or agent:<id>. Not written yet: subtask merge rights (a later step) will, and will read NULL as none. */
   merge_granted_by?: string | null;
   created_at: string;
   updated_at: string;

@@ -5,7 +5,7 @@ import { assertTaskNotStopping } from "../turn-interrupt";
 import { backgroundWork, refreshProcessGroups } from "../task-processes";
 import { archiveTaskWithCleanup, type ArchiveCleanupJob } from "../archive-jobs";
 import { db, getTask } from "../store";
-import { familyOf, liveNonReviewerChildren } from "../subtasks";
+import { childrenOf, familyOf } from "../subtasks";
 import { taskMode, type Task } from "../types";
 import { archivePreflight, TEARDOWN_TIMEOUT_MINUTES } from "../worktree";
 import { autopilotArchiveWarning, autopilotStatus } from "../autopilot/store";
@@ -188,7 +188,8 @@ function recheck(prepared: PreparedArchive[]): ArchiveRefusal | null {
       };
     }
     candidate.running = latestRunning;
-    const late = liveNonReviewerChildren(candidate.task.id).find((child) => !batch.has(child.id));
+    // any child, a reviewer auto-review launched meanwhile included: the family goes whole
+    const late = childrenOf(candidate.task.id).find((child) => !batch.has(child.id));
     if (late) return { error: `subtask ${late.id} was created while task ${candidate.task.id} was being archived; try again`, status: 409, task: candidate.task };
   }
   return null;

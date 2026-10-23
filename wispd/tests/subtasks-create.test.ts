@@ -12,7 +12,8 @@ import type { SubtaskDeps } from "../src/domain/subtask-create";
 import { createAndLaunchTask, type NewTask, type NewTaskInput, type NewTaskRefusal } from "../src/domain/task-create";
 import { subscribe } from "../src/events";
 import { hasRunningTurn, submitTaskMessage } from "../src/runner";
-import { getTask, getTaskMessage, turnsFor } from "../src/store";
+import { setAutopilot } from "../src/autopilot/store";
+import { db, getTask, getTaskMessage, turnsFor } from "../src/store";
 import { drainWaitingSubtasks } from "../src/subtask-queue";
 import { parentsWithWaitingChildren } from "../src/subtasks";
 import { SubtaskCapError } from "../src/task-admission";
@@ -132,6 +133,11 @@ describe("creating a subtask", () => {
     expect(await refusal({ autopilot: { autoMerge: false, autoFix: true } })).toMatchObject({ kind: "conflict", error: expect.stringContaining("not available on subtasks") });
     // the parent's own path is the same repository, so naming it is fine
     expect(created(await refusal({ repoPath: repo }))).toMatchObject({ repo_path: repo, parent_task_id: parent.id });
+    // nor can a switch be turned on later, through any client; turning them off stays possible
+    for (const update of [{ autoMerge: true }, { autoFix: true }, { autoReview: true }]) {
+      expect(() => setAutopilot(child.id, update)).toThrow("not available on subtasks yet");
+    }
+    expect(setAutopilot(child.id, { autoMerge: false })).toMatchObject({ autoMerge: false, autoFix: false, autoReview: false });
   });
 
   test("an explore child takes the project's base when its worktree is made, and reports only when asked", async () => {
@@ -173,6 +179,10 @@ describe("creating a subtask", () => {
     const { repo, prHead } = await project();
     const parent = await parentIn(repo);
     const review = (deps: SubtaskDeps) => createAndLaunchTask(input({ subtask: { parentId: parent.id, kind: "review" } }), cfg(), adapters, null, deps);
+    expect(await review(pulls([]))).toEqual({ kind: "conflict", error: `task ${parent.id} has no open PR; pass --base` });
+    // a finished autopilot row's PR is history: it is looked up again, never reused
+    setAutopilot(parent.id, { autoFix: true });
+    db.run(`UPDATE workflows SET state = 'completed', checkpoint_json = '{"pr":7,"outcome":"merged"}' WHERE task_id = ?`, [parent.id]);
     expect(await review(pulls([]))).toEqual({ kind: "conflict", error: `task ${parent.id} has no open PR; pass --base` });
     expect(await review(pulls([{ headRefName: parent.branch!, isCrossRepository: true }]))).toMatchObject({ kind: "conflict", error: expect.stringContaining("from a fork") });
     expect(await review({ ...noGitHub, github: { openPullRequests: async () => { throw new Error("rate limited"); } } }))

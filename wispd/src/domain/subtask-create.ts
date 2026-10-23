@@ -113,7 +113,8 @@ async function reviewBase(parent: Task, deps: SubtaskDeps): Promise<PinnedBase |
   if (!repository) return refuse("conflict", `task ${parent.id}'s repository has no GitHub origin; pass --base`);
   // the PR autopilot already watches: never a fork, so no GitHub call is needed
   const watched = autopilotStatus(parent.id);
-  let number = watched.state !== "off" ? watched.pr : null;
+  // never a finished row's PR: a merged one is history, not the head to review
+  let number = watched.state !== "off" && watched.state !== "merged" ? watched.pr : null;
   if (number === null) {
     if (!parent.branch) return refuse("conflict", `task ${parent.id} has no branch yet, so no PR; pass --base`);
     let pulls;

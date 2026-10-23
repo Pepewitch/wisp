@@ -173,6 +173,25 @@ describe("archiving a family", () => {
     expect(archived(parent.id)).toBe(false);
   });
 
+  test("a reviewer auto-review launched while the family was being checked refuses the archive too", async () => {
+    const parent = await make({ repoPath: await repo() });
+    let late: Task | null = null;
+    const original = worktree.archivePreflight;
+    const preflight = spyOn(worktree, "archivePreflight").mockImplementation(async (...args) => {
+      if (!late) late = await reviewer(parent);
+      return original(...args);
+    });
+    try {
+      const refused = await archiveTaskRows([parent], false, cfg, {});
+      expect(refused).toMatchObject({ status: 409, error: expect.stringContaining("was created while task") });
+    } finally { preflight.mockRestore(); }
+    expect([archived(parent.id), archived(late!.id)]).toEqual([false, false]);
+    // asked again, the reviewer is part of the family and goes with it
+    const done = await archiveTaskRows([parent], false, cfg, {});
+    if ("error" in done) throw new Error(done.error);
+    expect([archived(parent.id), archived(late!.id)]).toEqual([true, true]);
+  });
+
   test("a project removal covers the children and forces the reviewers in its batch", async () => {
     const parent = await make({ repoPath: await repo() });
     const kid = await child(parent);
