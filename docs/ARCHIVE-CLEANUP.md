@@ -79,6 +79,10 @@ UI actions. For an uncertain cleanup from an older Wisp, add `--verified-stopped
 after checking both scripts and their children. Repeating `wisp archive` does
 not reset a job or bypass an uncertain script.
 
+When the daemon reports `features.subtasks`, `wisp archive <task>` also takes
+`--subtasks archive|force` for a task with live [subtasks](#subtasks). It lists
+the children it takes, and prints each child that refused with its reason.
+
 ## API
 
 All endpoints use the daemon's normal authentication. `GET /api/capabilities`
@@ -97,8 +101,46 @@ advertises `archiveCleanup: true`; this is additive within protocol version 1.
   202. An obsolete revision, running job, unverified process group, or missing
   confirmation returns 409 with a remedy. Refetch before making a new decision.
 
+- `POST /api/tasks/:id/archive` accepts `subtasks` (`"archive"` or `"force"`),
+  and answers with `subtasks: [ids]` when children were archived with the task.
+  A refusal because of children is a 409 with `refusedSubtasks` (see
+  [Subtasks](#subtasks)).
+
 Task events invalidate cleanup status as well as ordinary task data. Desktop
 requests and late callbacks remain bound to their initiating connection.
+
+## Subtasks
+
+A [subtask](ARCHITECTURE.md#subtasks) is a task with a parent. Archiving a task
+takes its unarchived family with it, two levels deep: its children, and the
+reviewers of a child's PR.
+
+- **Reviewers always come along**, and are forced: auto-review's reviewers have
+  no work of their own to protect.
+- **Other children come only when asked.** `subtasks: "archive"` archives each
+  one as it is, so each must be archivable on its own (clean tree, no running
+  turn). `"force"` forces each. Without either, the archive is refused with a
+  409, `task tX has N live subtasks — …`, and `refusedSubtasks`: a list of
+  `{id, title, error, needs}`. `needs` is `subtasks` (the opt-in) or
+  `stopAutopilot` (the child's own auto-merge or auto-fix is still watching).
+- **All or nothing.** Every row is checked before any is archived, every refusal
+  is collected, and a refused family changes nothing. Force and the autopilot
+  consent are per row: forcing a parent does not force its children, and a child
+  brought along needs the autopilot consent itself.
+- **A child created during the check refuses the archive**; try again.
+- **One transaction** archives the family. In it, the author's running review
+  rounds end ("the task was archived"), and so does every flip and its cleanup
+  job. A reviewer a person archives on its own ends its round's review as an
+  error, "archived by a person". Auto-review retiring its own reviewer does not.
+- A child can be archived alone; its parent stays live. Removing a project
+  archives the children inside its batch the same way, and forces reviewers.
+- Each archived task gets its own cleanup job and its own recovery, as above.
+
+**Purge** is refused while the task has an unarchived child, and the bulk-purge
+preview lists such a parent with that error. Purging a parent leaves its
+archived children as orphans: they keep their kind and lose the link.
+**Export** of a parent has `subtasks: [ids]`, and a child's task row names its
+`parent_task_id`. There is no import.
 
 ## Retention, export, and permanent deletion
 

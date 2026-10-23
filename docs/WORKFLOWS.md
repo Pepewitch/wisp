@@ -120,6 +120,18 @@ archive the task or stop a turn that already received an instruction.
   external effects. Resuming after you have checked acknowledges it: the
   workflow carries on, and that delivery's evidence still counts as sent, so
   it is not sent again.
+- **Only a person may allow a merge.** Creating a workflow with `allowMerge`
+  on, or raising it on an existing one, is refused with a 409 when it comes from
+  an agent's turn (a request carrying `X-Wisp-Task`, such as
+  `wisp workflow … --allow-merge` run by an agent). Heartbeat allows a merge by
+  default for a person; one an agent starts has `allowMerge` off unless a person
+  turns it on later.
+  Wisp records who turned it on as `merge_allowed_by`. An agent's edit that
+  leaves it on leaves it the person's. An agent resuming a paused workflow keeps
+  it on, but it is then the agent's, not a person's. `web`, `desktop`, `cli` (a
+  person typing in a task's terminal included) and `api` count as a person. The
+  client name is a self-report, and it can only narrow what a request may do.
+  A workflow plugin may not use the type id of autopilot.
 - Permission flags are instructions to the agent, not an OS sandbox. Agents and
   custom plugins run as your OS user, and workflow turns have the same tool
   access as other turns on their task. Review objectives and only use trusted
