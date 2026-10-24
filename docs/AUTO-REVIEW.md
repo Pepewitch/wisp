@@ -70,6 +70,17 @@ is matched by both its old and its new path. Within one PR a tier only goes up.
    whose round no longer matters (auto-review switched off, the PR closed, the
    task archived) is stopped and archived the same way.
 
+A reviewer is a `review` [subtask](ARCHITECTURE.md#subtasks) of the task whose
+PR it reviews: it is listed under that task, and it is pinned to the round's
+head as `refs/pull/N/head`, so it checks the exact commit the round is for.
+Reviewers are subtasks whether or not the subtasks preview is on, and they
+never count toward a parent's subtask caps. Reviewers from before this change
+were linked to their authors when the daemon upgraded. Archiving the author
+archives its reviewers in the same transaction, and ends the author's running
+rounds ("the task was archived") with it. A reviewer a person archives on its
+own ends its review as an error, "archived by a person", so the round cannot
+wait on it; Wisp's own archiving of a finished reviewer does not.
+
 A push while a round runs makes it moot: its reviewers are stopped at once,
 even while the author is still working, and the new head gets a fresh round.
 A pass belongs to the base it was reviewed against: retarget the PR to another

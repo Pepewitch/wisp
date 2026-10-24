@@ -340,6 +340,41 @@ test("workflow API creates, edits with revision checks, and completes idempotent
   expect(listWorkflows(item.taskId)).toHaveLength(2);
 });
 
+test("only a person may allow a merge; an agent's resume keeps it but makes it the agent's", async () => {
+  const item = arm();
+  const request = (path: string, method: string, body: unknown, task?: string) => workflowRoute(new Request(`http://localhost${path}`, {
+    method, body: JSON.stringify(body), headers: { "x-wisp-client": "cli", ...(task ? { "x-wisp-task": task } : {}) },
+  }), path);
+  const allowedBy = (id: string) => (db.query("SELECT merge_allowed_by FROM workflows WHERE id = ?").get(id) as { merge_allowed_by: string | null }).merge_allowed_by;
+  const create = (task?: string, allowMerge = true) => request(`/api/tasks/${item.taskId}/workflows`, "POST", { type: "heartbeat", params: { prompt: "Merge when green", allowMerge } }, task);
+  const refused = await create("tagent");
+  expect(refused.status).toBe(409);
+  expect(await refused.json()).toEqual({ error: expect.stringContaining("Only a person may allow a merge") });
+  // an agent may still start one, which then allows no merge: a heartbeat's default is not the agent's to take
+  const defaulted = await request(`/api/tasks/${item.taskId}/workflows`, "POST", { type: "heartbeat", params: { prompt: "Keep going" } }, "tagent");
+  expect(defaulted.status).toBe(201);
+  expect(((await defaulted.json()) as { params: { allowMerge: boolean } }).params.allowMerge).toBe(false);
+  const plain = await (await create("tagent", false)).json() as { id: string; revision: number };
+  expect(allowedBy(plain.id)).toBeNull();
+  // a person's heartbeat keeps the default, recorded as theirs
+  const persons = await (await request(`/api/tasks/${item.taskId}/workflows`, "POST", { type: "heartbeat", params: { prompt: "Mine" } })).json() as { id: string; params: { allowMerge: boolean } };
+  expect([persons.params.allowMerge, allowedBy(persons.id)]).toEqual([true, "cli"]);
+  expect((await request(`/api/workflows/${plain.id}`, "PATCH", { revision: plain.revision, params: { allowMerge: true } }, "tagent")).status).toBe(409);
+  // a person (the CLI outside a turn) may, and is recorded
+  const raised = await (await request(`/api/workflows/${plain.id}`, "PATCH", { revision: plain.revision, params: { allowMerge: true } })).json() as { revision: number };
+  expect(allowedBy(plain.id)).toBe("cli");
+  // an agent's edit that keeps it on leaves it the person's
+  const kept = await (await request(`/api/workflows/${plain.id}`, "PATCH", { revision: raised.revision, params: { everyMinutes: 10 } }, "tagent")).json() as { revision: number };
+  expect(allowedBy(plain.id)).toBe("cli");
+  // a person's pause, then an agent's resume: still allowed, but no longer a person's grant
+  expect((await request(`/api/workflows/${plain.id}/pause`, "POST", {})).status).toBe(200);
+  expect((await request(`/api/workflows/${plain.id}/resume`, "POST", {}, "tagent")).status).toBe(200);
+  expect(allowedBy(plain.id)).toBe("agent:tagent");
+  // turning it off clears who allowed it
+  await request(`/api/workflows/${plain.id}`, "PATCH", { revision: kept.revision + 2, params: { allowMerge: false } });
+  expect(allowedBy(plain.id)).toBeNull();
+});
+
 test("task list marks only unfinished workflows as attached", async () => {
   const item = arm();
   const listed = async () => await listTasksRoute(new URL("http://wisp.test/api/tasks")).json() as Array<{

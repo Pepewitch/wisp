@@ -5,6 +5,8 @@ export interface TaskExport {
   task: { id: string; title: string };
   turns: unknown[];
   messages: unknown[];
+  /** A parent's children, archived ones too; a child's `task` names its parent. Absent for a task without any. */
+  subtasks?: string[];
   files: { path: string; dataBase64: string }[];
   missing: string[];
 }

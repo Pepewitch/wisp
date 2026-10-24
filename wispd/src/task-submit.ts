@@ -71,6 +71,8 @@ export async function persistTaskSubmission(
   clientMessageId?: string,
   agent?: TaskAgentSelection,
   deferred = false,
+  /** who sent it; a retry with the same id keeps the first attempt's */
+  actor: string | null = null,
 ): Promise<{ task: Task; message: TaskMessage }> {
   const id = clientMessageId ?? newTaskMessageId()
   const existing = getTaskMessage(id)
@@ -106,6 +108,7 @@ export async function persistTaskSubmission(
         attachmentHash,
         attachmentsJson: attachmentManifest(stored),
         deferred,
+        actor,
       },
       agent ?? {
         harness: task.harness,

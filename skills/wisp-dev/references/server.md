@@ -140,6 +140,34 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   require explicit operator verification. See `archive-worker.ts`,
   `archive-hooks.ts`, and [Archive cleanup](../../../docs/ARCHIVE-CLEANUP.md).
 
+### Subtasks
+
+- A subtask is a task row with `parent_task_id`, `subtask_kind` and
+  `base_from` (migration 26, `migration-subtasks.ts`), fixed at creation. There
+  is no foreign key: deleting a parent only unlinks its children. The feature is
+  a preview behind `subtasksPreview`; `subtasksEnabled(cfg)` is the one switch,
+  and create refuses every subtask field while it is off. Wisp's own reviewers
+  skip it: they are `review` subtasks with `verify_role = 'reviewer'`.
+- The domain owns the rules. `domain/subtask-create.ts` validates the parent,
+  resolves the base by kind and refuses a bad request; `domain/archive.ts` owns
+  the family archive. Routes, the CLI and auto-review call them and never repeat
+  a rule. Archive is all or nothing: check every row first, flip every row in
+  one transaction.
+- Admission is shared. The running cap is checked in `task-admission.ts` for
+  creation, sends and queue starts, never in a caller. A queued start the cap
+  refuses WAITS and is drained again when a slot frees (`subtask-queue.ts` is
+  the 30-second backstop). A background follow-up turn counts toward the cap and
+  is never refused: its process is already running.
+- Reviewers and recipe tasks are exempt from both caps (`cappedParent` in
+  `subtasks.ts`), and are not "live subtasks" for the archive opt-in or the
+  purge refusal.
+- Triggers never touch `tasks.updated_at`: bulk purge compares it row by row,
+  so a trigger that bumped it would change a purge's selection.
+- Everything a subtask's prompt says about Wisp goes in the `<wisp>` section.
+  The parent's goal follows it, quoted, as data.
+- The actor (`requestActor`) only narrows. A merge grant from an agent's turn is
+  refused, and `workflows.merge_allowed_by` records who allowed one.
+
 ### API and realtime
 
 - The daemon owns behavior shared by the CLI, browser runtime, and desktop
@@ -305,6 +333,7 @@ cannot tell you a browser stopped attaching a credential.
 | Authentication and HTTP responses | `wispd/src/routes/auth.ts`, `wispd/src/routes/http.ts` |
 | Task/API behavior | `wispd/src/routes/` |
 | Task operations every caller shares (create and launch, archive) | `wispd/src/domain/`; a route parses the request and maps the result to HTTP, and lint keeps store writes out of `routes/` |
+| Subtasks: family queries, caps, create, archive, queue backstop, CLI, schema | `wispd/src/subtasks.ts`, `wispd/src/domain/subtask-create.ts`, `wispd/src/task-admission.ts`, `wispd/src/domain/archive.ts`, `wispd/src/subtask-queue.ts`, `wispd/src/routes/subtasks.ts`, `wispd/src/cli-subtasks.ts`, `wispd/src/migration-subtasks.ts` |
 | Persistence and state transitions | `wispd/src/store.ts` |
 | Harness process lifecycle | `wispd/src/runner.ts` (spawn, queue, recovery), `wispd/src/turn-process.ts` (exit watcher, a process that serves several turns) |
 | Worktrees, git, setup hooks | `wispd/src/worktree.ts` |

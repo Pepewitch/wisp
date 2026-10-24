@@ -9,6 +9,8 @@ export interface WorkflowRow {
   checkpoint_json: string; state: WorkflowState; reason: string; revision: number;
   context_n: number; wake_count: number; check_count: number; failures: number;
   last_checked_at: string | null; next_check_at: string; expires_at: string;
+  /** who last made params.allowMerge true (migration 26); internal, for subtask merge rights (a later step) to read */
+  merge_allowed_by?: string | null;
   created_at: string; updated_at: string;
 }
 export function workflow(row: WorkflowRow): Workflow {
@@ -69,7 +71,11 @@ export function historySays(id: string, detail: string): boolean {
 
 export function announceWorkflow(taskId: string): void { emit({ type: "workflow", taskId }); }
 
-export function createWorkflow(taskId: string, def: WorkflowDefinition, params: WorkflowParams, now = new Date()): Workflow {
+export function createWorkflow(
+  taskId: string, def: WorkflowDefinition, params: WorkflowParams, now = new Date(),
+  /** the actor allowing a merge when params.allowMerge is on (routes/workflows.ts decides who may) */
+  mergeAllowedBy: string | null = null,
+): Workflow {
   const result = db.transaction(() => {
     const task = getTask(taskId);
     if (!task || task.archived || !task.worktree_path) throw new Error("A workflow needs a live task with a usable checkout");
@@ -86,9 +92,9 @@ export function createWorkflow(taskId: string, def: WorkflowDefinition, params: 
       ? new Date(now.getTime() + Number(params.lifetimeHours) * 3_600_000).toISOString()
       : "9999-12-31T23:59:59.999Z";
     const reason = scheduled === null ? "Waiting for first check" : `Scheduled for ${new Date(scheduled).toISOString()}`;
-    db.run(`INSERT INTO workflows(id, task_id, type, version, params_json, state, reason, context_n, next_check_at, expires_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
-    [id, taskId, def.id, def.version, JSON.stringify(params), reason, task.context_n, next, expires, at, at]);
+    db.run(`INSERT INTO workflows(id, task_id, type, version, params_json, state, reason, context_n, next_check_at, expires_at, merge_allowed_by, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
+    [id, taskId, def.id, def.version, JSON.stringify(params), reason, task.context_n, next, expires, params.allowMerge === true ? mergeAllowedBy : null, at, at]);
     recordWorkflow(id, "armed", def.name, at);
     return workflow(getWorkflow(id)!);
   })();
@@ -100,7 +106,11 @@ export function cancelWorkflowMessages(id: string): void {
   // undelivered intents, including cancellation during context changes.
   db.run("UPDATE task_messages SET status = 'cancelled' WHERE workflow_id = ? AND status = 'queued' AND claim IS NULL", [id]);
 }
-export function changeWorkflowState(id: string, state: WorkflowState, reason: string, now = new Date()): Workflow {
+export function changeWorkflowState(
+  id: string, state: WorkflowState, reason: string, now = new Date(),
+  /** a resume by an agent: an allowed merge is then the agent's, which confers no rights (decision 13) */
+  resumedBy: string | null = null,
+): Workflow {
   const result = db.transaction(() => {
     const row = getWorkflow(id);
     if (!row) throw new Error("Workflow not found");
@@ -127,6 +137,7 @@ export function changeWorkflowState(id: string, state: WorkflowState, reason: st
       : [];
     db.run("UPDATE workflows SET state = ?, reason = ?, revision = revision + 1, context_n = ?, next_check_at = ?, updated_at = ?, failures = 0 WHERE id = ?",
       [state, reason, task?.context_n ?? row.context_n, next, at, id]);
+    if (resumedBy !== null && item.params.allowMerge === true) db.run("UPDATE workflows SET merge_allowed_by = ? WHERE id = ?", [resumedBy, id]);
     for (const message of uncertain) recordWorkflow(id, "acknowledged", "An uncertain delivery was acknowledged on resume", at, message.id);
     recordWorkflow(id, state, reason, at);
     return workflow(getWorkflow(id)!);
@@ -134,7 +145,11 @@ export function changeWorkflowState(id: string, state: WorkflowState, reason: st
   announceWorkflow(result.taskId);
   return result;
 }
-export function updateWorkflow(id: string, params: WorkflowParams, revision: number, now = new Date()): Workflow {
+export function updateWorkflow(
+  id: string, params: WorkflowParams, revision: number, now = new Date(),
+  /** who saved the change: the merge it allows is theirs once they turn allowMerge on */
+  actor: string | null = null,
+): Workflow {
   const result = db.transaction(() => {
     const row = getWorkflow(id);
     if (!row || row.state === "completed") throw new Error("Only unfinished workflows can be edited");
@@ -146,8 +161,10 @@ export function updateWorkflow(id: string, params: WorkflowParams, revision: num
       ? new Date(Date.parse(row.created_at) + Number(params.lifetimeHours) * 3_600_000).toISOString()
       : "9999-12-31T23:59:59.999Z";
     const next = scheduled === null ? now.toISOString() : new Date(scheduled).toISOString();
-    db.run("UPDATE workflows SET params_json = ?, revision = revision + 1, next_check_at = ?, expires_at = ?, updated_at = ? WHERE id = ?",
-      [JSON.stringify(params), next, expiry, now.toISOString(), id]);
+    const raised = params.allowMerge === true && workflow(row).params.allowMerge !== true;
+    const allowedBy = params.allowMerge !== true ? null : raised ? actor : row.merge_allowed_by ?? null;
+    db.run("UPDATE workflows SET params_json = ?, revision = revision + 1, next_check_at = ?, expires_at = ?, merge_allowed_by = ?, updated_at = ? WHERE id = ?",
+      [JSON.stringify(params), next, expiry, allowedBy, now.toISOString(), id]);
     recordWorkflow(id, "configured", "Parameters updated; pending instructions cancelled", now.toISOString());
     return workflow(getWorkflow(id)!);
   })();

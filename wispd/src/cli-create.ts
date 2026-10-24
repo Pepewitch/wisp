@@ -3,6 +3,7 @@ import { discardAttachment, daemonRequest, exitApi, uploadAttachment } from "./c
 import type { Flags } from "./cli-args";
 import { discardAttachmentPayloads, readAttachmentFlags } from "./cli-attach";
 import { print, printError } from "./cli-print";
+import { requireSubtasks, subtaskFlags } from "./cli-subtasks";
 import { wispCommand } from "./command";
 import type { StagedAttachmentPayload } from "./attachments";
 import { resolve } from "node:path";
@@ -16,11 +17,13 @@ export async function createCommand(positional: string[], flags: Flags): Promise
     printError("--brief is no longer supported: Wisp removed task briefs. Run the command again without it.");
     process.exit(1);
   }
-  let repo: string, prompt: string;
+  // a subtask's repository is its parent's, so the current directory is no default for one
+  const subtask = subtaskFlags(flags);
+  let repo: string | null, prompt: string;
   if (positional.length >= 2) {
     [repo, prompt] = [positional[0]!, positional.slice(1).join(" ")];
   } else if (positional.length === 1) {
-    [repo, prompt] = [process.cwd(), positional[0]!];
+    [repo, prompt] = [subtask ? null : process.cwd(), positional[0]!];
   } else {
     printError(
       `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--attach <path>]…`,
@@ -40,6 +43,8 @@ export async function createCommand(positional: string[], flags: Flags): Promise
     printError("--base requires a value (e.g. --base origin/develop)");
     process.exit(1);
   }
+  // before any upload: an older daemon would otherwise make a root task, after staging files for it
+  if (subtask) await requireSubtasks();
   let attachments: StagedAttachmentPayload[] | undefined;
   try {
     attachments = await readAttachmentFlags(flags, uploadAttachment, discardAttachment);
@@ -49,7 +54,8 @@ export async function createCommand(positional: string[], flags: Flags): Promise
   let task: ApiTask;
   try {
     task = await daemonRequest("/api/tasks", "POST", JSON.stringify({
-      repoPath: resolve(repo),
+      ...(repo === null ? {} : { repoPath: resolve(repo) }),
+      ...(subtask ?? {}),
       prompt,
       harness,
       model: typeof flags.model === "string" ? flags.model : undefined,
@@ -70,7 +76,7 @@ export async function createCommand(positional: string[], flags: Flags): Promise
     if (attachments) await discardAttachmentPayloads(attachments, discardAttachment);
     exitApi(error);
   }
-  reportCreated(task, flags, resolve(repo));
+  reportCreated(task, flags, repo === null ? task.repo_path : resolve(repo));
 }
 
 /** What the daemon armed, not what was asked: an older daemon ignores the fields it does not know. */
@@ -78,7 +84,8 @@ function reportCreated(task: ApiTask, flags: Flags, asked: string): void {
   const where = task.mode === "local" ? ", local" : "";
   const autopilot = (task as ApiTask & { autopilot?: { autoMerge?: boolean; autoFix?: boolean; autoReview?: boolean } }).autopilot;
   const merge = [autopilot?.autoMerge && ", auto-merge", autopilot?.autoFix && ", auto-fix", autopilot?.autoReview && ", auto-review"].filter(Boolean).join("");
-  print(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}) — ${task.title}`);
+  const family = task.parent_task_id ? `, ${task.subtask_kind} subtask of ${task.parent_task_id}` : "";
+  print(`created ${task.id} (${task.harness}${task.model ? `, ${task.model}` : ""}${where}${merge}${family}) — ${task.title}`);
   // the daemon takes a path inside another worktree back to its project's checkout
   if (task.repo_path !== asked) print(`repository: ${task.repo_path} (${asked} is inside a worktree of it)`);
   const askedAutopilot = flags["auto-merge"] === true || flags["auto-fix"] === true;

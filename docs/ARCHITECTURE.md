@@ -217,6 +217,60 @@ task branch's commits directly onto main.
 A `local` task has no base: it adopts the branch the checkout is already on,
 which is the point of the mode. Passing a base to one is a 400.
 
+## Subtasks
+
+A subtask is a task with a parent task. This is a **preview**: it is off unless
+`config.json` sets `subtasksPreview: true`, `features.subtasks` in
+`GET /api/harnesses` says which, and while it is off every subtask field on
+create is refused with a 409. The key is not written into `config.json` by
+default. Wisp's own auto-review reviewers are subtasks either way.
+
+The relationship lives on the task row (migration 26): `parent_task_id`,
+`subtask_kind` (`review`, `explore` or `continue`), `report_to_parent`,
+`base_from` (where the pinned base came from: `pr#N`, `parent:<id>`, `project`
+or `explicit`) and `merge_granted_by`. All are fixed at creation. There is no
+foreign key: deleting a parent only unlinks its children, which keep their kind
+as orphans. The same migration adds the `subtask_reports` table; nothing writes
+it yet, so a subtask does not report back to its parent in this release.
+
+A parent must be a root task, so subtasks have one level. The exception is a
+reviewer: it is a `review` subtask of the task whose PR it reviews, may sit
+under a subtask, and keeps `verify_role = 'reviewer'`. A subtask has its own
+worktree and `wisp/<id>-…` branch, and its prompt tells it never to commit to or push the parent's.
+
+The base depends on the kind, and an explicit `--base` wins over all of them:
+
+| Kind | Base |
+| --- | --- |
+| `review` | the head of the parent's open PR, fetched as `refs/pull/N/head` and verified. No PR, a fork PR or an unreachable GitHub is refused ("pass --base") |
+| `continue` | the parent's committed branch tip; refused while the parent is still being created |
+| `explore` | the project's normal base, resolved when the worktree is made |
+
+Two caps apply to the non-reviewer children of one parent: at most
+`maxSubtasks` (default 10) live, and at most `maxRunningSubtasks` (default 3)
+creating or running a turn. Reviewers and recipe tasks are exempt from both and
+only meet the global limit. Admission is one shared check
+(`task-admission.ts`) for creation, sends and queue starts. A direct send over
+the cap is refused with a 429. A queued start over it waits, and is retried
+when a sibling's turn settles, a creation slot frees or a child is archived,
+at startup, and every 30 seconds. A background follow-up turn (a lingering
+harness waking itself) counts toward the cap but is never refused, because its
+process is already running.
+
+Archive takes a family whole or not at all, and purge refuses a parent with a
+live child; see [Archive cleanup](ARCHIVE-CLEANUP.md#subtasks). The code:
+
+| Concern | Source |
+| --- | --- |
+| Family queries, orphans, which parent's cap applies | `wispd/src/subtasks.ts` |
+| Create: validation, base by kind, caps | `wispd/src/domain/subtask-create.ts` |
+| Admission and the running cap | `wispd/src/task-admission.ts` |
+| Family archive | `wispd/src/domain/archive.ts` |
+| The 30-second queue backstop | `wispd/src/subtask-queue.ts` |
+| `GET /api/tasks/:id/subtasks` | `wispd/src/routes/subtasks.ts` |
+| CLI flags, nested `ls`, `show` | `wispd/src/cli-subtasks.ts` |
+| Schema and the reviewer backfill | `wispd/src/migration-subtasks.ts` |
+
 ## Attachments
 
 A message can carry files: images, pdf, text of any extension, and short video.

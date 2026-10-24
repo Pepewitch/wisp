@@ -156,10 +156,36 @@ the model is shown when Wisp received an explicit or configured choice, and
 omitted when the harness will choose its own default.
 
 ```
-wisp ls [-a|--all]
+wisp new [repo] "prompt" … --subtask | --parent <id> [--report]
+         [--kind review|explore|continue] [--base <ref>]
 ```
 
-One line per task (`-a` includes archived): id, state icon
+Subtasks, available when the daemon reports `features.subtasks` (a preview,
+off by default; they are not in `wisp help` yet). A subtask is a task with a
+parent, in its own worktree and `wisp/<id>-…` branch. `--subtask` inside a task
+makes that task the parent and turns reporting on; `--parent <id>` names one
+from anywhere, and reports only with `--report` (the flag is stored; a later
+release delivers reports). `repo` defaults to the parent's, and must be the
+parent's if given. The CLI checks `features.subtasks` before it uploads any
+attachment and refuses on a daemon without it, so it never makes a root task by
+mistake. An agent that names a parent that is not its own task gets a warning.
+
+`--kind` picks the base: `review` pins the head of the parent's open PR (no PR,
+a fork PR or an unreachable GitHub is refused with "pass --base"), `continue`
+pins the parent's committed branch tip, and `explore` (the default) starts from
+the project's usual base, as a new task would. An explicit `--base` wins
+over the kind. A parent must be a root task: subtasks have one level. A
+subtask takes no autopilot switch and may not be `--local`. At most
+`maxSubtasks` (default 10) live children per parent, and at most
+`maxRunningSubtasks` (default 3) running at once: past that a new child or a
+direct message is refused, and a queued message waits for a slot. Prints `created <id> (…, <kind> subtask of <parent>) — <title>`.
+
+```
+wisp ls [-a|--all] [--json]
+```
+
+One line per task (`-a` includes archived; `--json` prints the daemon's list
+for scripts; a subtask's line is indented under its parent when both are listed): id, state icon
 (◌ creating · ● running · ✓ done · ? needs-input · ⏸ stuck · ✗ failed), the
 honest word (`exited N` when the turn delivered its result but the harness CLI
 exited nonzero), harness, the latest turn's actual model (`(requested)` when
@@ -173,7 +199,9 @@ wisp log <task> [turn] [-f|--follow] [--raw] [--diagnostic]
 
 `show`: state + state_detail, harness/model/effort, session id, worktree,
 branch, every turn (status, actual model, usage tokens, prompt excerpt, result
-excerpt, attached files), diffstat of the worktree. `result`: the full prompt
+excerpt, attached files), diffstat of the worktree. For a subtask it prints
+`parent:` (kind, where its base came from) and, for a parent, a `subtasks:`
+list (id, state, kind, title). `result`: the full prompt
 and the agent's full answer for one turn (default: latest turn with a result)
 — the token-cheap way to read an outcome. `log`: the activity feed, rendered
 per-harness (`--raw` for the retained harness stream, `-f` to follow live).
@@ -275,7 +303,7 @@ hides the control against an older daemon instead of failing silently.
 
 ```
 wisp push <task>
-wisp archive <task> [-f|--force]
+wisp archive <task> [-f|--force] [--subtasks archive|force]
 wisp cleanup <task> [--log|--retry|--confirm-complete|--rerun] [--verified-stopped]
 wisp attach <task>
 ```
@@ -295,7 +323,12 @@ failures in `state_detail`. `cleanup` shows the current step and remedy. `--retr
 retries safe steps after their cause is fixed. For an uncertain script, inspect
 its effects and `--log`, then use `--confirm-complete` to skip that script or
 `--rerun` to explicitly repeat it. For a cleanup from an older Wisp, verify both
-scripts and their children stopped and add `--verified-stopped`. See
+scripts and their children stopped and add `--verified-stopped`. A task with live
+subtasks is refused unless `--subtasks archive` (each must be archivable as it
+is) or `--subtasks force` (each is forced) takes them with it, all or nothing
+(available when the daemon reports `features.subtasks`); the CLI lists the
+children it takes and prints each child that refused. Auto-review's reviewers
+always go with their author. See
 [Archive cleanup](../../../docs/ARCHIVE-CLEANUP.md). Archiving a `--local` task is bookkeeping only —
 nothing is removed. `attach` opens the harness's own interactive UI on the
 task's session (claude/codex/cursor/opencode/droid).

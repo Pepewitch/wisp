@@ -88,7 +88,10 @@ describe("auto-review", () => {
     const { clock, state, launched, task, rt } = setup();
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(1);
-    expect(launched[0]!).toMatchObject({ base: HEAD, mode: "worktree", verifyRole: "reviewer", repoPath: task.repo_path, actor: "autopilot" });
+    expect(launched[0]!).toMatchObject({
+      base: { ref: "refs/pull/7/head", commit: HEAD, from: "pr#7" }, subtask: { parentId: task.id, kind: "review" },
+      mode: "worktree", verifyRole: "reviewer", repoPath: task.repo_path, actor: "autopilot",
+    });
     expect(launched[0]!.firstTurnPrompt).toContain("Round 1 of 3");
     expect(launched[0]!.firstTurnPrompt).toContain("review submit --stdin");
     expect(autopilotStatus(task.id)).toMatchObject({ autoReview: true, state: "waiting", by: "auto-review", reviewRounds: 1 });
@@ -165,7 +168,7 @@ describe("auto-review", () => {
     clock.now += 3 * 60_000;
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(2);
-    expect(launched[1]!.base).toBe(next);
+    expect(launched[1]!.base).toMatchObject({ commit: next });
     expect(latest(task.id)).toMatchObject({ round: 2, head: next, state: "running" });
   });
 

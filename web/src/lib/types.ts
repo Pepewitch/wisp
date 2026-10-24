@@ -114,6 +114,12 @@ export type ApiTask = FromAnyDaemon<
   | "latest_turn_exit_code"
   | "latest_turn_has_result"
   | "latest_turn_background"
+  | "parent_task_id"
+  | "subtask_kind"
+  | "report_to_parent"
+  | "base_from"
+  | "base_sha"
+  | "merge_granted_by"
 >;
 
 /** A turn from the conversation routes. */

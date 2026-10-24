@@ -18,6 +18,7 @@ import { startTurn, taskEnv } from "../runner";
 import { getTask, setTaskFields, transition } from "../store";
 import { taskMode, type Task } from "../types";
 import { createWorktree, localWorktree, runSetup } from "../worktree";
+import type { PinnedBase } from "./subtask-create";
 
 /**
  * Full task-creation flow, run async after the record is persisted (spawn
@@ -32,7 +33,7 @@ export async function launchTask(
   adapters: Record<string, AdapterDef>,
   cfg: WispConfig,
   attachments: DecodedAttachment[] = [],
-  base?: string,
+  base?: string | PinnedBase,
 ): Promise<void> {
   try {
     const mode = taskMode(task);

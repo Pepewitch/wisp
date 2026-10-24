@@ -29,6 +29,14 @@ export type TaskState = (typeof TASK_STATES)[number];
 export const TASK_MODES = ["worktree", "local"] as const;
 export type TaskMode = (typeof TASK_MODES)[number];
 
+/**
+ * What a subtask is for, which also picks its base: `review` starts from the
+ * parent's PR head and never pushes, `explore` from the project's base, and
+ * `continue` from the parent's committed branch tip.
+ */
+export const SUBTASK_KINDS = ["review", "explore", "continue"] as const;
+export type SubtaskKind = (typeof SUBTASK_KINDS)[number];
+
 export type TurnStatus = "running" | "done" | "failed" | "interrupted";
 /**
  * Who asked for a turn when it was not a message: `background` is a model call
@@ -190,6 +198,38 @@ export interface ApiTask {
   turn_input: TurnInput | null;
   /** Archived tasks only. */
   cleanup?: CleanupSummary;
+  /** The task this one is a subtask of; null for a root task, and for a subtask whose parent was deleted. */
+  parent_task_id: string | null;
+  /** Set on every subtask, kept when its parent is deleted; null for a root task. */
+  subtask_kind: SubtaskKind | null;
+  /** Whether this subtask reports its turns back to its parent. */
+  report_to_parent: boolean;
+  /** Where the pinned base came from: `pr#<n>`, `parent:<id>`, `project` or `explicit`; null for a root task. */
+  base_from: string | null;
+  /** `base_commit` under the name subtasks use for their pinned base; null until the worktree exists. */
+  base_sha: string | null;
+  /** Who turned auto-merge on: `person`, `parent:<id>` or `agent:<id>`; null when it is off or was armed before this was recorded. */
+  merge_granted_by: string | null;
+}
+
+/** GET /api/tasks/:id/subtasks: one child, archived ones included. */
+export interface ApiSubtask {
+  id: string;
+  title: string;
+  /** Null only for a reviewer from before subtasks whose kind was never recorded. */
+  kind: SubtaskKind | null;
+  /** One of Wisp's auto-review reviewers: never counted toward caps or "live subtasks". */
+  reviewer: boolean;
+  state: TaskState;
+  archived: boolean;
+  report_to_parent: boolean;
+  base_from: string | null;
+  /** The newest turn result, clipped; the whole one is `wisp result <id>`. */
+  result: string | null;
+  /** What it reported to its parent and where each report stands. */
+  reports: { pending: number; queued: number; dropped: number };
+  created_at: string;
+  updated_at: string;
 }
 
 /** GET /api/tasks: each task plus the facts only the list carries. */

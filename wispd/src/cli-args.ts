@@ -12,6 +12,8 @@ for (const flag of ["every", "prompt", "at", "lifetime", "max-wakeups", "params"
 for (const flag of ["round", "project", "draft", "area", "note", "pr"]) VALUE_FLAGS.add(flag);
 // wisp capture
 for (const flag of ["viewport", "selector", "wait-for", "wait", "script"]) VALUE_FLAGS.add(flag);
+// subtasks: wisp new --parent <id> --kind <kind>, wisp archive --subtasks <archive|force>
+for (const flag of ["parent", "kind", "subtasks"]) VALUE_FLAGS.add(flag);
 REPEAT_FLAGS.add("allow-port");
 
 export function parseArgs(args: string[]): Parsed {

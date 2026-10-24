@@ -16,9 +16,21 @@ import { turnInput } from "../live-input";
  * consumer a straggler misleads. Everything that deletes, archives or signals
  * calls `backgroundWork` bare and still sees every row.
  */
+/** The relationship as the API serves it; a row written before migration 26 reads as a root task. */
+function subtaskFields(t: Task): Pick<ApiTask, "parent_task_id" | "subtask_kind" | "report_to_parent" | "base_from" | "base_sha" | "merge_granted_by"> {
+  return {
+    parent_task_id: t.parent_task_id ?? null,
+    subtask_kind: t.subtask_kind ?? null,
+    report_to_parent: t.report_to_parent === 1,
+    base_from: t.base_from ?? null,
+    base_sha: t.base_commit,
+    merge_granted_by: t.merge_granted_by ?? null,
+  };
+}
+
 export function apiTask(t: Task): ApiTask {
   const { brief_enabled: _brief, brief_generation: _generation, input_seq: _seq, input_rev: _rev, ...row } = t;
-  return { ...row, archived: t.archived !== 0, fast: t.fast !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), turn_input: t.archived ? null : turnInput(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
+  return { ...row, ...subtaskFields(t), archived: t.archived !== 0, fast: t.fast !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), turn_input: t.archived ? null : turnInput(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
 }
 
 export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
@@ -32,6 +44,7 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
     fast,
     origin: _origin,
     source_seq: _sourceSeq,
+    actor: _actor,
     ...rest
   } = message;
   return {
@@ -73,6 +86,7 @@ export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
     outcome_json: _outcome,
     capture_categories_json,
     requested_fast,
+    source_message_id: _source,
     ...rest
   } = t;
   let captureCategories: Record<string, { records: number; bytes: number }> | null = null;
@@ -202,6 +216,11 @@ export function finishResponse(req: Request, response: Response): Response {
 
 export function err(message: string, status: number): Response {
   return json({ error: message }, status);
+}
+
+/** A refusal that carries more than its sentence (an archive's refused subtasks); `error` is still the sentence a client shows. */
+export function jsonError(message: string, status: number, detail: Record<string, unknown>): Response {
+  return json({ ...detail, error: message }, status);
 }
 
 /**

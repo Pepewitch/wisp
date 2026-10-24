@@ -8,6 +8,7 @@ import type {
   TaskMessageDelivery,
   TaskMessageStatus,
   TaskMode,
+  SubtaskKind,
   TaskState,
   TurnCaptureMode,
   TurnCaptureState,
@@ -15,7 +16,7 @@ import type {
   TurnOrigin,
   TurnStatus,
 } from "../../shared/api/task";
-export { TASK_MODES, TASK_STATES } from "../../shared/api/task";
+export { SUBTASK_KINDS, TASK_MODES, TASK_STATES } from "../../shared/api/task";
 export type {
   ApiTask,
   ApiTaskListItem,
@@ -32,6 +33,7 @@ export type {
   SearchTaskHit,
   SendResponse,
   SendWhen,
+  SubtaskKind,
   TaskDetail,
   TaskMessageDelivery,
   TaskMessageStatus,
@@ -114,6 +116,16 @@ export interface Task {
    * verification recipe). NULL for every ordinary task.
    */
   verify_role?: "reviewer" | "recipe" | null;
+  /** The parent task (subtasks.ts); NULL for a root task and once the parent is deleted. Fixed at creation. */
+  parent_task_id?: string | null;
+  /** NULL for a root task. Fixed at creation, and kept when the parent is deleted. */
+  subtask_kind?: SubtaskKind | null;
+  /** 1 when the subtask reports back to its parent. Fixed at creation. */
+  report_to_parent?: number;
+  /** Where the pinned base came from (subtasks.ts). Fixed at creation. */
+  base_from?: string | null;
+  /** Who turned auto-merge on: person, parent:<id> or agent:<id>. Not written yet: subtask merge rights (a later step) will, and will read NULL as none. */
+  merge_granted_by?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -189,6 +201,8 @@ export interface Turn {
   prompt: string;
   /** Who asked for it: NULL for a message, 'background' for a call background work woke (migration 21). */
   origin: TurnOrigin | null;
+  /** The message that started it, written with the row (migration 26); NULL for turn 1 and a background call. Internal. */
+  source_message_id?: string | null;
   result: string | null;
   status: TurnStatus;
   pid: number | null;
@@ -295,6 +309,8 @@ export interface TaskMessage {
   origin?: import("./turn-input").MessageOrigin;
   /** Admission order among the task's messages; internal. */
   source_seq?: number | null;
+  /** Who sent it, as the task audit names actors (migration 26); NULL for a row older than the column. Internal. */
+  actor?: string | null;
   created_at: string;
   updated_at: string;
 }

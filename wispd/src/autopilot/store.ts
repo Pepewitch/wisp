@@ -264,6 +264,8 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
     if (task.archived) throw new AutopilotError("An archived task cannot be switched on", 409)
     if (task.mode === "local") throw new AutopilotError("Auto-merge, auto-fix and auto-review need a task with its own branch; this one runs in the project checkout", 409)
     if (task.verify_role) throw new AutopilotError("A reviewer or verification-recipe task cannot switch these on", 409)
+    // until merge rights exist (the next step of subtasks), no subtask may be armed: not at creation, not later
+    if (task.subtask_kind) throw new AutopilotError("Auto-merge, auto-fix and auto-review are not available on subtasks yet", 409)
     const label = [next.autoMerge && "Auto-merge on", next.autoFix && "Auto-fix on", next.autoReview && "Auto-review on"].filter(Boolean).join(", ")
     if (row) {
       reconfigure(row, current, next, label, now)

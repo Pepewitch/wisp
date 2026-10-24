@@ -11,6 +11,7 @@ import { taskDeliveryActive } from "./outbox";
 import { emit } from "./events";
 import type { Task } from "./types";
 import type { TaskExport } from "../../shared/task-export";
+import { childrenOf } from "./subtasks";
 
 const busy = new Set<string>();
 /** Background retention shares the export/purge exclusion, never races a portable snapshot. */
@@ -81,7 +82,9 @@ export async function exportTask(task: Task): Promise<TaskExport> {
   try {
     await processBarrier(task.id);
     const turns = turnsFor(task.id), messages = messagesFor(task.id);
-    const result: TaskExport = { format: "wisp-task-export-v1", exportedAt: new Date().toISOString(), task, turns, messages, files: [], missing: [] };
+    // one task: a parent names its children, and a child's row names its parent (there is no import)
+    const subtasks = childrenOf(task.id, { archived: true }).map((child) => child.id);
+    const result: TaskExport = { format: "wisp-task-export-v1", exportedAt: new Date().toISOString(), task, turns, messages, ...(subtasks.length > 0 ? { subtasks } : {}), files: [], missing: [] };
     if (Buffer.byteLength(JSON.stringify(result)) > 8 * 1024 * 1024) throw new RetentionError("Conversation metadata exceeds the export limit. Use the offline backup procedure.", 413);
     const list = await filesFor(task, MAX_EXPORT_FILES); result.missing = list.missing;
     let total = 0;
@@ -123,6 +126,9 @@ export async function exportTask(task: Task): Promise<TaskExport> {
 export async function purgeTask(task: Task): Promise<void> {
   task = getTask(task.id) ?? (() => { throw new RetentionError("This task was already deleted. Refresh the task list.", 404); })();
   settled(task, false);
+  // its children are never deleted with it: each is purged on its own, once archived
+  const live = childrenOf(task.id).length;
+  if (live > 0) throw new RetentionError(`This task has ${live} unarchived subtask${live === 1 ? "" : "s"}. Archive them first; its archived subtasks stay, without a parent.`);
   if (busy.has(task.id)) throw new RetentionError("Another export or deletion is running for this task. Wait and retry.");
   busy.add(task.id);
   try {
@@ -148,6 +154,8 @@ export async function purgeTask(task: Task): Promise<void> {
       db.query("DELETE FROM task_answer_observations WHERE task_id = ?").run(task.id);
       // Who did what to it (task-audit.ts) goes with it.
       db.query("DELETE FROM task_audit WHERE task_id = ?").run(task.id);
+      // What it reported to a parent; what was reported to it (subtasks_delete drops those still undelivered).
+      db.query("DELETE FROM subtask_reports WHERE child_task_id = ?").run(task.id);
       // Workflows and their history; the workflows_delete trigger does the
       // same, but this list is the one that says what deletion removes.
       db.query("DELETE FROM workflow_history WHERE workflow_id IN (SELECT id FROM workflows WHERE task_id = ?)").run(task.id);

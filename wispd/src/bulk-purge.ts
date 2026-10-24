@@ -3,6 +3,7 @@ import { getTask, listTasks } from "./store";
 import { purgeTask, RetentionError, taskStorage } from "./task-retention";
 import { homeIsDraining } from "./home-lifetime";
 import { deleteTaskFromCaches, type TaskCache } from "./task-cache";
+import { childrenOf } from "./subtasks";
 import type { Task } from "./types";
 
 export interface PurgeCandidate { id: string; title: string; updatedAt: string; bytes: number | null; error?: string }
@@ -21,8 +22,13 @@ export async function planBulkPurge(cutoff: string): Promise<PurgePlan> {
   const selected = candidates(cutoff), tasks: PurgeCandidate[] = [];
   for (const task of selected) {
     const row: PurgeCandidate = { id: task.id, title: task.title, updatedAt: task.updated_at, bytes: null };
-    try { row.bytes = (await taskStorage(task)).bytes; }
-    catch (error) { row.error = message(error); }
+    // listed, so the plan says why it will not go; purgeTask refuses it the same way
+    const live = childrenOf(task.id).length;
+    if (live > 0) row.error = `This task has ${live} unarchived subtask${live === 1 ? "" : "s"}. Archive them first.`;
+    else {
+      try { row.bytes = (await taskStorage(task)).bytes; }
+      catch (error) { row.error = message(error); }
+    }
     tasks.push(row);
   }
   const version = fingerprint(selected);

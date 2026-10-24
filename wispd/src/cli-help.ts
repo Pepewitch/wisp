@@ -34,7 +34,7 @@ const COMMAND_USAGE = {
                                                        --attach repeats, up to 10 files and 50 MB per turn:
                                                        images 5 MB, pdf and text 20 MB, video 50 MB
                                                        (--image is the old name and still works))`,
-  ls: `  ${COMMAND} ls [-a|--all]                           list your tasks (alias: list; -a includes archived)`,
+  ls: `  ${COMMAND} ls [-a|--all] [--json]                    list your tasks, subtasks under their parent (alias: list; -a includes archived)`,
   show: `  ${COMMAND} show <task>                             task detail: turns, attachments, diffstat`,
   result: `  ${COMMAND} result <task> [turn]                    the agent's full answer for a turn (default: latest)`,
   log: `  ${COMMAND} log <task> [turn] [-f|--follow] [--raw] [--diagnostic]

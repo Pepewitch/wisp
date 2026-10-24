@@ -5,7 +5,10 @@ import { validateWorkflowParams } from "../workflows/definitions";
 import { installedWorkflows, workflowById } from "../workflows/plugins";
 import { changeWorkflowState, createWorkflow, getWorkflow, listWorkflows, updateWorkflow, workflow, workflowHistory } from "../workflows/store";
 import { err, json, jsonObjectBody } from "./http";
-import { recordAudit, requestActor } from "../task-audit";
+import { isAgentActor, recordAudit, requestActor } from "../task-audit";
+
+/** Merge permission is a person's to give: an agent may keep one it was given, never grant itself one. */
+const MERGE_IS_A_PERSONS = "Only a person may allow a merge: an agent cannot turn allowMerge on. Ask the person, or leave it off.";
 
 async function taskWorkflows(req: Request, taskId: string): Promise<Response> {
   const task = getTask(taskId);
@@ -17,8 +20,14 @@ async function taskWorkflows(req: Request, taskId: string): Promise<Response> {
   if (body instanceof Response) return body;
   const definition = workflowById(body.type)?.definition;
   if (!definition) return err("Unknown workflow type", 400);
-  const created = createWorkflow(task.id, definition, validateWorkflowParams(definition, body.params ?? {}));
-  recordAudit(task.id, "workflow-start", requestActor(req), `${created.id} (${created.type})`);
+  const actor = requestActor(req);
+  const asked = isRecord(body.params) ? body.params : {};
+  if (isAgentActor(actor) && asked.allowMerge === true) return err(MERGE_IS_A_PERSONS, 409);
+  // a heartbeat allows a merge by default; one an agent starts does not, unless a person turns it on later
+  const params = validateWorkflowParams(definition, isAgentActor(actor) && definition.parameters.some((p) => p.key === "allowMerge")
+    ? { ...asked, allowMerge: false } : body.params ?? {});
+  const created = createWorkflow(task.id, definition, params, new Date(), actor);
+  recordAudit(task.id, "workflow-start", actor, `${created.id} (${created.type})`);
   return json(created, 201);
 }
 
@@ -39,8 +48,10 @@ export async function workflowRoute(req: Request, path: string): Promise<Respons
       recordAudit(row.task_id, action, requestActor(req), `${row.id} (${row.type})`);
     if (req.method === "POST" && match[2]) {
       const action = match[2];
+      const actor = requestActor(req);
       const changed = changeWorkflowState(row.id, action === "resume" ? "active" : action === "pause" ? "paused" : "completed",
-        action === "resume" ? "Resumed; waiting for a fresh check" : action === "pause" ? "Paused by request" : "Completed by request");
+        action === "resume" ? "Resumed; waiting for a fresh check" : action === "pause" ? "Paused by request" : "Completed by request",
+        new Date(), action === "resume" && isAgentActor(actor) ? actor : null);
       audit(`workflow-${action as "pause" | "resume" | "complete"}`);
       return json(changed);
     }
@@ -48,7 +59,10 @@ export async function workflowRoute(req: Request, path: string): Promise<Respons
       const def = workflowById(row.type)?.definition;
       if (!def || def.version !== row.version) return err("Workflow definition changed; arm a new instance", 409);
       if (!isRecord(body.params) || !Number.isSafeInteger(body.revision)) return err("params and revision are required", 400);
-      const updated = updateWorkflow(row.id, validateWorkflowParams(def, { ...workflow(row).params, ...body.params }), Number(body.revision));
+      const params = validateWorkflowParams(def, { ...workflow(row).params, ...body.params });
+      const actor = requestActor(req);
+      if (params.allowMerge === true && workflow(row).params.allowMerge !== true && isAgentActor(actor)) return err(MERGE_IS_A_PERSONS, 409);
+      const updated = updateWorkflow(row.id, params, Number(body.revision), new Date(), actor);
       audit("workflow-update");
       return json(updated);
     }

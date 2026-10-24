@@ -54,6 +54,20 @@ remaining platform gaps, and native dependency advisory scope.
   privilege boundary being crossed, but it does mean the viewer is not a
   containment guarantee. Do not treat it as one, and do not reuse its path
   check as a sandbox.
+- Subtasks (a preview, off by default) let an agent start tasks under another
+  task. Choosing a parent is not authenticated: any caller with the token can
+  name any parent, and the same OS user's processes can do everything the CLI
+  can. The caps, the CLI's warning when an agent names a parent that is not its
+  own task, and the `<wisp>` framing of a subtask's prompt guard against
+  mistakes, loops and injection between agents. They do not stop the local
+  user's own processes. The parent's goal reaches a subtask quoted, outside
+  Wisp's section, as data.
+- A request's actor (`X-Wisp-Task` marks an agent's turn) is a self-report. It
+  only ever narrows what a request can do: a request that names an agent is
+  refused a merge grant, and no actor widens what the token already allows. It
+  guards agents that follow the rules against grants they should not make. A
+  process that leaves the marker out is a person's request, which the token's
+  full control permits anyway.
 
 ## Safe deployment
 

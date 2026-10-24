@@ -16,6 +16,7 @@ import { AUDIT_USAGE, auditCommand } from "./cli-audit";
 import { reviewCommand } from "./cli-review";
 import { verifyCommand } from "./cli-verify";
 import { createCommand } from "./cli-create";
+import { archiveCommand, nestedTasks, printFamily } from "./cli-subtasks";
 import { parseArgs, type Flags } from "./cli-args";
 export { parseArgs } from "./cli-args";
 import { retentionCommand } from "./cli-retention";
@@ -95,7 +96,7 @@ function printTasks(tasks: ApiTaskListItem[]): void {
     print("no tasks");
     return;
   }
-  for (const t of tasks) {
+  for (const { task: t, depth } of nestedTasks(tasks)) {
     // a failed task autopilot is about to resume after the network dropped is a pause (autopilot/network.ts)
     const paused = t.state === "failed" && Boolean(t.autopilot?.network);
     const icon = paused ? STATE_ICON.stuck : STATE_ICON[t.state] ?? "·";
@@ -107,7 +108,7 @@ function printTasks(tasks: ApiTaskListItem[]): void {
     // harness never reported one — the distinction P5b exists for
     const model = t.latest_turn_model ?? (t.model ? `${t.model} (requested)` : null);
     print(
-      `${t.id}  ${icon} ${word.padEnd(11)} ${t.harness.padEnd(7)} ${model ? `${model} ` : ""}turn ${String(t.turn_count).padEnd(2)} ${ago(t.updated_at).padEnd(4)} ${t.title.slice(0, 50)}${detail}`,
+      `${"  ".repeat(depth)}${t.id}  ${icon} ${word.padEnd(11)} ${t.harness.padEnd(7)} ${model ? `${model} ` : ""}turn ${String(t.turn_count).padEnd(2)} ${ago(t.updated_at).padEnd(4)} ${t.title.slice(0, 50)}${detail}`,
     );
   }
 }
@@ -142,6 +143,7 @@ async function showCommand(positional: string[]): Promise<void> {
   if (task.fast) print(`fast mode: on`);
   print(`worktree: ${task.worktree_path ?? "-"}\nbranch: ${task.branch ?? "-"}`);
   if (task.worktreeReason) print(task.worktreeReason);
+  await printFamily(task);
   printBackground(task);
   for (const turn of task.turns) printTurn(task, turn);
   for (const message of task.messages ?? []) {
@@ -455,16 +457,6 @@ function initCommand(flags: Flags): void {
   print(`next: register a repository with '${COMMAND} project add /path/to/repo', then run '${COMMAND} doctor'`);
 }
 
-async function archiveCommand(id: string | undefined, flags: Flags): Promise<void> {
-  const data = await api(`/api/tasks/${id}/archive`, "POST", {
-    force: flags.force === true || flags.f === true,
-  });
-  print(`archived (branch ${data.branch} kept); cleanup continues in the background. Check: ${COMMAND} cleanup ${id}`);
-  // the teardown finishes in the background, so anything it decided NOT to
-  // delete has to be said here — the user needs to know where their files are
-  if (data.note) print(data.note);
-}
-
 async function attachCommand(id: string | undefined): Promise<void> {
   const data = await api(`/api/tasks/${id}/attach`);
   if (!data.argv) {
@@ -495,7 +487,9 @@ export const COMMANDS = {
   },
   new: (positional, flags) => createCommand(positional, flags),
   ls: async (_positional, flags) => {
-    printTasks((await api(`/api/tasks${flags.all || flags.a ? "?archived=1" : ""}`)) as ApiTaskListItem[]);
+    const tasks = (await api(`/api/tasks${flags.all || flags.a ? "?archived=1" : ""}`)) as ApiTaskListItem[];
+    if (flags.json === true) print(JSON.stringify(tasks, null, 2));
+    else printTasks(tasks);
   },
   show: (positional) => showCommand(positional),
   result: (positional) => resultCommand(positional),

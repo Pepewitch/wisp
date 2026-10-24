@@ -186,7 +186,10 @@ export async function launchReview(start: ReviewerStart, input: {
     prompt: `Auto-review ${label} · PR #${pr.number} · round ${round.round}${round.counted === 1 ? "" : " (re-run)"} · ${pr.head.slice(0, 7)}`,
     firstTurnPrompt: prompt,
     harness: review.harness, model: review.model ?? undefined, effort: review.effort ?? undefined,
-    fast: false, mode: "worktree", base: pr.head, actor: "autopilot", verifyRole: "reviewer",
+    fast: false, mode: "worktree", actor: "autopilot", verifyRole: "reviewer",
+    // a review subtask of the author, on the head this round reviews
+    subtask: { parentId: author.id, kind: "review" },
+    base: { ref: `refs/pull/${pr.number}/head`, commit: pr.head, from: `pr#${pr.number}` },
     prepare: (task) => { launchedReview(review.id, task.id) },
   })
   if (!("kind" in created)) return { launched: true }
