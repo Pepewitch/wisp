@@ -29,7 +29,7 @@ interface CreateTaskMessageInput {
   attachmentHash: string;
   attachmentsJson?: string | null;
   /** who wrote it; fixed at creation, so delivery can frame it */
-  origin?: "human" | "workflow" | "scheduled" | "plugin";
+  origin?: "human" | "workflow" | "scheduled" | "plugin" | "subtask";
   /** held for the next turn: never steered, and behind anything sent later without the hold */
   deferred?: boolean;
   /** who sent it, as the task audit names actors; fixed at creation, and kept by a retry */
@@ -199,12 +199,20 @@ export function messagesForTurnPage(
  */
 const QUEUE_ORDER = `deferred ASC, ${ADMISSION_ORDER}`;
 
+/**
+ * The one rule for which queued messages may start a turn on their own: a
+ * workflow's generated instruction and a subtask report start only when named
+ * (by the workflow, by report delivery). Everything else is the FIFO. Shared
+ * by nextQueuedMessage, QUEUE_HEAD and the claim, so they can never disagree.
+ */
+const selfStarting = (row = ""): string => `((${row}workflow_id IS NULL AND ${row}origin IS NOT 'subtask') OR ${row}id = ?)`;
+
 export function nextQueuedMessage(taskId: string, workflowMessageId = ""): TaskMessage | null {
   return (
     (db
       .query(
         `SELECT * FROM task_messages
-         WHERE task_id = ? AND status = 'queued' AND claim IS NULL AND (workflow_id IS NULL OR id = ?)
+         WHERE task_id = ? AND status = 'queued' AND claim IS NULL AND ${selfStarting()}
          ORDER BY ${QUEUE_ORDER} LIMIT 1`,
       )
       .get(taskId, workflowMessageId) as TaskMessage | null) ?? null
@@ -214,7 +222,7 @@ export function nextQueuedMessage(taskId: string, workflowMessageId = ""): TaskM
 export function updateQueuedTaskMessage(id: string, taskId: string, text: string): TaskMessage | null {
   const result = db.run(
     `UPDATE task_messages SET text = ?, updated_at = ?
-     WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NULL`,
+     WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NULL AND origin IS NOT 'subtask'`,
     [text, now(), id, taskId],
   );
   const updated = result.changes > 0 ? getTaskMessage(id) : null;
@@ -231,11 +239,12 @@ export function updateQueuedTaskMessage(id: string, taskId: string, text: string
 export function releaseTaskMessageHold(id: string, taskId: string): TaskMessage | null {
   const result = db.run(
     `UPDATE task_messages SET deferred = 0, updated_at = ?
-     WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NULL AND deferred = 1`,
+     WHERE id = ? AND task_id = ? AND status = 'queued' AND claim IS NULL AND deferred = 1 AND origin IS NOT 'subtask'`,
     [now(), id, taskId],
   );
   const message = getTaskMessage(id);
-  if (!message || message.task_id !== taskId || message.status !== "queued" || message.claim !== null) return null;
+  // a subtask report is started by its delivery, never sent now by hand
+  if (!message || message.task_id !== taskId || message.status !== "queued" || message.claim !== null || message.origin === "subtask") return null;
   if (result.changes > 0) emit({ type: "message", taskId, messageId: id });
   return message;
 }
@@ -263,7 +272,7 @@ export function claimTaskMessageForSteering(id: string, taskId: string, turnN: n
 
 /** The FIFO head for (task, id), counting rows already claimed by an admission in flight. */
 const QUEUE_HEAD = `SELECT queued.id FROM task_messages AS queued
-  WHERE queued.task_id = ? AND queued.status = 'queued' AND (queued.workflow_id IS NULL OR queued.id = ?)
+  WHERE queued.task_id = ? AND queued.status = 'queued' AND ${selfStarting("queued.")}
   ORDER BY queued.deferred ASC, queued.source_seq ASC, queued.rowid ASC LIMIT 1`;
 
 /** Whether this queued message is the one the next turn would start. */

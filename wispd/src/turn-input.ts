@@ -71,7 +71,7 @@ export function withWispSection(lines: string[], message: string): string {
 }
 
 /** Who wrote a queued message, fixed when it was created (store-messages). */
-export type MessageOrigin = "human" | "legacy" | "workflow" | "scheduled" | "plugin"
+export type MessageOrigin = "human" | "legacy" | "workflow" | "scheduled" | "plugin" | "subtask"
 
 /**
  * How a message's own text joins its input's one Wisp section. The stored
