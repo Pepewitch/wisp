@@ -13,6 +13,7 @@
  * each other into merging, not against the local user's own processes.
  */
 import { db, getTask } from "../store"
+import { PERSON_ACTORS } from "../task-audit"
 import type { Task } from "../types"
 
 export class MergeRightsError extends Error {}
@@ -38,8 +39,10 @@ export function holdsMergeRights(taskId: string, now = new Date()): boolean {
   const ownAutoMerge = task.merge_granted_by === "person" && db.query(`SELECT 1 FROM workflows WHERE task_id = ? AND type = 'pr-autopilot'
     AND state != 'completed' AND json_extract(params_json, '$.autoMerge') = 1`).get(taskId) !== null
   if (ownAutoMerge) return true
+  // merge_allowed_by is the actor who allowed it (routes/workflows.ts)
+  const people = PERSON_ACTORS.map(() => "?").join(", ")
   return db.query(`SELECT 1 FROM workflows WHERE task_id = ? AND type != 'pr-autopilot' AND state = 'active'
-    AND merge_allowed_by = 'person' AND expires_at > ? AND json_extract(params_json, '$.allowMerge') = 1`).get(taskId, now.toISOString()) !== null
+    AND merge_allowed_by IN (${people}) AND expires_at > ? AND json_extract(params_json, '$.allowMerge') = 1`).get(taskId, ...PERSON_ACTORS, now.toISOString()) !== null
 }
 
 /**

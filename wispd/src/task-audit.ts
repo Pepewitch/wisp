@@ -49,6 +49,9 @@ export function requestActor(req: Request): TaskAuditActor {
   return client === "cli" && TASK_ID.test(task) ? `agent:${task}` : client;
 }
 
+/** The actors that are a person: any client, and a caller that did not say (requestActor). */
+export const PERSON_ACTORS = ["web", "desktop", "cli", "api"] as const;
+
 /**
  * A request an agent made from its own turn. This only ever NARROWS what a
  * request may do (an agent cannot grant merge permission); every other actor

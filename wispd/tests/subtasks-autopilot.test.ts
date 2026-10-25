@@ -78,8 +78,8 @@ describe("autopilot on subtasks", () => {
   test("rights from a workflow: a person's live allowMerge counts; an expired one, an agent's resume, and a legacy row do not", () => {
     const parent = task();
     const params = validateWorkflowParams(heartbeat, { prompt: "merge when green", allowMerge: true });
+    // recorded the way the workflows route records it: the person's own actor
     const flow = createWorkflow(parent, heartbeat, params, new Date(), "web");
-    db.run("UPDATE workflows SET merge_allowed_by = 'person' WHERE id = ?", [flow.id]);
     expect(holdsMergeRights(parent)).toBe(true);
     db.run("UPDATE workflows SET expires_at = '2000-01-01T00:00:00.000Z' WHERE id = ?", [flow.id]);
     expect(holdsMergeRights(parent)).toBe(false);
