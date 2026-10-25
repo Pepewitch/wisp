@@ -4,13 +4,15 @@ import { ChangesPane } from "@/components/changes-pane"
 import { PaneErrorBoundary } from "@/components/error-boundary"
 import { Tab } from "@/components/primitives"
 import { AutopilotPane } from "@/components/autopilot-pane"
+import { SubtasksPane } from "@/components/subtasks-pane"
 import { WorkflowsPane } from "@/components/workflows-pane"
 import { parsedDiff, useDiff, useHarnessFeatures, useTaskWorkflows } from "@/hooks/queries"
+import { useSubtaskCount } from "@/hooks/useSubtasks"
 import { changedFileCount } from "@/lib/diff"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { ApiTask } from "@/lib/types"
 
-type PanelTab = "autopilot" | "changes" | "workflows"
+type PanelTab = "autopilot" | "changes" | "workflows" | "subtasks"
 
 /**
  * The right column's upper panel. Three views of the same task's durable state:
@@ -25,6 +27,9 @@ type PanelTab = "autopilot" | "changes" | "workflows"
  *
  * The auto-merge and auto-fix switches moved in from the task menu, with the
  * room to say what they did, and Autopilot is the tab the panel opens on.
+ *
+ * **Subtasks** lists a parent's children (with `features.subtasks`): where
+ * each stands and what it said, and New subtask beside them.
  *
  * All panes stay mounted. Switching to Workflows and back must not close the
  * diff you had open — the same rule the mobile shell's tabs already follow.
@@ -49,16 +54,20 @@ export function TaskPanel({
   const features = useHarnessFeatures()
   const workflowsSupported = Boolean(features.data?.taskWorkflows)
   const autopilotSupported = Boolean(features.data?.taskAutopilot)
+  const subtasksSupported = features.data?.subtasks === true
   const tabs: PanelTab[] = [
     ...(autopilotSupported ? (["autopilot"] as const) : []),
     "changes",
     ...(workflowsSupported ? (["workflows"] as const) : []),
+    ...(subtasksSupported ? (["subtasks"] as const) : []),
   ]
   const label: Record<PanelTab, string> = {
     autopilot: "Autopilot",
     changes: "Changes",
     workflows: "Workflows",
+    subtasks: "Subtasks",
   }
+  const children = useSubtaskCount(taskId)
   // What the person last asked for; Autopilot is the opening choice. Features
   // load after first paint, so the choice is held even while it is unavailable.
   const [tab, setTab] = useState<PanelTab>("autopilot")
@@ -82,7 +91,7 @@ export function TaskPanel({
           size={touch ? "lg" : "sm"}
           active={view === name}
           aria-selected={view === name}
-          count={name === "changes" ? changes : name === "workflows" ? attached || undefined : undefined}
+          count={name === "changes" ? changes : name === "workflows" ? attached || undefined : name === "subtasks" ? children || undefined : undefined}
           onClick={() => setTab(name)}
         >
           {label[name]}
@@ -131,6 +140,15 @@ export function TaskPanel({
           task={task}
           header={view === "workflows" ? strip : undefined}
           hidden={view !== "workflows"}
+          touch={touch}
+        />
+      )}
+      {subtasksSupported && (
+        <SubtasksPane
+          key={`subtasks:${connectionId}:${taskId ?? ""}`}
+          task={task}
+          header={view === "subtasks" ? strip : undefined}
+          hidden={view !== "subtasks"}
           touch={touch}
         />
       )}

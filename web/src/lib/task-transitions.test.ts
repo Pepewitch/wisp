@@ -122,6 +122,22 @@ describe("a turn a subtask report started", () => {
     const previous = snapshotTaskStates([task("t1", "running")])
     expect(finishedTransitions(previous, [report("t1", "done", false)])).toHaveLength(1)
   })
+
+  it("does not hide the person's own turn that finished before a report turn opened and closed", () => {
+    const tracker = createTaskTransitionTracker()
+    tracker.observe("local", [report("t1", "running", false)])
+    expect(tracker.observe("local", [report("t1", "done")]).map((t) => [t.task.id, t.to])).toEqual([["t1", "done"]])
+  })
+
+  it("is quiet through the tracker when it was the turn seen running, after a background one too", () => {
+    const tracker = createTaskTransitionTracker()
+    tracker.observe("local", [report("t1", "done", false)])
+    expect(tracker.observe("local", [report("t1", "running")])).toEqual([])
+    expect(tracker.observe("local", [report("t1", "done")])).toEqual([])
+    // seen running on a report, settled on a background wake: neither answered anyone
+    expect(tracker.observe("local", [report("t1", "running")])).toEqual([])
+    expect(tracker.observe("local", [{ ...task("t1", "done"), latest_turn_background: true }])).toEqual([])
+  })
 })
 
 describe("task transition tracker", () => {

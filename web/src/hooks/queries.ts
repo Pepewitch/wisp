@@ -30,6 +30,27 @@ import type {
   WorktreeFileResponse,
 } from "@/lib/types";
 
+/** The live task list's one query: every observer of the key registers this same fetch. */
+function liveTasksQuery(transport: DaemonRuntime["transport"], qk: DaemonRuntime["qk"]) {
+  return {
+    queryKey: qk.tasksList(false),
+    queryFn: () => transport.request<ApiTask[]>("/api/tasks?cleanup=1"),
+  };
+}
+
+/**
+ * A reader of the live task list `useTasks` keeps (a parent's title, a
+ * subtask count): never a request of its own. It registers the list's real
+ * fetch, because a query runs whichever observer's options were set last,
+ * and a reader that set `skipToken` there turned the next refresh into a
+ * "Missing queryFn" error. `enabled: false` keeps it from fetching; the
+ * cache still hands it every update.
+ */
+export function useLiveTasks<T>(select: (tasks: ApiTask[]) => T) {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({ ...liveTasksQuery(transport, qk), select, enabled: false });
+}
+
 /**
  * GET /api/tasks — unfinished cleanup stays visible even with archived history hidden.
  *
@@ -42,10 +63,7 @@ import type {
 export function useTasks(showArchived: boolean) {
   const { transport, qk } = useDaemonRuntime();
   const client = useQueryClient();
-  const live = useQuery({
-    queryKey: qk.tasksList(false),
-    queryFn: () => transport.request<ApiTask[]>("/api/tasks?cleanup=1"),
-  });
+  const live = useQuery(liveTasksQuery(transport, qk));
   const history = useQuery({
     queryKey: qk.tasksList(true),
     queryFn: () => transport.request<ApiTask[]>("/api/tasks?archived=1"),

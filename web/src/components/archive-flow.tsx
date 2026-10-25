@@ -1,6 +1,9 @@
 import { Dialog } from "@base-ui/react/dialog"
+import type { ReactNode } from "react"
 
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
+import type { ArchiveFlow } from "@/hooks/useArchiveFlow"
+import type { FamilyMember, FamilyStep } from "@/lib/archive-family"
 import type { ApiTask } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -8,7 +11,8 @@ import { cn } from "@/lib/utils"
  * The archive refusal, as a dialog. Rendered by all three places that archive
  * (the overflow menu, the sidebar row's hover control, `/archive`), so the
  * refusal reads identically wherever the verb was reached from. Its state comes
- * from `useArchiveFlow` (hooks/useArchiveFlow.ts).
+ * from `useArchiveFlow` (hooks/useArchiveFlow.ts). A parent's family refusal
+ * is the same dialog naming every child and what happens to it.
  *
  * Portalled and unmounted while `reason` is null, so a row that is not
  * refusing anything contributes nothing to the document.
@@ -23,38 +27,58 @@ const stops = (task: ApiTask): string => {
   return verbs.length === 1 ? verbs[0]! : `${verbs.slice(0, -1).join(", ")} and ${verbs.at(-1)}`
 }
 
-export function ArchiveConfirmDialog({
-  task,
-  reason,
-  pending,
-  onCancel,
-  onForce,
-  stopsAutopilot = false,
-}: {
-  task: ApiTask
-  /** the daemon's sentence; null closes the dialog */
-  reason: string | null
-  pending: boolean
-  onCancel: () => void
-  onForce: () => void
-  /** the reason is autopilot's: confirming only switches it off */
-  stopsAutopilot?: boolean
-}) {
+const ARCHIVE_TITLE = "text-[14.5px] font-semibold tracking-[-0.01em]"
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
+
+/** The family confirm's button, for the one yes it asks next. */
+function familyVerb(next: FamilyStep, members: FamilyMember[]): string {
+  // `subtasks: "force"` forces every subtask, so the button says so, not just the ones named
+  if (next === "force") return "Force all subtasks"
+  if (next === "stopAutopilot") return "Stop their autopilot"
+  return `Archive with ${plural(members.length, "subtask")}`
+}
+
+/** What the yes covers, and what it leaves for another. */
+const FAMILY_NOTE: Record<FamilyStep, string> = {
+  archive: "Each subtask is checked as it is first: one with unsaved work, a running turn or autopilot on is named here before anything is archived.",
+  force: "Forcing applies to every subtask, not only the ones named: any uncommitted work is committed onto its branch (it is never discarded), a running turn stops, and the worktree is removed. Autopilot is still asked about on its own.",
+  stopAutopilot: "Wisp switches off autopilot on the subtasks named; their PRs stay open on GitHub. Nothing else is waived.",
+}
+
+/** Every child, and what happens to it: the decision is about all of them. */
+function FamilyList({ members }: { members: FamilyMember[] }) {
   return (
-    <Dialog.Root open={reason !== null} onOpenChange={(open) => !open && onCancel()}>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
-        <Dialog.Popup
-          className={cn(
-            "fixed top-[24vh] left-1/2 z-(--z-modal) w-[min(460px,calc(100vw-3rem))] -translate-x-1/2",
-            POPOVER_SURFACE,
-            "rounded-xl p-5 shadow-modal outline-none",
-          )}
-        >
-          <Dialog.Title className="text-[14.5px] font-semibold tracking-[-0.01em]">
-            Archive {task.title.slice(0, 40)}
-            {task.title.length > 40 && "…"}?
-          </Dialog.Title>
+    <ul className="mt-2 max-h-[30vh] overflow-y-auto rounded-md border border-border" data-archive-family>
+      {members.map((member) => (
+        <li key={member.id} className="flex flex-col gap-0.5 border-b border-border px-2.5 py-1.5 last:border-b-0" data-refused={member.refused || undefined}>
+          <span className="truncate text-[12px] text-foreground">{member.title}</span>
+          <span className={cn("text-[11px] leading-snug", member.refused ? "text-state-stuck" : "text-muted-foreground")}>{member.outcome}</span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** What the confirm says and asks: the dialog's body, and the gallery's specimen of it. */
+export function ArchiveConfirmContent({ task, flow, title }: { task: ApiTask; flow: ArchiveFlow; title: ReactNode }) {
+  const { reason, family, pending, stopsAutopilot } = flow
+  const refused = family?.members.filter((member) => member.refused).length ?? 0
+  return (
+    <>
+      {title}
+      {family ? (
+        <>
+          <p className="mt-2 text-[12px] leading-relaxed text-fg-secondary">
+            {refused > 0
+              ? `${plural(refused, "subtask")} cannot be archived as ${refused === 1 ? "it is" : "they are"}, so nothing was archived.`
+              : `It has ${plural(family.members.length, "subtask")}; archiving it archives them too.`}
+          </p>
+          <FamilyList members={family.members} />
+          <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">{FAMILY_NOTE[family.next]}</p>
+        </>
+      ) : (
+        <>
           {/* the daemon's own sentence, verbatim: it names what is unsaved
               and what the remedies are, which is the whole decision */}
           <p className="mt-2 text-[12px] leading-relaxed text-fg-secondary">{reason}</p>
@@ -65,14 +89,49 @@ export function ArchiveConfirmDialog({
                 ? "This task runs in the project directory, so archiving only files it — nothing is removed."
                 : "Forcing commits any uncommitted work onto the branch (it is never discarded) and then removes the worktree. The branch is kept, so the commit is where you will find that work."}
           </p>
-          <div className="mt-4 flex justify-end gap-2">
-            <Button type="button" size="lg" onClick={onCancel}>
-              Cancel
-            </Button>
-            <Button type="button" size="lg" tone="primary" disabled={pending} onClick={onForce}>
-              {pending ? "Archiving…" : "Archive anyway"}
-            </Button>
-          </div>
+        </>
+      )}
+      <div className="mt-4 flex justify-end gap-2">
+        <Button type="button" size="lg" onClick={flow.dismiss}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          size="lg"
+          tone="primary"
+          disabled={pending}
+          onClick={() => (family ? flow.confirmFamily() : flow.request(true))}
+        >
+          {pending ? "Archiving…" : family ? familyVerb(family.next, family.members) : "Archive anyway"}
+        </Button>
+      </div>
+    </>
+  )
+}
+
+/** The flow's one dialog: the daemon's refusal of this task, or of its family. */
+export function ArchiveConfirmDialog({ task, flow }: { task: ApiTask; flow: ArchiveFlow }) {
+  const name = `${task.title.slice(0, 40)}${task.title.length > 40 ? "…" : ""}`
+  return (
+    <Dialog.Root open={flow.reason !== null || flow.family !== null} onOpenChange={(open) => !open && flow.dismiss()}>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
+        <Dialog.Popup
+          className={cn(
+            "fixed top-[24vh] left-1/2 z-(--z-modal) w-[min(460px,calc(100vw-3rem))] -translate-x-1/2",
+            POPOVER_SURFACE,
+            "rounded-xl p-5 shadow-modal outline-none",
+          )}
+        >
+          <ArchiveConfirmContent
+            task={task}
+            flow={flow}
+            title={
+              <Dialog.Title className={ARCHIVE_TITLE}>
+                Archive {name}{flow.family ? " and its subtasks" : ""}?
+              </Dialog.Title>
+            }
+          />
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

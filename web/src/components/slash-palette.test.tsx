@@ -491,6 +491,24 @@ describe("Tier-1 dispatch", () => {
     expect(note.className).not.toContain("text-destructive")
   })
 
+  it("/archive on a parent opens the same family confirm, and taking the subtasks is its own request", async () => {
+    let refuse = true
+    const calls = stubApi((path) =>
+      path.endsWith("/archive") && refuse
+        ? { status: 409, body: { error: "task tk9zdy has 1 live subtask", refusedSubtasks: [{ id: "ca", title: "Child ca", error: "a live subtask", needs: "subtasks" }] } }
+        : { status: 200, body: { ok: true } },
+    )
+    mount(<SteerBox task={task()} onSend={async () => {}} />)
+    type("/archive")
+    await screen.findByTestId("slash-palette")
+    fireEvent.click(screen.getByTestId("slash-archive"))
+    expect(await screen.findByText("Child ca")).toBeInTheDocument()
+    refuse = false
+    fireEvent.click(screen.getByRole("button", { name: "Archive with 1 subtask" }))
+    await waitFor(() => expect(calls.filter((c) => c.path.endsWith("/archive"))).toHaveLength(2))
+    expect(calls.filter((c) => c.path.endsWith("/archive")).map((c) => c.body)).toEqual([{ force: false }, { force: false, subtasks: "archive" }])
+  })
+
   it("/push names the branch and keeps git's output on hover", async () => {
     stubApi(() => ({ status: 200, body: { ok: true, output: " To origin\n * [new branch] wisp/tk9zdy-steer\n" } }))
     mount(<SteerBox task={task()} onSend={async () => {}} />)

@@ -123,6 +123,24 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       .getQueriesData<ApiTask[]>({ queryKey: qk.tasks })
       .some(([, rows]) => rows?.some((task) => task.id === taskId && task.archived) ?? false);
   }
+  // A subtask's change is announced about the SUBTASK, but its parent's
+  // Subtasks tab shows it (state, result, where its reports stand, which a
+  // child's PR event moves without touching any task row). Every event about
+  // a task refreshes its own list and its parent's, debounced like the list.
+  const subtaskLists = new Set<string>();
+  const flushSubtaskLists = debounce(() => {
+    for (const id of subtaskLists) void opts.client.invalidateQueries({ queryKey: [...qk.task(id), "subtasks"] });
+    subtaskLists.clear();
+  }, opts.tasksDebounceMs ?? 300);
+  const noteSubtaskChange = (taskId: string) => {
+    subtaskLists.add(taskId);
+    const parent = opts.client
+      .getQueriesData<ApiTask[]>({ queryKey: qk.tasks })
+      .flatMap(([, rows]) => rows ?? [])
+      .find((task) => task.id === taskId)?.parent_task_id;
+    if (parent) subtaskLists.add(parent);
+    flushSubtaskLists();
+  };
   const invalidateStatus = debounce(
     () => void opts.client.invalidateQueries({ queryKey: qk.status }),
     opts.statusDebounceMs ?? 400,
@@ -166,6 +184,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       return;
     }
     if (!("taskId" in evt) || !evt.taskId) return;
+    noteSubtaskChange(evt.taskId);
     // Not only the selected task's: a pane switching back to a task must not
     // paint a tab list another window has since changed.
     if (evt.type === "terminals") {
@@ -302,6 +321,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     closed = true;
     if (reconnectTimer !== null) clearTimeout(reconnectTimer);
     flushTasks.cancel();
+    flushSubtaskLists.cancel();
     invalidateStatus.cancel();
     invalidateRepos.cancel();
     invalidateSelectedTurn.cancel();

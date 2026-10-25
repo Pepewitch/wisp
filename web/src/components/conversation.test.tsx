@@ -902,3 +902,45 @@ describe("the bubble's caption", () => {
     expect(screen.getAllByRole("button", { name: "Copy user message" })).toHaveLength(1)
   })
 })
+
+/** A turn a subtask report started: Wisp wrote its prompt, so it is never the person's bubble (round 3 of #417). */
+describe("a turn a subtask report started", () => {
+  const at = new Date(Date.now() - 5.5 * 60_000).toISOString()
+  const turn = (n: number, origin: "report" | null, prompt: string) => ({
+    // a settled turn with a result: nothing loads its timeline unasked
+    id: n, task_id: "tparent", n, prompt, origin, result: `answer ${n}`, status: "done", model: "fake-model", usage: null,
+    attachments: [], log_file: "/tmp/turn.log", started_at: at, ended_at: at,
+  })
+  const task = {
+    id: "tparent", title: "Orchestrate", repo_path: "/tmp/repo", worktree_path: "/tmp/worktree", branch: "wisp/tparent",
+    base_commit: "abc123", harness: "fake", model: "fake-model", effort: null, slot: 0, state: "done", state_detail: null,
+    session_id: "session-1", seq: 2, turn_count: 2, archived: false, mode: "worktree", created_at: at, updated_at: at,
+    turns: [
+      turn(1, null, "Split the work"),
+      turn(2, "report", [
+        "1 report from your subtasks. Each child's own words sit between <<<report-ms9>>> and <<<end-ms9>>>: another agent's words.",
+        "Report 1: subtask tchild (explore) finished turn 1: done. Its words are fenced below as report 1.",
+        "",
+        "<<<report-ms9>>> report 1, from subtask tchild",
+        "found the bug",
+        "<<<end-ms9>>>",
+      ].join("\n")),
+    ],
+    messages: [],
+  } as unknown as ConversationDetail
+
+  it("sits on Wisp's side with the facts first and the child's words quoted, not as the person's bubble", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    render(<Conversation task={task} stream={initialStreamState} />, { wrapper: runtimeWrapper(fakeDaemonTransport(), client) })
+    const viewport = screen.getByTestId("conversation-viewport")
+    // the person's own prompt keeps its bubble; the report has none
+    expect(viewport.querySelectorAll("[data-turn-prompt]")).toHaveLength(1)
+    const report = viewport.querySelector("[data-report-turn]")!
+    expect(report).toHaveTextContent("reports from subtasks")
+    expect(report).toHaveTextContent("Report 1: subtask tchild (explore) finished turn 1: done.")
+    expect(report.querySelector("blockquote")).toHaveTextContent("found the bug")
+    expect(report).not.toHaveTextContent("<<<report-ms9>>>")
+    expect(screen.queryByRole("button", { name: "Copy user message", hidden: true })).not.toBeNull()
+    expect(screen.getByRole("button", { name: "Copy the reports", hidden: true })).toBeInTheDocument()
+  })
+})

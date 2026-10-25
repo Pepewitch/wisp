@@ -1,15 +1,16 @@
-import { useState, type ReactNode } from "react"
+import type { ReactNode } from "react"
 
-import { ChevronDown, FolderAdd, Gear, Plus, Search, Verify } from "@/components/icons"
+import { FolderAdd, Gear, Search } from "@/components/icons"
 import { Button, Eyebrow, SwitchTrack } from "@/components/primitives"
 import {
   ProjectSearchInput,
   ProjectSearchResults,
 } from "@/components/project-search"
 import type { ProjectSearch } from "@/hooks/useProjectSearch"
-import { TaskRow, TaskRowTouch } from "@/components/task-row"
-import { VERIFICATION_DOT, verificationTitle, verificationTone } from "@/lib/auto-review-words"
+import { ArchiveSections, ProjectSection } from "@/components/sidebar-sections"
+import { FLAT_VIEW, type SidebarTree } from "@/hooks/useSidebarTree"
 import type { ProjectGroup } from "@/lib/projects"
+import { sidebarLists } from "@/lib/subtask-tree"
 import type {
   ApiTask,
   PullRequestOverviewEntry,
@@ -33,6 +34,11 @@ interface SidebarProps {
   groups: ProjectGroup[]
   /** Unfinished cleanup is always included; the footer toggle adds completed archives. */
   archivedTasks: ApiTask[]
+  /**
+   * The same tasks with their subtasks nested (useSidebarTree), shared with
+   * Ctrl+Tab so both agree on what is on screen. Absent: drawn flat.
+   */
+  tree?: Pick<SidebarTree, "lists" | "view">
   status: Record<string, StatusEntry>
   pullRequests: Record<string, PullRequestOverviewEntry>
   selectedId: string | null
@@ -92,6 +98,7 @@ interface SidebarProps {
 export function Sidebar({
   groups,
   archivedTasks,
+  tree,
   status,
   pullRequests,
   selectedId,
@@ -112,6 +119,7 @@ export function Sidebar({
   loading,
   touch = false,
 }: SidebarProps) {
+  const { lists, view } = tree ?? { lists: sidebarLists(groups, archivedTasks, false), view: FLAT_VIEW }
   return (
     <aside className="flex h-full min-h-0 flex-col bg-sidebar">
       <SidebarHeader
@@ -180,6 +188,8 @@ export function Sidebar({
               <ProjectSection
                 key={group.path}
                 group={group}
+                list={lists.find((list) => list.key === `project:${group.path}`) ?? { key: group.path, nodes: [] }}
+                view={view}
                 status={status}
                 pullRequests={pullRequests}
                 selectedId={selectedId}
@@ -192,7 +202,8 @@ export function Sidebar({
             ))}
 
             <ArchiveSections
-              archivedTasks={archivedTasks}
+              lists={lists.filter((list) => list.key.startsWith("archive:"))}
+              view={view}
               selectedId={selectedId}
               onSelect={onSelect}
               touch={touch}
@@ -348,250 +359,5 @@ function NoProjects({
         </>
       )}
     </div>
-  )
-}
-
-/** Unfinished cleanup first, then archived history — two sections, one shape. */
-function ArchiveSections({
-  archivedTasks,
-  selectedId,
-  onSelect,
-  touch,
-}: {
-  archivedTasks: ApiTask[]
-  selectedId: string | null
-  onSelect: (id: string) => void
-  touch: boolean
-}) {
-  return [true, false].map((incomplete) => {
-    const rows = archivedTasks.filter(
-      (t) => Boolean(t.cleanup && t.cleanup.state !== "complete") === incomplete
-    )
-    return (
-      rows.length > 0 && (
-        <section key={String(incomplete)} className="mt-3">
-          <div className="flex h-6 items-center px-2">
-            <Eyebrow>{incomplete ? "Cleanup" : "Archived"}</Eyebrow>
-          </div>
-          <div className="mt-px flex flex-col gap-px pl-0.5">
-            {rows.map((t) =>
-              touch ? (
-                <TaskRowTouch
-                  key={t.id}
-                  task={t}
-                  selected={selectedId === t.id}
-                  onSelect={onSelect}
-                />
-              ) : (
-                <TaskRow
-                  key={t.id}
-                  task={t}
-                  selected={selectedId === t.id}
-                  onSelect={onSelect}
-                />
-              )
-            )}
-          </div>
-        </section>
-      )
-    )
-  })
-}
-
-/**
- * The project's verification recipe, as one quiet glyph beside the gear. It
- * hides until hover like the gear while there is nothing to say; a dot (a
- * draft to activate, a recipe task working, a reviewer reporting the recipe
- * broken) keeps it on screen. Its title says the state; a click opens the
- * project's settings at Verification.
- */
-function VerificationButton({
-  group,
-  summary,
-  touch,
-  onClick,
-}: {
-  group: ProjectGroup
-  summary: NonNullable<ProjectGroup["verification"]>
-  touch: boolean
-  onClick: () => void
-}) {
-  const tone = verificationTone(summary)
-  const title = verificationTitle(summary)
-  return (
-    <Button
-      size={touch ? "lg" : "sm"}
-      icon
-      aria-label={`${title} — ${group.name}`}
-      title={title}
-      data-verification={tone ?? "quiet"}
-      onClick={onClick}
-      // hover cannot reveal anything on a touch screen; a dot is always worth showing
-      className={cn("relative", touch || tone ? "inline-flex" : "hidden group-hover/project:inline-flex")}
-    >
-      <Verify />
-      {tone && (
-        <span
-          aria-hidden
-          className={cn("absolute size-1.5 rounded-full", touch ? "top-1.5 right-1.5" : "top-0.5 right-0.5", VERIFICATION_DOT[tone])}
-        />
-      )}
-    </Button>
-  )
-}
-
-/** One project: a 28px header row over its task list. */
-function ProjectSection({
-  group,
-  status,
-  pullRequests,
-  selectedId,
-  onSelect,
-  onNewTask,
-  onConfigureProject,
-  verification = false,
-  touch = false,
-}: {
-  group: ProjectGroup
-  status: Record<string, StatusEntry>
-  pullRequests: Record<string, PullRequestOverviewEntry>
-  selectedId: string | null
-  onSelect: (id: string) => void
-  onNewTask: (repoPath: string) => void
-  onConfigureProject: (repoPath: string, section?: "verification") => void
-  verification?: boolean
-  touch?: boolean
-}) {
-  const [open, setOpen] = useState(true)
-  return (
-    <section className="mt-2 first:mt-0">
-      <div
-        className={cn(
-          "group/project flex items-center gap-1.5 rounded-md pr-1.5 pl-2 hover:bg-hover",
-          touch ? "h-11" : "h-7"
-        )}
-        data-project-path={group.path}
-      >
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
-          aria-expanded={open}
-          title={group.path}
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none"
-        >
-          <ChevronDown
-            aria-hidden
-            className={cn(
-              "size-3 shrink-0 text-muted-foreground transition-transform",
-              !open && "-rotate-90"
-            )}
-          />
-          <span
-            className={cn(
-              "truncate text-[12.5px] font-medium",
-              group.exists
-                ? "text-foreground"
-                : "text-muted-foreground line-through"
-            )}
-          >
-            {group.name}
-          </span>
-          {!group.exists && (
-            <span className="shrink-0 text-[10.5px] text-muted-foreground">
-              missing
-            </span>
-          )}
-        </button>
-        <span
-          className={cn(
-            "font-mono text-[10.5px] text-faint",
-            !touch && "group-hover/project:hidden"
-          )}
-        >
-          {group.tasks.length}
-        </span>
-        {verification && group.verification && (
-          <VerificationButton
-            group={group}
-            summary={group.verification}
-            touch={touch}
-            onClick={() => onConfigureProject(group.path, "verification")}
-          />
-        )}
-        <Button
-          size={touch ? "lg" : "sm"}
-          icon
-          aria-label={`Settings for ${group.name}`}
-          title={`Settings for ${group.name}`}
-          onClick={() => onConfigureProject(group.path)}
-          // hover cannot reveal anything on a touch screen
-          className={cn(
-            touch ? "inline-flex" : "hidden group-hover/project:inline-flex"
-          )}
-        >
-          <Gear />
-        </Button>
-        <Button
-          size={touch ? "lg" : "sm"}
-          icon
-          aria-label={`New task in ${group.name}`}
-          title={`New task in ${group.name}`}
-          onClick={() => onNewTask(group.path)}
-          className={cn(
-            touch ? "inline-flex" : "hidden group-hover/project:inline-flex"
-          )}
-        >
-          <Plus />
-        </Button>
-      </div>
-
-      {open && (
-        <div className="mt-px flex flex-col gap-px pl-0.5">
-          {group.tasks.length > 0 ? (
-            group.tasks.map((t) =>
-              touch ? (
-                <TaskRowTouch
-                  key={t.id}
-                  task={t}
-                  status={status[t.id]}
-                  pullRequest={pullRequests[t.id]}
-                  selected={t.id === selectedId}
-                  onSelect={onSelect}
-                />
-              ) : (
-                <TaskRow
-                  key={t.id}
-                  task={t}
-                  status={status[t.id]}
-                  pullRequest={pullRequests[t.id]}
-                  selected={t.id === selectedId}
-                  onSelect={onSelect}
-                />
-              )
-            )
-          ) : (
-            /**
-             * Hover-reveal is right for a dense list and wrong when the row's
-             * only content is an empty state: a fresh install has exactly one
-             * project, no tasks, and — until this — no visible way to make
-             * one. The line stops being dead text and becomes the control.
-             */
-            <button
-              type="button"
-              onClick={() => onNewTask(group.path)}
-              className={cn(
-                "flex w-full items-center gap-1.5 rounded-md px-2.5 text-left text-[11.5px]",
-                "text-faint hover:bg-hover hover:text-muted-foreground",
-                "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-                touch ? "h-11" : "h-[26px]"
-              )}
-            >
-              <Plus aria-hidden className="size-3 shrink-0" />
-              No tasks yet — create one
-            </button>
-          )}
-        </div>
-      )}
-    </section>
   )
 }

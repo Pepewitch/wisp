@@ -32,7 +32,7 @@ import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
 import { TaskHeader } from "@/components/task-header"
 import { headerTask } from "@/lib/header-task"
-import { buildTaskSurfaces } from "@/components/task-surfaces"
+import { buildTaskSurfaces, type TaskSurfaces } from "@/components/task-surfaces"
 import {
   useHarnesses,
   useHarnessFeatures,
@@ -50,6 +50,7 @@ import { useProjectSearch } from "@/hooks/useProjectSearch"
 import { useSearchShortcuts } from "@/hooks/useSearchShortcuts"
 import { useTaskSwitchPerformance } from "@/hooks/useTaskSwitchPerformance"
 import { useDesktopTaskNavigation } from "@/hooks/useDesktopTaskNavigation"
+import { useSidebarTree } from "@/hooks/useSidebarTree"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
 import { connectionStore } from "@/lib/conn"
@@ -60,7 +61,6 @@ import {
 } from "@/lib/connection-storage"
 import { classifyConnectionError } from "@/lib/connection-reachability"
 import { useDesktopConnections } from "@/lib/desktop-connections"
-import { groupTasksByProject } from "@/lib/projects"
 import { preloadProseHighlighter } from "@/lib/prose-highlight"
 import { queryClient } from "@/lib/query"
 import { useDaemonRuntime } from "@/lib/runtime"
@@ -310,16 +310,14 @@ function MainView({
   // daemon can't answer (a running turn), never faked
   const skillsQuery = useTaskSkills(selectedId, archived)
 
-  const groups = useMemo(
-    () =>
-      groupTasksByProject(
-        tasks.filter((t) => !t.archived),
-        reposQuery.data ?? []
-      ),
-    [tasks, reposQuery.data]
-  )
-  const archivedTasks = useMemo(() => tasks.filter((t) => t.archived), [tasks])
-  useDesktopTaskNavigation(desktop !== null, groups, archivedTasks, selectedId, selectTask)
+  const { groups, archivedTasks, ...sidebarTree } = useSidebarTree({
+    connectionId: runtime.connectionId,
+    tasks,
+    repos: reposQuery.data,
+    nest: searchFeature.data?.subtasks === true,
+    selectedId,
+  })
+  useDesktopTaskNavigation(desktop !== null, sidebarTree.visibleIds, selectedId, selectTask)
 
   const sideError = queryError(tasksQuery.error, statusQuery.error)
 
@@ -345,6 +343,7 @@ function MainView({
     <Sidebar
       groups={groups}
       archivedTasks={archivedTasks}
+      tree={sidebarTree}
       status={statusQuery.data ?? {}}
       pullRequests={pullRequests.tasks}
       selectedId={selectedId}
@@ -449,10 +448,7 @@ function MainView({
       pullRequest={pullRequests.selected}
       sidebar={sidebarNode}
       conversation={conversationNode}
-      changes={taskSurfaces.changes}
-      autopilot={taskSurfaces.autopilot}
-      workflows={taskSurfaces.workflows}
-      terminal={taskSurfaces.terminal}
+      surfaces={taskSurfaces}
       composer={composerNode}
       firstRun={firstRunNode}
       taskHeader={
@@ -476,10 +472,7 @@ function AppShell({
   pullRequest,
   sidebar,
   conversation,
-  changes,
-  autopilot,
-  workflows,
-  terminal,
+  surfaces,
   composer,
   taskHeader,
   updateControl,
@@ -496,10 +489,8 @@ function AppShell({
     afterSelect?: () => void
   }) => ReactNode
   conversation: ReactNode
-  changes: ReactNode
-  autopilot?: (showConversation: () => void, hidden: boolean) => ReactNode
-  workflows?: ReactNode
-  terminal: ReactNode
+  /** the task's surfaces beside the conversation (buildTaskSurfaces) */
+  surfaces: TaskSurfaces
   composer: ReactNode
   taskHeader: ReactNode
   updateControl: ReactNode
@@ -520,10 +511,7 @@ function AppShell({
           firstRun={firstRun}
           sidebar={(dismiss) => sidebar({ touch: true, afterSelect: dismiss })}
           conversation={conversation}
-          changes={changes}
-          autopilot={autopilot}
-          workflows={workflows}
-          terminal={terminal}
+          {...surfaces}
           composer={composer}
           connectionStatus={!desktop ? <MobileConnectionStatus /> : undefined}
           desktop={desktop}
@@ -585,7 +573,7 @@ function AppShell({
             )}
           </main>
         }
-        right={<RightColumn changes={changes} terminal={terminal} />}
+        right={<RightColumn changes={surfaces.changes} terminal={surfaces.terminal} />}
       />
       {dialogs}
     </div>

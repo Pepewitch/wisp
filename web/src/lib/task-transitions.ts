@@ -28,37 +28,42 @@ export function snapshotTaskStates(
   return new Map(tasks.map((task) => [task.id, task.state]))
 }
 
+/** A turn nobody asked for: one background work woke, or one a subtask report started. */
+const quietTurn = (task: Pick<ApiTask, "latest_turn_background" | "latest_turn_report">): boolean =>
+  Boolean(task.latest_turn_background || task.latest_turn_report)
+
 /**
- * The tasks whose running turn is one background work woke on its own after
- * the agent's answer (a monitor event, a background command finishing).
+ * The tasks whose running turn is a quiet one: background work woke it on its
+ * own after the agent's answer (a monitor event, a background command
+ * finishing), or a subtask's report started it on its parent.
  */
-export function snapshotBackgroundRuns(
-  tasks: readonly Pick<ApiTask, "id" | "state" | "latest_turn_background">[]
+export function snapshotQuietRuns(
+  tasks: readonly Pick<ApiTask, "id" | "state" | "latest_turn_background" | "latest_turn_report">[]
 ): Set<string> {
-  return new Set(tasks.filter((task) => task.state === WATCHED_FROM && task.latest_turn_background).map((task) => task.id))
+  return new Set(tasks.filter((task) => task.state === WATCHED_FROM && quietTurn(task)).map((task) => task.id))
 }
 
 /**
  * Every task whose previous observation was `running` and whose current row
  * is anything else. Archived rows are skipped: archiving interrupts the turn,
- * and telling someone about a task they just put away is noise. So is a turn
- * background work woke, which nobody asked for, when it ends done: the one
- * seen running (`backgroundRuns`; any, without it) and the latest are both one.
- * One that ends needing the person, or failing, is still news.
+ * and telling someone about a task they just put away is noise. So is a quiet
+ * turn (background work woke it, or a subtask report started it), which
+ * answered nobody, when it ends done: the one seen running (`quietRuns`; any,
+ * without it) and the latest are both quiet. A person's turn that ended while
+ * a quiet one opened and closed before the next look is still news, and so is
+ * a quiet turn that ends needing the person, or failing.
  */
 export function finishedTransitions(
   previous: TaskStateSnapshot,
   tasks: readonly ApiTask[],
-  backgroundRuns?: ReadonlySet<string>
+  quietRuns?: ReadonlySet<string>
 ): TaskTransition[] {
   const transitions: TaskTransition[] = []
   for (const task of tasks) {
     const from = previous.get(task.id)
     if (from !== WATCHED_FROM || task.state === WATCHED_FROM || task.archived)
       continue
-    if (task.state === "done" && task.latest_turn_background && (backgroundRuns?.has(task.id) ?? true)) continue
-    // a turn a subtask report started answered no one: its parent reading the report is not news
-    if (task.state === "done" && task.latest_turn_report) continue
+    if (task.state === "done" && quietTurn(task) && (quietRuns?.has(task.id) ?? true)) continue
     transitions.push({ task, from, to: task.state })
   }
   return transitions
@@ -124,26 +129,26 @@ export interface TaskTransitionTracker {
 
 export function createTaskTransitionTracker(): TaskTransitionTracker {
   const snapshots = new Map<string, TaskStateSnapshot>()
-  const backgroundRuns = new Map<string, ReadonlySet<string>>()
+  const quietRuns = new Map<string, ReadonlySet<string>>()
   const autopilot = new Map<string, ReadonlyMap<string, string>>()
   const announced = new Map<string, Map<string, string>>()
   return {
     observe(connectionId, tasks) {
       const previous = snapshots.get(connectionId)
-      const previousBackground = backgroundRuns.get(connectionId)
+      const previousQuiet = quietRuns.get(connectionId)
       const previousAutopilot = autopilot.get(connectionId) ?? new Map<string, string>()
       const told = announced.get(connectionId) ?? new Map<string, string>()
       announced.set(connectionId, told)
       snapshots.set(connectionId, snapshotTaskStates(tasks))
-      backgroundRuns.set(connectionId, snapshotBackgroundRuns(tasks))
+      quietRuns.set(connectionId, snapshotQuietRuns(tasks))
       autopilot.set(connectionId, snapshotAutopilot(tasks))
       return previous
-        ? [...finishedTransitions(previous, tasks, previousBackground), ...autopilotTransitions(previousAutopilot, tasks, told)]
+        ? [...finishedTransitions(previous, tasks, previousQuiet), ...autopilotTransitions(previousAutopilot, tasks, told)]
         : []
     },
     forget(connectionId) {
       snapshots.delete(connectionId)
-      backgroundRuns.delete(connectionId)
+      quietRuns.delete(connectionId)
       autopilot.delete(connectionId)
       announced.delete(connectionId)
     },

@@ -21,6 +21,7 @@ import {
 import { ChevronRight } from "@/components/icons"
 import { MessageAttachments } from "@/components/message-attachments"
 import { QueuedMessage } from "@/components/queued-message"
+import { ReportBubble } from "@/components/report-bubble"
 import { FileViewerProvider } from "@/components/file-viewer"
 import { Prose } from "@/components/prose"
 import { QuestionnaireProvider } from "@/components/questionnaire-context"
@@ -379,7 +380,7 @@ const TurnBlock = memo(function TurnBlock({
 
   return (
     <article data-turn={turn.n} data-status={turn.status} className={first ? "" : "pt-[30px]"}>
-      <PersonBubble
+      {turn.origin === "report" ? <ReportBubble text={turn.prompt} at={turn.started_at} /> : <PersonBubble
         actions={<UserMessageCopyButton text={turn.prompt} />}
         caption={
           <>
@@ -396,7 +397,7 @@ const TurnBlock = memo(function TurnBlock({
         <div data-turn-prompt className="whitespace-pre-wrap">
           {turn.prompt}
         </div>
-      </PersonBubble>
+      </PersonBubble>}
 
       {/* what the person sent WITH the prompt, so it hangs off the bubble */}
       <TurnAttachments taskId={taskId} turn={turn.n} attachments={turn.attachments ?? []} archived={archived} />

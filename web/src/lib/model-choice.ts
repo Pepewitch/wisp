@@ -144,3 +144,12 @@ export function initialChoice(
     model: dflt && options.includes(dflt) ? dflt : options[0]!,
   }
 }
+
+/** A radio value has to be one string; a tab cannot occur in a harness name. */
+export const encode = (c: ModelChoice): string => `${c.harness}\t${c.model}`
+export const decode = (v: string): ModelChoice => {
+  const i = v.indexOf("\t")
+  return { harness: v.slice(0, i), model: v.slice(i + 1) }
+}
+export const sameChoice = (a: ModelChoice | null, b: ModelChoice): boolean =>
+  a?.harness === b.harness && a.model === b.model

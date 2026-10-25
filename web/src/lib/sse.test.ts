@@ -133,6 +133,23 @@ it("a workflow event refreshes that task's autopilot history, whichever task is 
   h.close();
 });
 
+it("an event about a subtask refreshes its parent's subtask list, and a parent event its own", () => {
+  const h = bridge("t1");
+  h.client.setQueryData(h.qk.tasksList(false), [{ id: "tchild", parent_task_id: "tparent" }, { id: "tparent", parent_task_id: null }]);
+  const parentList = [...h.qk.task("tparent"), "subtasks"];
+  const otherList = [...h.qk.task("tother"), "subtasks"];
+  h.client.setQueryData(parentList, []);
+  h.client.setQueryData(otherList, []);
+  // a child's PR event: a workflow change, no task row moved
+  h.sources[0]!.emit({ type: "workflow", taskId: "tchild" });
+  expect(h.client.getQueryState(parentList)?.isInvalidated).toBe(true);
+  expect(h.client.getQueryState(otherList)?.isInvalidated).toBe(false);
+  h.client.setQueryData(parentList, []);
+  h.sources[0]!.emit({ type: "message", taskId: "tparent", messageId: "msreport" });
+  expect(h.client.getQueryState(parentList)?.isInvalidated).toBe(true);
+  h.close();
+});
+
 const invalidated = (client: QueryClient, key: QueryKey): boolean => client.getQueryState(key)?.isInvalidated === true;
 
 describe("the /api/events → queryClient bridge", () => {

@@ -3,6 +3,7 @@ import { Local } from "@/components/icons"
 import { Meta, StateDot } from "@/components/primitives"
 import { useBackgroundDetail } from "@/hooks/useBackgroundDetail"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
+import { SubtaskCrumb } from "@/components/subtask-crumb"
 import { TaskActions } from "@/components/task-actions"
 import { formatTokens } from "@/lib/format"
 import { pausedOnNetwork, stateWord } from "@/lib/state"
@@ -43,6 +44,7 @@ export function TaskHeader({
 
   return (
     <div className="shrink-0 border-b border-border px-4.5 pt-2.5 pb-3">
+      <SubtaskCrumb task={task} />
       <div className="flex items-center gap-2.5">
         <h1 className="min-w-0 flex-1 truncate text-[14.5px] font-semibold tracking-[-0.01em]">{task.title}</h1>
         <div className="flex shrink-0 items-center gap-1.5">

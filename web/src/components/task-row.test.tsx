@@ -162,6 +162,19 @@ describe("the row's archive affordance", () => {
     expect(calls[1]).toEqual({ path: "/api/tasks/tk9zdy/archive", method: "POST", body: { force: true } })
   })
 
+  it("a parent's family refusal names its subtasks in the same dialog, and taking them is the next request", async () => {
+    let refuse = true
+    const calls = stubApi(() => (refuse ? { status: 409, body: { error: "task tk9zdy has 1 live subtask", refusedSubtasks: [{ id: "ca", title: "Child ca", error: "a live subtask", needs: "subtasks" }] } } : { status: 200, body: { ok: true } }))
+    mount(<TaskRow task={TASK} status={DIRTY} selected={false} onSelect={() => {}} />)
+    fireEvent.click(screen.getByLabelText(ARCHIVE_LABEL))
+    expect(await screen.findByText("Child ca")).toBeInTheDocument()
+    expect(screen.getByText("archived with it")).toBeInTheDocument()
+    refuse = false
+    fireEvent.click(screen.getByRole("button", { name: "Archive with 1 subtask" }))
+    await waitFor(() => expect(calls).toHaveLength(2))
+    expect(calls[1]!.body).toEqual({ force: false, subtasks: "archive" })
+  })
+
   it("renders no dialog while there is nothing to decide", () => {
     mount(<TaskRow task={TASK} status={DIRTY} selected={false} onSelect={() => {}} />)
     expect(screen.queryByRole("dialog")).toBeNull()

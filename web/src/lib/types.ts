@@ -30,6 +30,7 @@ import type { UpdateStatus as DaemonUpdateStatus } from "../../../shared/api/upd
 
 export { TASK_STATES } from "../../../shared/api/task";
 export type {
+  ApiSubtask,
   AttachResponse,
   BackgroundGroup,
   CleanupSummary,
@@ -41,6 +42,7 @@ export type {
   SearchTaskHit,
   SendDisposition,
   SendWhen,
+  SubtaskKind,
   TaskMode,
   TaskState,
   TaskUsage,
@@ -95,7 +97,16 @@ type FromAnyDaemon<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
  * A task from GET /api/tasks or GET /api/tasks/:id. The list-only facts
  * (has_workflow, autopilot, latest_turn_*) are absent from the detail routes.
  */
-export type ApiTask = FromAnyDaemon<
+export type ApiTask = TaskRow & {
+  /**
+   * Which of auto-review's tasks this is: a `reviewer` sits under the task it
+   * reviews and stays out of its rollup's needs-input. Served with the row
+   * since auto-review; absent from older daemons.
+   */
+  verify_role?: "reviewer" | "recipe" | null
+}
+
+type TaskRow = FromAnyDaemon<
   Omit<ApiTaskListItem, "background"> & {
     /** Absent on daemons before background detail; render the bare state then. */
     background: FromAnyDaemon<BackgroundWork, "details">;
@@ -439,6 +450,12 @@ export interface HarnessesResponse {
      * a round names the areas that need a capture. Absent: no evidence strip.
      */
     capture?: boolean;
+    /**
+     * Subtasks: tasks carry their parent and kind, GET /api/tasks/:id/subtasks
+     * lists a parent's children, POST /api/tasks takes `parentTaskId`, and
+     * archiving a parent takes `subtasks`. Absent or false: the sidebar is flat.
+     */
+    subtasks?: boolean;
   };
 }
 

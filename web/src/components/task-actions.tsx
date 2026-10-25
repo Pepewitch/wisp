@@ -5,6 +5,7 @@ import type { AutopilotUpdate } from "../../../shared/autopilot"
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
 import { More } from "@/components/icons"
 import { Menu, MenuCheckboxItem, MenuItem, MenuNote, MenuSeparator } from "@/components/menu"
+import { NewSubtaskDialog } from "@/components/new-subtask-dialog"
 import { RenameTaskDialog } from "@/components/rename-task-dialog"
 import { useAutopilot } from "@/hooks/mutations"
 import { useHarnessFeatures } from "@/hooks/queries"
@@ -15,8 +16,8 @@ import type { ApiTask } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 
 /**
- * The task verbs that are not worth a permanent button: find, rename and
- * archive — and the auto-merge, auto-fix and auto-review switches, as
+ * The task verbs that are not worth a permanent button: find, rename, a new
+ * subtask and archive — and the auto-merge, auto-fix and auto-review switches, as
  * shortcuts.
  * What those switches are doing (the reason, the round waiting to send, the
  * pause to resume) lives in the Autopilot tab, which has the room for it.
@@ -32,7 +33,10 @@ export function TaskActions({ task }: { task: ApiTask }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [retentionOpen, setRetentionOpen] = useState(false)
   const [renameOpen, setRenameOpen] = useState(false)
+  const [subtaskOpen, setSubtaskOpen] = useState(false)
   const archive = useArchiveFlow(task)
+  // a subtask has none of its own, and an archived task takes none
+  const subtasks = useHarnessFeatures().data?.subtasks === true && !task.subtask_kind && !task.archived
 
   return (
     <>
@@ -63,6 +67,16 @@ export function TaskActions({ task }: { task: ApiTask }) {
         >
           Rename
         </MenuItem>
+        {subtasks && (
+          <MenuItem
+            onClick={() => {
+              setMenuOpen(false)
+              setSubtaskOpen(true)
+            }}
+          >
+            New subtask…
+          </MenuItem>
+        )}
         <MenuItem
           onClick={() => {
             setMenuOpen(false)
@@ -97,15 +111,9 @@ export function TaskActions({ task }: { task: ApiTask }) {
         open={renameOpen}
         onOpenChange={setRenameOpen}
       />
+      {subtasks && <NewSubtaskDialog parent={task} open={subtaskOpen} onOpenChange={setSubtaskOpen} />}
 
-      <ArchiveConfirmDialog
-        task={task}
-        reason={archive.reason}
-        pending={archive.pending}
-        onCancel={archive.dismiss}
-        onForce={() => archive.request(true)}
-        stopsAutopilot={archive.stopsAutopilot}
-      />
+      <ArchiveConfirmDialog task={task} flow={archive} />
     </>
   )
 }
