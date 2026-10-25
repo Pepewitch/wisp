@@ -7,7 +7,7 @@ import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
-import type { ApiTask, ConversationDetail, ProjectVerifyAgent, ProjectVerifySecond, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SendWhen, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
+import type { ApiTask, ConversationDetail, ProjectVerifyAgent, ProjectVerifySecond, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SendWhen, SubtaskKind, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
 
 /**
  * Every WRITE the app makes, one hook each — the mirror of queries.ts.
@@ -82,12 +82,20 @@ export interface CreateTaskBody {
   autopilot?: { autoMerge: boolean; autoFix: boolean; autoReview?: boolean };
 }
 
+/** A subtask: its project is its parent's, and it always runs in a worktree. */
+export interface CreateSubtaskBody extends Omit<CreateTaskBody, "repoPath" | "mode"> {
+  parentTaskId: string;
+  subtaskKind: SubtaskKind;
+  /** its turns and PR events report back to the parent */
+  report: boolean;
+}
+
 /** POST /api/tasks — the composer's submit. Resolves to the created row. */
 export function useCreateTask() {
   const client = useQueryClient();
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: (body: CreateTaskBody) => transport.request<ApiTask>("/api/tasks", { method: "POST", body }),
+    mutationFn: (body: CreateTaskBody | CreateSubtaskBody) => transport.request<ApiTask>("/api/tasks", { method: "POST", body }),
     onSuccess: (task) => {
       // Insert before the refetch so the view that focuses this id does not
       // treat it as a vanished row and snap back to the previous task.

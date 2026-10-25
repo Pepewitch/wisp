@@ -1,9 +1,12 @@
 import { fireEvent, render, screen } from "@testing-library/react"
 import type { ReactNode } from "react"
-import { describe, expect, it, vi } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { Sidebar } from "./sidebar"
+import { useSidebarTree } from "@/hooks/useSidebarTree"
+import type { ApiTask } from "@/lib/types"
 import { inertProjectSearch } from "@/test/project-search"
+import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 function mount(touch: boolean, onOpenSettings: () => void, updateControl?: ReactNode) {
   return render(
@@ -149,5 +152,76 @@ describe("a project's verification control", () => {
     expect(loud.querySelector(".bg-destructive")).not.toBeNull()
     fireEvent.click(loud)
     expect(onConfigureProject).toHaveBeenCalledWith("/src/wisp", "verification")
+  })
+})
+
+describe("subtasks in the sidebar", () => {
+  const at = "2026-10-01T08:00:00Z"
+  const row = (id: string, extra: Partial<ApiTask> = {}) =>
+    ({ id, title: `Task ${id}`, repo_path: "/src/wisp", state: "done", archived: false, parent_task_id: null, subtask_kind: null, created_at: at, updated_at: at, background: { state: "none" }, ...extra }) as ApiTask
+  const tasks = [
+    row("parent"),
+    row("child", { parent_task_id: "parent", subtask_kind: "explore", state: "needs-input" }),
+    row("reviewer", { parent_task_id: "child", subtask_kind: "review", verify_role: "reviewer", state: "running" }),
+    row("orphan", { subtask_kind: "review" }),
+  ]
+
+  function Nested({ touch = false, nest = true, selectedId = null }: { touch?: boolean; nest?: boolean; selectedId?: string | null }) {
+    const { groups, archivedTasks, ...tree } = useSidebarTree({ connectionId: "test-connection", tasks, repos: [], nest, selectedId })
+    return (
+      <Sidebar
+        groups={groups}
+        archivedTasks={archivedTasks}
+        tree={tree}
+        status={{}}
+        pullRequests={{}}
+        selectedId={selectedId}
+        onSelect={() => {}}
+        showArchived={false}
+        onShowArchivedChange={() => {}}
+        onNewTask={() => {}}
+        onConfigureProject={() => {}}
+        search={inertProjectSearch()}
+        error={null}
+        loading={false}
+        touch={touch}
+      />
+    )
+  }
+  const mountNested = (props: Parameters<typeof Nested>[0] = {}) =>
+    render(<Nested {...props} />, { wrapper: runtimeWrapper(fakeDaemonTransport("test-connection")) })
+  const rows = () => [...document.querySelectorAll("[data-task-id]")].map((el) => el.getAttribute("data-task-id"))
+
+  afterEach(() => localStorage.clear())
+
+  it("starts collapsed with a count and a rollup, and opens from its own button without selecting", () => {
+    mountNested()
+    expect(rows()).toEqual(["parent", "orphan"])
+    const disclosure = screen.getByRole("button", { name: "Show 1 subtask of Task parent" })
+    expect(disclosure).toHaveAttribute("aria-expanded", "false")
+    // the child needs input; the reviewer under it runs: needs-input wins the dot
+    expect(screen.getByRole("img", { name: "a subtask needs input" })).toBeInTheDocument()
+    expect(screen.getByText("parent deleted")).toBeInTheDocument()
+    expect(disclosure.closest("button[data-task-id]")).toBeNull()
+    fireEvent.click(disclosure)
+    expect(rows()).toEqual(["parent", "child", "orphan"])
+    fireEvent.click(screen.getByRole("button", { name: "Show 1 subtask of Task child" }))
+    expect(rows()).toEqual(["parent", "child", "reviewer", "orphan"])
+  })
+
+  it("opens the parents above a selected child", () => {
+    mountNested({ selectedId: "reviewer" })
+    expect(rows()).toEqual(["parent", "child", "reviewer", "orphan"])
+  })
+
+  it("gives the disclosure its own 44px target on touch", () => {
+    mountNested({ touch: true })
+    expect(screen.getByRole("button", { name: "Show 1 subtask of Task parent" }).className).toContain("size-11")
+  })
+
+  it("is flat on a daemon without subtasks", () => {
+    mountNested({ nest: false })
+    expect(rows()).toEqual(["parent", "child", "reviewer", "orphan"])
+    expect(screen.queryByRole("button", { name: /^Show 1 subtask/ })).toBeNull()
   })
 })

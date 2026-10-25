@@ -5,6 +5,7 @@ import { CleanupPanel } from "./cleanup-panel"
 import { Hamburger, Local } from "@/components/icons"
 import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { TaskActions } from "@/components/task-actions"
+import { SubtaskCrumb } from "@/components/subtask-crumb"
 import { Meta, StateDot, Tab } from "@/components/primitives"
 import { formatTokens } from "@/lib/format"
 import { useDaemonRuntime } from "@/lib/runtime"
@@ -13,14 +14,16 @@ import type { ApiTask, PullRequestStatus } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 import { useMobileViewport } from "@/hooks/use-mobile-viewport"
+import { useSubtaskCount } from "@/hooks/useSubtasks"
 
-type MobileTab = "chat" | "autopilot" | "changes" | "workflows" | "terminal"
+type MobileTab = "chat" | "autopilot" | "changes" | "workflows" | "subtasks" | "terminal"
 
 const TAB_LABEL: Record<MobileTab, string> = {
   chat: "Chat",
   autopilot: "Autopilot",
   changes: "Changes",
   workflows: "Workflows",
+  subtasks: "Subtasks",
   terminal: "Terminal",
 }
 
@@ -70,6 +73,7 @@ export function MobileShell({
   changes,
   autopilot,
   workflows,
+  subtasks,
   terminal,
   composer,
   firstRun,
@@ -92,6 +96,12 @@ export function MobileShell({
   autopilot?: (showChat: () => void, hidden: boolean) => ReactNode
   /** Absent when the connected daemon does not support task workflows. */
   workflows?: ReactNode
+  /**
+   * Absent without `features.subtasks`. Its tab shows only while the task has
+   * subtasks: a sixth tab on every task would crowd the strip, and New
+   * subtask is in the task menu either way.
+   */
+  subtasks?: ReactNode
   terminal: ReactNode
   composer: ReactNode
   /**
@@ -112,7 +122,8 @@ export function MobileShell({
   const [tab, setTab] = useState<MobileTab>("chat")
   const [drawer, setDrawer] = useState(false)
   const viewportRef = useMobileViewport(!desktop)
-  const tabs = surfaceTabs(autopilot !== undefined, workflows !== undefined)
+  const hasSubtasks = useSubtaskCount(task?.id ?? null) > 0
+  const tabs = surfaceTabs(autopilot !== undefined, workflows !== undefined, subtasks !== undefined && hasSubtasks)
   useChatOnFind(tab, setTab)
 
   // a task switch is always about reading the conversation next
@@ -167,6 +178,7 @@ export function MobileShell({
                 <Meta
                   className="mt-1"
                   items={[
+                    task.subtask_kind && <SubtaskCrumb key="subtask" task={task} compact />,
                     <span key="state" className="flex shrink-0 items-center gap-1.5">
                       <StateDot state={task.state} background={task.background} pausedOnNetwork={pausedOnNetwork(task)} />
                       <span className="text-fg-secondary">{stateWord(task)}</span>
@@ -248,15 +260,12 @@ export function MobileShell({
       )}
 
       <main className="flex min-h-0 flex-1 flex-col">
-        {/* every pane stays mounted: switching tabs must not drop the
-            conversation's scroll position or tear down a live shell */}
-        {firstRun}
-        {!firstRun && <Pane show={tab === "chat"}>{conversation}</Pane>}
-        {!firstRun && autopilot && <Pane show={tab === "autopilot"}>{autopilot(() => setTab("chat"), tab !== "autopilot")}</Pane>}
-        {!firstRun && <Pane show={tab === "changes"}>{changes}</Pane>}
-        {!firstRun && workflows !== undefined && <Pane show={tab === "workflows"}>{workflows}</Pane>}
-        {!firstRun && (
-          <Pane show={tab === "terminal"}><div className="flex min-h-0 flex-1 flex-col pb-(--mobile-bottom)">{terminal}</div></Pane>
+        {firstRun ?? (
+          <SurfacePanes
+            tab={tab}
+            onShowConversation={() => setTab("chat")}
+            surfaces={{ conversation, autopilot, changes, workflows, subtasks: hasSubtasks ? subtasks : undefined, terminal }}
+          />
         )}
       </main>
 
@@ -284,12 +293,39 @@ export function MobileShell({
   )
 }
 
-function surfaceTabs(autopilot: boolean, workflows: boolean): MobileTab[] {
+/** Every surface's pane, all mounted: switching tabs must not drop the conversation's scroll position or tear down a live shell. */
+function SurfacePanes({ tab, onShowConversation, surfaces }: {
+  tab: MobileTab
+  onShowConversation: () => void
+  surfaces: {
+    conversation: ReactNode
+    autopilot?: (showConversation: () => void, hidden: boolean) => ReactNode
+    changes: ReactNode
+    workflows?: ReactNode
+    subtasks?: ReactNode
+    terminal: ReactNode
+  }
+}) {
+  const { conversation, autopilot, changes, workflows, subtasks, terminal } = surfaces
+  return (
+    <>
+      <Pane show={tab === "chat"}>{conversation}</Pane>
+      {autopilot && <Pane show={tab === "autopilot"}>{autopilot(onShowConversation, tab !== "autopilot")}</Pane>}
+      <Pane show={tab === "changes"}>{changes}</Pane>
+      {workflows !== undefined && <Pane show={tab === "workflows"}>{workflows}</Pane>}
+      {subtasks !== undefined && <Pane show={tab === "subtasks"}>{subtasks}</Pane>}
+      <Pane show={tab === "terminal"}><div className="flex min-h-0 flex-1 flex-col pb-(--mobile-bottom)">{terminal}</div></Pane>
+    </>
+  )
+}
+
+function surfaceTabs(autopilot: boolean, workflows: boolean, subtasks: boolean): MobileTab[] {
   return [
     "chat",
     ...(autopilot ? (["autopilot"] as const) : []),
     "changes",
     ...(workflows ? (["workflows"] as const) : []),
+    ...(subtasks ? (["subtasks"] as const) : []),
     "terminal",
   ]
 }

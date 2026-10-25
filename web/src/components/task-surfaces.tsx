@@ -4,11 +4,23 @@ import { AutopilotPane } from "@/components/autopilot-pane"
 import { ChangesPane } from "@/components/changes-pane"
 import { PaneErrorBoundary } from "@/components/error-boundary"
 import { FileViewerProvider } from "@/components/file-viewer"
+import { SubtasksPane } from "@/components/subtasks-pane"
 import { TaskPanel } from "@/components/task-panel"
 import { TerminalSection } from "@/components/terminal-pane"
 import { WorkflowsPane } from "@/components/workflows-pane"
 import { revealFileHandler } from "@/lib/external-links"
 import type { ApiTask, HarnessesResponse } from "@/lib/types"
+
+/** What sits beside a task's conversation: the right column on a desktop, the tabs on a phone. */
+export interface TaskSurfaces {
+  changes: ReactNode
+  /** Touch only: on the desktop, Autopilot is a tab inside `changes`' task panel. */
+  autopilot?: (showConversation: () => void, hidden: boolean) => ReactNode
+  workflows?: ReactNode
+  /** Touch only, with `features.subtasks`: on the desktop, Subtasks is a tab of the task panel too. */
+  subtasks?: ReactNode
+  terminal: ReactNode
+}
 
 export function buildTaskSurfaces({
   mobile,
@@ -27,13 +39,7 @@ export function buildTaskSurfaces({
   taskId: string | null
   archived: boolean
   onRefresh: () => void
-}): {
-  changes: ReactNode
-  /** Touch only: on the desktop, Autopilot is a tab inside `changes`' task panel. */
-  autopilot?: (showConversation: () => void, hidden: boolean) => ReactNode
-  workflows?: ReactNode
-  terminal: ReactNode
-} {
+}): TaskSurfaces {
   const workflowsSupported = features?.taskWorkflows === true
   const autopilotSupported = features?.taskAutopilot === true
   // The diff pane's double-click opens a file the way a path in prose does,
@@ -86,6 +92,9 @@ export function buildTaskSurfaces({
       touch
     />
   ) : undefined
+  const subtasks = mobile && features?.subtasks === true ? (
+    <SubtasksPane key={`${connectionId}:${taskId ?? ""}`} task={task} touch />
+  ) : undefined
   const terminal = (
     // Keyed by task: a shell that broke rendering task A's terminal must not
     // still show task A's fallback once task B's terminal pane mounts.
@@ -100,5 +109,5 @@ export function buildTaskSurfaces({
       />
     </PaneErrorBoundary>
   )
-  return { changes, autopilot, workflows, terminal }
+  return { changes, autopilot, workflows, subtasks, terminal }
 }

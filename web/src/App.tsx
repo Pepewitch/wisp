@@ -32,7 +32,7 @@ import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
 import { TaskHeader } from "@/components/task-header"
 import { headerTask } from "@/lib/header-task"
-import { buildTaskSurfaces } from "@/components/task-surfaces"
+import { buildTaskSurfaces, type TaskSurfaces } from "@/components/task-surfaces"
 import {
   useHarnesses,
   useHarnessFeatures,
@@ -448,10 +448,7 @@ function MainView({
       pullRequest={pullRequests.selected}
       sidebar={sidebarNode}
       conversation={conversationNode}
-      changes={taskSurfaces.changes}
-      autopilot={taskSurfaces.autopilot}
-      workflows={taskSurfaces.workflows}
-      terminal={taskSurfaces.terminal}
+      surfaces={taskSurfaces}
       composer={composerNode}
       firstRun={firstRunNode}
       taskHeader={
@@ -475,10 +472,7 @@ function AppShell({
   pullRequest,
   sidebar,
   conversation,
-  changes,
-  autopilot,
-  workflows,
-  terminal,
+  surfaces,
   composer,
   taskHeader,
   updateControl,
@@ -495,10 +489,8 @@ function AppShell({
     afterSelect?: () => void
   }) => ReactNode
   conversation: ReactNode
-  changes: ReactNode
-  autopilot?: (showConversation: () => void, hidden: boolean) => ReactNode
-  workflows?: ReactNode
-  terminal: ReactNode
+  /** the task's surfaces beside the conversation (buildTaskSurfaces) */
+  surfaces: TaskSurfaces
   composer: ReactNode
   taskHeader: ReactNode
   updateControl: ReactNode
@@ -519,10 +511,7 @@ function AppShell({
           firstRun={firstRun}
           sidebar={(dismiss) => sidebar({ touch: true, afterSelect: dismiss })}
           conversation={conversation}
-          changes={changes}
-          autopilot={autopilot}
-          workflows={workflows}
-          terminal={terminal}
+          {...surfaces}
           composer={composer}
           connectionStatus={!desktop ? <MobileConnectionStatus /> : undefined}
           desktop={desktop}
@@ -584,7 +573,7 @@ function AppShell({
             )}
           </main>
         }
-        right={<RightColumn changes={changes} terminal={terminal} />}
+        right={<RightColumn changes={surfaces.changes} terminal={surfaces.terminal} />}
       />
       {dialogs}
     </div>
