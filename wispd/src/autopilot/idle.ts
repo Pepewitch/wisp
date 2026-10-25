@@ -15,14 +15,20 @@ function settled(task: Task): boolean {
     !isTaskStopping(task.id) && !processStopPending(task.id) && backgroundWork(task.id).state === "none"
 }
 
-/** A subtask report waiting to start: the parent has unread evidence. */
+/** A subtask report not yet read: recorded and waiting for delivery, or queued to start. */
 function reportWaiting(taskId: string): boolean {
-  return db.query("SELECT 1 FROM task_messages WHERE task_id = ? AND origin = 'subtask' AND status = 'queued'").get(taskId) !== null
+  return db.query("SELECT 1 FROM subtask_reports WHERE parent_task_id = ? AND state IN ('pending', 'queued')").get(taskId) !== null ||
+    db.query("SELECT 1 FROM task_messages WHERE task_id = ? AND origin = 'subtask' AND status = 'queued'").get(taskId) !== null
 }
 
-/** Idle for autopilot: never while a subtask report waits, so it does not merge or plan around evidence nobody read. */
-export function taskIsIdle(task: Task): boolean {
-  return task.state === "done" && settled(task) && !reportWaiting(task.id)
+/**
+ * Idle for autopilot: never while a subtask report waits, so it does not
+ * merge or plan around evidence nobody read. `reports: "ignore"` asks only
+ * whether the task's own work is settled, for what reports must not hold up
+ * (a Stop hold clearing after the person's next turn: reports wait for it).
+ */
+export function taskIsIdle(task: Task, reports: "count" | "ignore" = "count"): boolean {
+  return task.state === "done" && settled(task) && (reports === "ignore" || !reportWaiting(task.id))
 }
 
 /** Free to take a subtask report: settled after a turn that ended done or failed, and not waiting on the person. */

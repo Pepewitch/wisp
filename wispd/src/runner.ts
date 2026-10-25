@@ -1,5 +1,5 @@
 import { assertTaskCapacity, SubtaskCapError, TaskCapacityError } from "./task-admission";
-import { reportFraming } from "./subtask-reports";
+import { recordSetupFailure, reportFraming } from "./subtask-reports";
 import { liveNonReviewerChildren } from "./subtasks";
 import { updateTaskAndEmit } from "./task-update";
 import { pauseTaskWorkflows } from "./workflows/store";
@@ -60,6 +60,7 @@ import {
   settleTurn,
   transition,
   turnForTask,
+  turnsFor,
   type TaskAgentSelection,
 } from "./store";
 import { recordAudit } from "./task-audit";
@@ -705,7 +706,11 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
 export function failStaleCreatingTasks(): void {
   for (const task of creatingTasks()) {
     console.error(`[wisp] failing task ${task.id}: still 'creating' at startup (previous daemon died mid-creation)`);
-    transition(task.id, "failed", "daemon died while this task was being created (still 'creating' at startup); create a new task to retry");
+    const why = "daemon died while this task was being created (still 'creating' at startup); create a new task to retry";
+    // a reporting subtask's parent hears it, as it would a setup failure (domain/task-launch.ts)
+    db.transaction(() => {
+      if (transition(task.id, "failed", why) && turnsFor(task.id).length === 0) recordSetupFailure(task.id, why);
+    })();
     recordAudit(task.id, "fail", "system", "still being created when the daemon started");
   }
 }

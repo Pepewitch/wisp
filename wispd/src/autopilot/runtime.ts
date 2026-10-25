@@ -243,7 +243,8 @@ export class AutopilotRuntime {
       this.saveCheck(row, { state, reason, checkpoint, delayMs, about, patient })
 
     if (checkpoint.stopHold) {
-      if (idle && task.turn_count > checkpoint.stopHold.turnCount) delete checkpoint.stopHold
+      // the person's next turn releases the hold; an unread report waits for that release, so it cannot block it
+      if (taskIsIdle(task, "ignore") && task.turn_count > checkpoint.stopHold.turnCount) delete checkpoint.stopHold
       else {
         // Held, but a merge was already under way: record it if it landed,
         // so the next turn is not told to push to a merged branch.

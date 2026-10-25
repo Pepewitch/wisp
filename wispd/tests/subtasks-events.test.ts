@@ -76,6 +76,21 @@ describe("a reporting subtask's PR events", () => {
     expect(framed.words).toBe("");
   });
 
+  test("a hold commits with its report or not at all", () => {
+    const { child: id, row } = child();
+    db.exec("CREATE TEMP TRIGGER refuse_report BEFORE INSERT ON subtask_reports BEGIN SELECT RAISE(ABORT, 'injected'); END");
+    const check = { state: "needs-you" as const, reason: "The PR has a merge conflict with main", checkpoint: { pr: 12, heads: { bbb222: "x" } }, delayMs: 60_000 };
+    try {
+      expect(() => saveAutopilotCheck(row(), check, new Date())).toThrow("injected");
+    } finally {
+      db.exec("DROP TRIGGER refuse_report");
+    }
+    expect(row().reason).toBe("watching");
+    // the same evaluation, once the write can succeed, still reports
+    saveAutopilotCheck(row(), check, new Date());
+    expect(events(id).map(([key]) => key)).toEqual(["hold:12:bbb222:conflict"]);
+  });
+
   test("a child that does not report records nothing", () => {
     const { child: id, row } = child(false);
     rebindAfterMerge(row(), { pr: 12, base: "main", byWisp: true }, new Date(), "bbb222");

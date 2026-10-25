@@ -7,7 +7,7 @@ import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { taskMessageRoute, taskMessageSendNowRoute } from "../src/routes/task-messages";
 import {
-  createTask, createTaskMessage, freeSlot, getTask, isQueueHead, newTaskId, nextQueuedMessage, releaseTaskMessageHold,
+  createTask, createTaskMessage, db, freeSlot, getTask, isQueueHead, newTaskId, nextQueuedMessage, releaseTaskMessageHold,
   setTaskFields, transition, updateQueuedTaskMessage,
 } from "../src/store";
 import type { TaskCompactor } from "../src/compacts";
@@ -63,5 +63,11 @@ describe("a queued subtask report", () => {
     expect(canTakeReport(getTask(parent)!)).toBe(true);
     transition(parent, "needs-input");
     expect(canTakeReport(getTask(parent)!)).toBe(false);
+    // a report recorded but not yet queued counts too
+    const other = idleTask();
+    db.run(`INSERT INTO subtask_reports (id, child_task_id, parent_task_id, kind, event_key, facts_json, state, created_at, updated_at)
+      VALUES (?, 'tkidq', ?, 'turn', 'turn:1', '{"kind":"turn"}', 'pending', 'x', 'x')`, [`srq${other}`, other]);
+    expect(taskIsIdle(getTask(other)!)).toBe(false);
+    expect(taskIsIdle(getTask(other)!, "ignore")).toBe(true);
   });
 });

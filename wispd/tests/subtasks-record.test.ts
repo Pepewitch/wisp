@@ -6,6 +6,7 @@ import { setAutopilot, autopilotRow } from "../src/autopilot/store";
 import {
   createTask, createTaskMessage, createTurn, db, freeSlot, newTaskId, setTaskFields, settleTurn, transition,
 } from "../src/store";
+import { failStaleCreatingTasks } from "../src/runner";
 import { recordPrEvent, recordSetupFailure, recordStuckReport, recordTurnReport } from "../src/subtask-reports";
 
 function task(extra: { parent?: string; report?: boolean } = {}): string {
@@ -39,6 +40,19 @@ function settle(taskId: string, status: "done" | "failed" | "interrupted", optio
 const reports = (child: string) =>
   db.query("SELECT event_key, kind, facts_json, body, state, reason FROM subtask_reports WHERE child_task_id = ? ORDER BY rowid").all(child) as
     { event_key: string; kind: string; facts_json: string; body: string | null; state: string; reason: string | null }[];
+
+describe("a setup that never finished", () => {
+  test("a reporting child the daemon died creating reports setup-failed when startup fails it", () => {
+    const parent = task();
+    const id = newTaskId();
+    createTask({
+      id, title: "child", repo_path: "/fixture", harness: "fake", model: null, mode: "worktree", slot: freeSlot(),
+      subtask: { parent_task_id: parent, subtask_kind: "explore", report_to_parent: true, base_from: "project" },
+    });
+    failStaleCreatingTasks();
+    expect(reports(id)).toEqual([expect.objectContaining({ event_key: "setup-failed", kind: "setup-failed", state: "pending" })]);
+  });
+});
 
 describe("recording what a subtask reports", () => {
   test("a done, a needs-input and a failed turn report, each once, with the turn's own words", () => {

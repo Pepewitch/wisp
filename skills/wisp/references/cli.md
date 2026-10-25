@@ -176,9 +176,9 @@ a fork PR or an unreachable GitHub is refused with "pass --base"), `continue`
 pins the parent's committed branch tip, and `explore` (the default) starts from
 the project's usual base, as a new task would. An explicit `--base` wins
 over the kind. A parent must be a root task: subtasks have one level. A
-subtask takes no autopilot switch at creation and may not be `--local`; an
-`explore` child can have auto-fix, auto-review and auto-merge turned on later
-with `wisp pr`, and `review` and `continue` children none. An agent may turn on
+subtask may not be `--local`. An `explore` child may have auto-fix,
+auto-review and auto-merge, at creation (`--auto-fix`, `--auto-review`,
+`--auto-merge`) or later with `wisp pr`; `review` and `continue` children none. An agent may turn on
 auto-merge only for its own `explore` child, and only while its own task has
 merge rights from a person (a person's auto-merge, or a live workflow with
 `allowMerge` a person turned on); otherwise it is refused with a 409. At most

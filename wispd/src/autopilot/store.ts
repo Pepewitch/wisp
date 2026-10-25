@@ -427,14 +427,17 @@ export function saveAutopilotCheck(row: WorkflowRow, check: AutopilotCheck, now:
   })
   if (paced.backoff) checkpoint.backoff = paced.backoff
   else delete checkpoint.backoff
-  db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, check_count = check_count + 1, failures = ?,
-    last_checked_at = ?, next_check_at = ?, updated_at = CASE WHEN reason = ? THEN updated_at ELSE ? END WHERE id = ?`,
-  [JSON.stringify(checkpoint), check.reason, check.failures ?? 0, at, new Date(now.getTime() + paced.delayMs).toISOString(), check.reason, at, row.id])
+  // one transaction: a needs-you a reporting subtask's parent must hear commits with its report, or not at all
+  db.transaction(() => {
+    db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, check_count = check_count + 1, failures = ?,
+      last_checked_at = ?, next_check_at = ?, updated_at = CASE WHEN reason = ? THEN updated_at ELSE ? END WHERE id = ?`,
+    [JSON.stringify(checkpoint), check.reason, check.failures ?? 0, at, new Date(now.getTime() + paced.delayMs).toISOString(), check.reason, at, row.id])
+    if (reasonClass(previous.state ?? "", current.reason) !== reasonClass(check.state, check.reason)) {
+      recordWorkflow(row.id, check.state === "needs-you" ? "blocked" : "wait", check.reason, at)
+      if (check.state === "needs-you") recordHold(current, checkpoint, check.reason)
+    }
+  })()
   const changed = current.reason !== check.reason || previous.state !== check.state
-  if (reasonClass(previous.state ?? "", current.reason) !== reasonClass(check.state, check.reason)) {
-    recordWorkflow(row.id, check.state === "needs-you" ? "blocked" : "wait", check.reason, at)
-    if (check.state === "needs-you") recordHold(current, checkpoint, check.reason)
-  }
   if (changed) announceWorkflow(row.task_id)
   return true
 }
