@@ -8,7 +8,9 @@ import {
 } from "@/components/project-search"
 import type { ProjectSearch } from "@/hooks/useProjectSearch"
 import { ArchiveSections, ProjectSection } from "@/components/sidebar-sections"
+import { FLAT_VIEW, type SidebarTree } from "@/hooks/useSidebarTree"
 import type { ProjectGroup } from "@/lib/projects"
+import { sidebarLists } from "@/lib/subtask-tree"
 import type {
   ApiTask,
   PullRequestOverviewEntry,
@@ -32,6 +34,11 @@ interface SidebarProps {
   groups: ProjectGroup[]
   /** Unfinished cleanup is always included; the footer toggle adds completed archives. */
   archivedTasks: ApiTask[]
+  /**
+   * The same tasks with their subtasks nested (useSidebarTree), shared with
+   * Ctrl+Tab so both agree on what is on screen. Absent: drawn flat.
+   */
+  tree?: Pick<SidebarTree, "lists" | "view">
   status: Record<string, StatusEntry>
   pullRequests: Record<string, PullRequestOverviewEntry>
   selectedId: string | null
@@ -91,6 +98,7 @@ interface SidebarProps {
 export function Sidebar({
   groups,
   archivedTasks,
+  tree,
   status,
   pullRequests,
   selectedId,
@@ -111,6 +119,7 @@ export function Sidebar({
   loading,
   touch = false,
 }: SidebarProps) {
+  const { lists, view } = tree ?? { lists: sidebarLists(groups, archivedTasks, false), view: FLAT_VIEW }
   return (
     <aside className="flex h-full min-h-0 flex-col bg-sidebar">
       <SidebarHeader
@@ -179,6 +188,8 @@ export function Sidebar({
               <ProjectSection
                 key={group.path}
                 group={group}
+                list={lists.find((list) => list.key === `project:${group.path}`) ?? { key: group.path, nodes: [] }}
+                view={view}
                 status={status}
                 pullRequests={pullRequests}
                 selectedId={selectedId}
@@ -191,7 +202,8 @@ export function Sidebar({
             ))}
 
             <ArchiveSections
-              archivedTasks={archivedTasks}
+              lists={lists.filter((list) => list.key.startsWith("archive:"))}
+              view={view}
               selectedId={selectedId}
               onSelect={onSelect}
               touch={touch}

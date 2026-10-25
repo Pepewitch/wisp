@@ -337,8 +337,17 @@ export function useArchiveTask() {
   const client = useQueryClient();
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: ({ id, force, stopAutopilot = false }: { id: string; force: boolean; stopAutopilot?: boolean }) =>
-      transport.request(`/api/tasks/${id}/archive`, { method: "POST", body: { force, ...(stopAutopilot ? { stopAutopilot } : {}) } }),
+    mutationFn: ({ id, force, stopAutopilot = false, subtasks }: {
+      id: string;
+      force: boolean;
+      stopAutopilot?: boolean;
+      /** a parent's live subtasks go with it only when asked; absent, the daemon names them in its 409 */
+      subtasks?: "archive" | "force";
+    }) =>
+      transport.request(`/api/tasks/${id}/archive`, {
+        method: "POST",
+        body: { force, ...(stopAutopilot ? { stopAutopilot } : {}), ...(subtasks ? { subtasks } : {}) },
+      }),
     onSuccess: (_data, { id }) => settleTask(client, qk, id),
   });
 }

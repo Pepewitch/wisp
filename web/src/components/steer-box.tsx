@@ -351,14 +351,7 @@ export function SteerBox({
 
       {task && (
         <>
-          <ArchiveConfirmDialog
-            task={task}
-            reason={archive.reason}
-            pending={archive.pending}
-            onCancel={archive.dismiss}
-            onForce={() => archive.request(true)}
-            stopsAutopilot={archive.stopsAutopilot}
-          />
+          <ArchiveConfirmDialog task={task} flow={archive} />
           {agent.choice && (
             <FreshContextDialog
               choice={agent.choice}

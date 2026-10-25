@@ -50,6 +50,7 @@ import { useProjectSearch } from "@/hooks/useProjectSearch"
 import { useSearchShortcuts } from "@/hooks/useSearchShortcuts"
 import { useTaskSwitchPerformance } from "@/hooks/useTaskSwitchPerformance"
 import { useDesktopTaskNavigation } from "@/hooks/useDesktopTaskNavigation"
+import { useSidebarTree } from "@/hooks/useSidebarTree"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
 import { connectionStore } from "@/lib/conn"
@@ -60,7 +61,6 @@ import {
 } from "@/lib/connection-storage"
 import { classifyConnectionError } from "@/lib/connection-reachability"
 import { useDesktopConnections } from "@/lib/desktop-connections"
-import { groupTasksByProject } from "@/lib/projects"
 import { preloadProseHighlighter } from "@/lib/prose-highlight"
 import { queryClient } from "@/lib/query"
 import { useDaemonRuntime } from "@/lib/runtime"
@@ -310,16 +310,14 @@ function MainView({
   // daemon can't answer (a running turn), never faked
   const skillsQuery = useTaskSkills(selectedId, archived)
 
-  const groups = useMemo(
-    () =>
-      groupTasksByProject(
-        tasks.filter((t) => !t.archived),
-        reposQuery.data ?? []
-      ),
-    [tasks, reposQuery.data]
-  )
-  const archivedTasks = useMemo(() => tasks.filter((t) => t.archived), [tasks])
-  useDesktopTaskNavigation(desktop !== null, groups, archivedTasks, selectedId, selectTask)
+  const { groups, archivedTasks, ...sidebarTree } = useSidebarTree({
+    connectionId: runtime.connectionId,
+    tasks,
+    repos: reposQuery.data,
+    nest: searchFeature.data?.subtasks === true,
+    selectedId,
+  })
+  useDesktopTaskNavigation(desktop !== null, sidebarTree.visibleIds, selectedId, selectTask)
 
   const sideError = queryError(tasksQuery.error, statusQuery.error)
 
@@ -345,6 +343,7 @@ function MainView({
     <Sidebar
       groups={groups}
       archivedTasks={archivedTasks}
+      tree={sidebarTree}
       status={statusQuery.data ?? {}}
       pullRequests={pullRequests.tasks}
       selectedId={selectedId}

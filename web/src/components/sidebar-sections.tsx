@@ -2,10 +2,12 @@ import { useState } from "react"
 
 import { ChevronDown, Gear, Plus, Verify } from "@/components/icons"
 import { Button, Eyebrow } from "@/components/primitives"
-import { TaskRow, TaskRowTouch } from "@/components/task-row"
+import { TaskTree } from "@/components/subtask-rows"
+import type { SubtaskTreeView } from "@/hooks/useSidebarTree"
 import { VERIFICATION_DOT, verificationTitle, verificationTone } from "@/lib/auto-review-words"
 import type { ProjectGroup } from "@/lib/projects"
-import type { ApiTask, PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
+import type { SidebarList } from "@/lib/subtask-tree"
+import type { PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 /*
@@ -13,51 +15,34 @@ import { cn } from "@/lib/utils"
  * them. Beside sidebar.tsx, which keeps the pane's frame.
  */
 
-/** Unfinished cleanup first, then archived history — two sections, one shape. */
+/** Unfinished cleanup first, then archived history — two sections, one shape, each nested on its own. */
 export function ArchiveSections({
-  archivedTasks,
+  lists,
+  view,
   selectedId,
   onSelect,
   touch,
 }: {
-  archivedTasks: ApiTask[]
+  /** the archive's lists, Cleanup then Archived */
+  lists: readonly SidebarList[]
+  view: SubtaskTreeView
   selectedId: string | null
   onSelect: (id: string) => void
   touch: boolean
 }) {
-  return [true, false].map((incomplete) => {
-    const rows = archivedTasks.filter(
-      (t) => Boolean(t.cleanup && t.cleanup.state !== "complete") === incomplete
-    )
-    return (
-      rows.length > 0 && (
-        <section key={String(incomplete)} className="mt-3">
+  return lists.map(
+    (list) =>
+      list.nodes.length > 0 && (
+        <section key={list.key} className="mt-3">
           <div className="flex h-6 items-center px-2">
-            <Eyebrow>{incomplete ? "Cleanup" : "Archived"}</Eyebrow>
+            <Eyebrow>{list.key === "archive:Cleanup" ? "Cleanup" : "Archived"}</Eyebrow>
           </div>
           <div className="mt-px flex flex-col gap-px pl-0.5">
-            {rows.map((t) =>
-              touch ? (
-                <TaskRowTouch
-                  key={t.id}
-                  task={t}
-                  selected={selectedId === t.id}
-                  onSelect={onSelect}
-                />
-              ) : (
-                <TaskRow
-                  key={t.id}
-                  task={t}
-                  selected={selectedId === t.id}
-                  onSelect={onSelect}
-                />
-              )
-            )}
+            <TaskTree nodes={list.nodes} view={view} selectedId={selectedId} onSelect={onSelect} touch={touch} />
           </div>
         </section>
       )
-    )
-  })
+  )
 }
 
 /**
@@ -105,6 +90,8 @@ function VerificationButton({
 /** One project: a 28px header row over its task list. */
 export function ProjectSection({
   group,
+  list,
+  view,
   status,
   pullRequests,
   selectedId,
@@ -115,6 +102,9 @@ export function ProjectSection({
   touch = false,
 }: {
   group: ProjectGroup
+  /** the group's tasks as the sidebar draws them: nested, or flat */
+  list: SidebarList
+  view: SubtaskTreeView
   status: Record<string, StatusEntry>
   pullRequests: Record<string, PullRequestOverviewEntry>
   selectedId: string | null
@@ -210,27 +200,15 @@ export function ProjectSection({
       {open && (
         <div className="mt-px flex flex-col gap-px pl-0.5">
           {group.tasks.length > 0 ? (
-            group.tasks.map((t) =>
-              touch ? (
-                <TaskRowTouch
-                  key={t.id}
-                  task={t}
-                  status={status[t.id]}
-                  pullRequest={pullRequests[t.id]}
-                  selected={t.id === selectedId}
-                  onSelect={onSelect}
-                />
-              ) : (
-                <TaskRow
-                  key={t.id}
-                  task={t}
-                  status={status[t.id]}
-                  pullRequest={pullRequests[t.id]}
-                  selected={t.id === selectedId}
-                  onSelect={onSelect}
-                />
-              )
-            )
+            <TaskTree
+              nodes={list.nodes}
+              view={view}
+              status={status}
+              pullRequests={pullRequests}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              touch={touch}
+            />
           ) : (
             /**
              * Hover-reveal is right for a dense list and wrong when the row's

@@ -1,8 +1,11 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { useArchiveTask } from "@/hooks/mutations";
 import { failureReason } from "@/lib/api";
+import { familyPlan, refusedSubtasks, withConsent, type FamilyConsents, type FamilyMember, type FamilyStep, type RefusedSubtask } from "@/lib/archive-family";
 import { autopilotArchiveWords } from "@/lib/autopilot-words";
+import { useDaemonRuntime } from "@/lib/runtime";
 import type { ApiTask } from "@/lib/types";
 
 /**
@@ -17,6 +20,12 @@ import type { ApiTask } from "@/lib/types";
  * (components/archive-flow.tsx) renders them verbatim. The one sentence asked
  * here first is autopilot's, from the task's own status (the daemon asks the
  * same last, for other clients): its confirm consents to that and nothing else.
+ *
+ * A parent with live subtasks is refused until asked to take them along, and
+ * then each child that cannot go as it is gets named (`family`). Taking them,
+ * forcing them, and stopping their autopilot are three separate yeses, sent
+ * as `subtasks` and `stopAutopilot`, and each one given is kept for the next
+ * attempt: the parent's own refusal after them does not undo them.
  *
  * It lives in hooks/ rather than beside that dialog because a `.tsx` file may
  * only export components (the react-refresh rule this repo lints as an error),
@@ -33,43 +42,70 @@ export interface ArchiveFlow {
    * running turn still gets its own refusal after it.
    */
   stopsAutopilot: boolean;
+  /** the parent's subtasks are in the way: every one named, and the one yes asked next */
+  family: { members: FamilyMember[]; next: FamilyStep } | null;
+  /** the family confirm: gives `family.next` and tries again */
+  confirmFamily: () => void;
   pending: boolean;
   dismiss: () => void;
 }
 
+const NO_CONSENTS: FamilyConsents = { stopAutopilot: false };
+
 export function useArchiveFlow(task: ApiTask | null): ArchiveFlow {
   const archiveTask = useArchiveTask();
+  const client = useQueryClient();
+  const { qk } = useDaemonRuntime();
   const [reason, setReason] = useState<string | null>(null);
   const [stopsAutopilot, setStopsAutopilot] = useState(false);
+  const [refused, setRefused] = useState<RefusedSubtask[] | null>(null);
+  const [consents, setConsents] = useState<FamilyConsents>(NO_CONSENTS);
+  const [force, setForce] = useState(false);
 
-  const send = (force: boolean, stopAutopilot: boolean) => {
+  const reset = () => { setReason(null); setStopsAutopilot(false); setRefused(null); setConsents(NO_CONSENTS); setForce(false); };
+  const send = (forced: boolean, given: FamilyConsents) => {
     if (!task) return;
+    setForce(forced);
+    setConsents(given);
     archiveTask.mutate(
-      { id: task.id, force, stopAutopilot },
+      { id: task.id, force: forced, stopAutopilot: given.stopAutopilot, ...(given.subtasks ? { subtasks: given.subtasks } : {}) },
       {
-        onSuccess: () => { setReason(null); setStopsAutopilot(false); },
+        onSuccess: reset,
         // a 409 is the expected refusal; anything else is a real error, and
         // both are the same decision from here — the daemon said no and said why
-        onError: (e) => { setReason(failureReason(e)); setStopsAutopilot(false); },
+        onError: (e) => {
+          const children = refusedSubtasks(e);
+          setRefused(children);
+          setReason(children ? null : failureReason(e));
+          setStopsAutopilot(false);
+        },
       },
     );
   };
+  // read at the moment of asking: the dialog names the family the list shows now
+  const family = task && refused
+    ? familyPlan(task.id, client.getQueryData<ApiTask[]>(qk.tasksList(false)) ?? [], refused, consents)
+    : null;
   return {
-    request: (force: boolean) => {
+    request: (forced: boolean) => {
       if (!task) return;
       // the confirm of the autopilot sentence is that consent alone
-      if (force && stopsAutopilot) return send(false, true);
-      const autopilot = force ? null : autopilotArchiveWords(task.autopilot);
+      if (forced && stopsAutopilot) return send(force, { ...consents, stopAutopilot: true });
+      const autopilot = forced || consents.stopAutopilot ? null : autopilotArchiveWords(task.autopilot);
       if (autopilot) {
         setReason(autopilot);
         setStopsAutopilot(true);
         return;
       }
-      send(force, false);
+      send(forced, forced ? consents : NO_CONSENTS);
     },
     reason,
     stopsAutopilot,
+    family,
+    confirmFamily: () => {
+      if (family) send(force, withConsent(consents, family.next));
+    },
     pending: archiveTask.isPending,
-    dismiss: () => { setReason(null); setStopsAutopilot(false); },
+    dismiss: reset,
   };
 }

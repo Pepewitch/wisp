@@ -1,5 +1,5 @@
 import { CLEANUP_LABEL } from "@/lib/state"
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { PreviewCard } from "@base-ui/react/preview-card"
 
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
@@ -21,7 +21,21 @@ interface TaskRowProps {
   pullRequest?: PullRequestOverviewEntry
   selected: boolean
   onSelect: (id: string) => void
+  /** how many parents above it in the sidebar's subtask nesting */
+  depth?: number
+  /** the list has subtask disclosures: every row leaves their column free, so the dots line up */
+  gutter?: boolean
+  /** a control beside the row, never inside its button: the subtask disclosure */
+  lead?: ReactNode
+  /** after the title, inside the row: the subtask count and rollup, or where the parent is */
+  trail?: ReactNode
+  /** the parent's title for the hover card, when it is loaded */
+  parentTitle?: string | null
 }
+
+/** Each level of subtask nesting steps the row in by this much. */
+const INDENT_PX = 14
+const INDENT_TOUCH_PX = 16
 
 /**
  * Cleanup outranks the task's own state while it is unfinished, and wears the
@@ -64,7 +78,7 @@ function TaskStateDot({ task, className }: { task: ApiTask; className?: string }
  *  - an archived row gets no button, and therefore no fade on its marks: there
  *    is nothing to reveal, so nothing may move.
  */
-export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskRowProps) {
+export function TaskRow({ task, status, pullRequest, selected, onSelect, depth = 0, gutter = false, lead, trail, parentTitle }: TaskRowProps) {
   // the card's own wish (hover/focus), and the veto that outranks it
   const [wantsCard, setWantsCard] = useState(false)
   const [overArchive, setOverArchive] = useState(false)
@@ -74,6 +88,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
   return (
     <div
       className="group/row relative"
+      style={depth ? { marginLeft: depth * INDENT_PX } : undefined}
       // the pointer can leave a 26px row between two pointerleave targets;
       // resetting both here keeps a stuck hover from suppressing the card
       onPointerLeave={() => {
@@ -82,6 +97,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
       }}
     >
       <AutopilotRail status={task.autopilot} />
+      {lead}
       <PreviewCard.Root open={wantsCard && !overArchive} onOpenChange={setWantsCard}>
         <PreviewCard.Trigger
           render={<button type="button" />}
@@ -92,7 +108,8 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
           data-selected={selected || undefined}
           onClick={() => onSelect(task.id)}
           className={cn(
-            "flex h-[26px] w-full items-center gap-2.5 rounded-md pr-2 pl-2.5 text-left transition-colors",
+            "flex h-[26px] w-full items-center gap-2.5 rounded-md pr-2 text-left transition-colors",
+            gutter ? "pl-[26px]" : "pl-2.5",
             "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
             selected ? "bg-accent" : "hover:bg-hover",
             task.archived && (!task.cleanup || task.cleanup.state === "complete") && "opacity-55",
@@ -108,6 +125,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
           >
             {task.title}
           </span>
+          {trail}
           <SidebarPullRequestStatus
             entry={task.archived ? undefined : pullRequest}
             autopilot={task.autopilot}
@@ -130,6 +148,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
                 task={task}
                 status={status}
                 pullRequest={task.archived ? undefined : pullRequest}
+                parentTitle={parentTitle}
               />
             </PreviewCard.Popup>
           </PreviewCard.Positioner>
@@ -144,14 +163,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect }: TaskR
             onPointerEnter={() => setOverArchive(true)}
             onPointerLeave={() => setOverArchive(false)}
           />
-          <ArchiveConfirmDialog
-            task={task}
-            reason={archive.reason}
-            pending={archive.pending}
-            onCancel={archive.dismiss}
-            onForce={() => archive.request(true)}
-            stopsAutopilot={archive.stopsAutopilot}
-          />
+          <ArchiveConfirmDialog task={task} flow={archive} />
         </>
       )}
     </div>
@@ -209,10 +221,11 @@ export function RowArchiveButton({
  * away in the task header. A long press for exactly one verb would be the app's
  * only long press, and undiscoverable.
  */
-export function TaskRowTouch({ task, status, pullRequest, selected, onSelect }: TaskRowProps) {
+export function TaskRowTouch({ task, status, pullRequest, selected, onSelect, depth = 0, lead, trail }: TaskRowProps) {
   return (
-    <div className="relative">
+    <div className="relative" style={depth ? { marginLeft: depth * INDENT_TOUCH_PX } : undefined}>
       <AutopilotRail status={task.autopilot} />
+      {lead}
       <button
         type="button"
         data-task-id={task.id}
@@ -221,14 +234,19 @@ export function TaskRowTouch({ task, status, pullRequest, selected, onSelect }: 
         onClick={() => onSelect(task.id)}
         className={cn(
           "flex min-h-[44px] w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors",
+          // the disclosure is its own 44px control at the right edge
+          lead && "pr-12",
           selected ? "bg-accent" : "active:bg-hover",
           task.archived && (!task.cleanup || task.cleanup.state === "complete") && "opacity-55",
         )}
       >
         <TaskStateDot task={task} className="mt-px" />
         <span className="min-w-0 flex-1">
-          <span className={cn("block truncate text-[13.5px]", selected ? "font-medium text-foreground" : "text-foreground/90")}>
-            {task.title}
+          <span className="flex min-w-0 items-center gap-2">
+            <span className={cn("min-w-0 truncate text-[13.5px]", selected ? "font-medium text-foreground" : "text-foreground/90")}>
+              {task.title}
+            </span>
+            {trail}
           </span>
           <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px]">
             {/* two-word states ("Needs input") wrapped and took the branch's
@@ -385,10 +403,12 @@ export function TaskCard({
   task,
   status,
   pullRequest,
+  parentTitle,
 }: {
   task: ApiTask
   status?: StatusEntry
   pullRequest?: PullRequestOverviewEntry
+  parentTitle?: string | null
 }) {
   const worktree =
     status && status.worktreeReason === null
@@ -428,6 +448,8 @@ export function TaskCard({
       <div className="my-3 h-px bg-border" />
 
       <dl className="grid grid-cols-[62px_1fr] items-baseline gap-x-2.5 gap-y-1.5">
+        <SubtaskFact task={task} parentTitle={parentTitle} />
+
         <Key>Branch</Key>
         <Val className="truncate font-mono">{task.branch ?? "—"}</Val>
 
@@ -484,6 +506,20 @@ export function TaskCard({
         )}
       </dl>
     </div>
+  )
+}
+
+/** A subtask's kind and its parent, or that the parent is gone. */
+function SubtaskFact({ task, parentTitle }: { task: ApiTask; parentTitle?: string | null }) {
+  if (!task.subtask_kind) return null
+  return (
+    <>
+      <Key>Subtask</Key>
+      <Val>
+        {task.subtask_kind}
+        {task.parent_task_id ? ` of ${parentTitle ?? task.parent_task_id}` : " · parent deleted"}
+      </Val>
+    </>
   )
 }
 

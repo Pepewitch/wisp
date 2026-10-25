@@ -1,32 +1,6 @@
-import { useEffect, useMemo } from "react"
+import { useEffect } from "react"
 
 export type TaskNavigationDirection = "next" | "previous"
-
-type NavigableTask = {
-  readonly id: string
-  readonly cleanup?: { readonly state: string } | null
-}
-
-type NavigableGroup = {
-  readonly tasks: readonly NavigableTask[]
-}
-
-/** Match the sidebar: project rows, unfinished cleanup, then archive history. */
-export function sidebarTaskIds(
-  groups: readonly NavigableGroup[],
-  archivedTasks: readonly NavigableTask[]
-): string[] {
-  const archivedByCleanup = (incomplete: boolean) =>
-    archivedTasks.filter(
-      (task) =>
-        Boolean(task.cleanup && task.cleanup.state !== "complete") === incomplete
-    )
-  return [
-    ...groups.flatMap((group) => group.tasks.map((task) => task.id)),
-    ...archivedByCleanup(true).map((task) => task.id),
-    ...archivedByCleanup(false).map((task) => task.id),
-  ]
-}
 
 /** The adjacent sidebar task, wrapping at either end of the list. */
 export function adjacentTaskId(
@@ -43,18 +17,17 @@ export function adjacentTaskId(
   return taskIds[(selectedIndex + offset + taskIds.length) % taskIds.length]!
 }
 
-/** Desktop owns Ctrl+Tab; the browser keeps its native tab-switching shortcut. */
+/**
+ * Desktop owns Ctrl+Tab; the browser keeps its native tab-switching shortcut.
+ * `taskIds` are the sidebar's rows on screen, in order (useSidebarTree), so a
+ * collapsed parent's subtasks are stepped over.
+ */
 export function useDesktopTaskNavigation(
   enabled: boolean,
-  groups: readonly NavigableGroup[],
-  archivedTasks: readonly NavigableTask[],
+  taskIds: readonly string[],
   selectedId: string | null,
   onSelect: (taskId: string) => void
 ): void {
-  const taskIds = useMemo(
-    () => sidebarTaskIds(groups, archivedTasks),
-    [archivedTasks, groups]
-  )
   useEffect(() => {
     if (!enabled) return
 
