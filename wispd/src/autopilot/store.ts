@@ -4,6 +4,7 @@
  * on); everything that evolves — the bound PR, heads seen, a Stop hold, a merge
  * attempt — lives in the checkpoint, so a toggle is never an edit to evidence.
  */
+import { holdClass, latestHead, recordPrEvent } from "../subtask-reports"
 import type { AutopilotBy, AutopilotHistoryEntry, AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
 import { db } from "../store-database"
 import { emit } from "../events"
@@ -409,6 +410,7 @@ export function saveAutopilotCheck(row: WorkflowRow, check: AutopilotCheck, now:
   const changed = current.reason !== check.reason || previous.state !== check.state
   if (reasonClass(previous.state ?? "", current.reason) !== reasonClass(check.state, check.reason)) {
     recordWorkflow(row.id, check.state === "needs-you" ? "blocked" : "wait", check.reason, at)
+    if (check.state === "needs-you") recordHold(current, checkpoint, check.reason)
   }
   if (changed) announceWorkflow(row.task_id)
   return true
@@ -439,6 +441,7 @@ export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: s
     const current = getWorkflow(row.id)
     if (!current) return
     const previous = checkpointOf(current)
+    recordPrEvent(current.task_id, `merged:${merged.pr}:${head ?? ""}`, { kind: "merged", pr: merged.pr, ...(head ? { head } : {}) })
     // Switched off, or the task archived, while the look was reading the PR:
     // never bring the row back. Remember the merge on it, for the PR line and
     // the one-time note, and stop there.
@@ -487,16 +490,32 @@ export function endMergeAttempt(row: WorkflowRow, reported: boolean): void {
 }
 
 export function finishAutopilot(row: WorkflowRow, outcome: "merged" | "closed", reason: string, now: Date, merged?: { base: string; byWisp: boolean }): void {
-  const checkpoint: AutopilotCheckpoint = { ...checkpointOf(getWorkflow(row.id) ?? row), outcome }
-  if (merged) checkpoint.merged = { ...merged, noted: false }
-  db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify(checkpoint), row.id])
-  changeWorkflowState(row.id, "completed", reason, now)
+  db.transaction(() => {
+    const checkpoint: AutopilotCheckpoint = { ...checkpointOf(getWorkflow(row.id) ?? row), outcome }
+    if (merged) checkpoint.merged = { ...merged, noted: false }
+    db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify(checkpoint), row.id])
+    // the parent of a reporting subtask hears it, with the change that ended the row
+    const head = latestHead(checkpoint.heads)
+    if (checkpoint.pr) recordPrEvent(row.task_id, `${outcome}:${checkpoint.pr}:${head}`, { kind: outcome, pr: checkpoint.pr, ...(head ? { head } : {}) })
+    changeWorkflowState(row.id, "completed", reason, now)
+  })()
 }
 
 export function pauseAutopilot(row: WorkflowRow, reason: string, now: Date): void {
   const current = getWorkflow(row.id)
   if (!current || current.state !== "active") return
-  changeWorkflowState(row.id, "paused", reason, now)
+  db.transaction(() => {
+    recordHold(current, checkpointOf(current), reason)
+    changeWorkflowState(row.id, "paused", reason, now)
+  })()
+}
+
+/** A reporting subtask's PR needs a person: its parent hears the class, keyed so each hold reports once. */
+function recordHold(row: WorkflowRow, checkpoint: AutopilotCheckpoint, reason: string): void {
+  if (!checkpoint.pr) return
+  const head = latestHead(checkpoint.heads)
+  const kind = holdClass(reason)
+  recordPrEvent(row.task_id, `hold:${checkpoint.pr}:${head}:${kind}`, { kind: "needs-you", pr: checkpoint.pr, ...(head ? { head } : {}), class: kind })
 }
 
 /**

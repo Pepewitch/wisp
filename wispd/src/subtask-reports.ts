@@ -176,3 +176,25 @@ export function reportFraming(messageId: string): { lines: string[]; words: stri
   const words = rows.flatMap((row, at) => (row.body ? [fenced(at + 1, nonce, row)] : [])).join("\n\n");
   return { lines, words };
 }
+
+/**
+ * The fixed class of a reason autopilot needs a person for. The parent hears
+ * the class, never the reason text: that text can carry gh or CI output.
+ */
+export function holdClass(reason: string): string {
+  const classes: [RegExp, string][] = [
+    [/did not pass after|gave up after/i, "round-cap"],
+    [/GitHub auto-merge/i, "provider-auto-merge"],
+    [/merge rights/i, "merge-rights"],
+    [/merge failed/i, "merge-failed"],
+    [/recipe/i, "recipe"],
+    [/conflict/i, "conflict"],
+    [/draft/i, "draft"],
+  ];
+  return classes.find(([pattern]) => pattern.test(reason))?.[1] ?? "needs-you";
+}
+
+/** The head autopilot saw last for its PR (checkpoint `heads`: sha → first seen), for an event's key. */
+export function latestHead(heads: Record<string, string> | undefined): string {
+  return Object.entries(heads ?? {}).sort((a, b) => a[1].localeCompare(b[1])).at(-1)?.[0] ?? "";
+}

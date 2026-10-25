@@ -14,6 +14,7 @@ import { randomId } from "../store"
 import { REVIEW_TOKEN_ENV } from "../turn-input"
 import type { Task } from "../types"
 import { getRound, type RoundRow } from "./rounds"
+import { recordPrEvent } from "../subtask-reports"
 
 export type ReviewState = AutoReviewRoundState | "pending"
 
@@ -269,6 +270,8 @@ export function settleRound(roundId: string, now = new Date()): RoundRow | null 
       recipe?.recipe_feedback ?? null, recipe?.recipe_area ?? null, JSON.stringify(reviews.flatMap(evidenceOf).slice(0, 32)),
       primary?.reviewer_task_id ?? null, now.toISOString(), roundId,
     ])
+    // a reporting subtask's parent hears the settled round: its outcome, never the findings
+    recordPrEvent(round.task_id, `round:${round.id}`, { kind: "round", pr: round.pr, head: round.head, round: round.round, outcome: state })
     return getRound(roundId)
   })()
 }
