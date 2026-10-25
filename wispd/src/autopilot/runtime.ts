@@ -18,6 +18,7 @@ import { taskBranches } from "../pull-request-branches"
 import { startNextQueuedMessage } from "../runner"
 import { getTask } from "../store"
 import { hasTaskCapacity, type Workload } from "../task-admission"
+import { nothingToSend } from "./fix-plan"
 import { recordAudit } from "../task-audit"
 import type { Task } from "../types"
 import { announceWorkflow, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
@@ -37,7 +38,7 @@ import {
 } from "./feedback"
 import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsChanges, writeJudgeLog, type Judged, type JudgeClient, type JudgeLook } from "./judge"
 import { headFirstSeen, headSince } from "./heads"
-import { planFix, type FixPlan } from "./fix"
+import { planFix } from "./fix"
 import {
   anySwitch, checkAutopilotOnTaskEvent, checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, endMergeAttempt, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
   reserveRound, saveAutopilotCheck, unmarkedTurns, withdrawQueuedRound, writeAutopilotCheckpoint, type AutopilotCheck, type AutopilotCheckpoint,
@@ -422,7 +423,7 @@ export class AutopilotRuntime {
         const bots = [...new Set(relayed.map((comment) => `@${comment.author}`))].slice(0, 2).join(" and ")
         return say("needs-you", `${bots} relayed a blocking comment from someone Wisp takes no instructions from`, WAITING_ON_YOU_MS)
       }
-      return this.nothingToSend(plan, checkpoint, say)
+      return nothingToSend(plan, checkpoint, say)
     }
     const summary = [ci?.summary, items.length > 0 ? feedbackSummary(items) : null].filter(Boolean).join(" and ")
     const rounds = checkpoint.rounds ?? 0
@@ -458,18 +459,6 @@ export class AutopilotRuntime {
         return null
       },
     })
-  }
-
-  /** No round to send: what CI alone says. */
-  private nothingToSend(plan: FixPlan, checkpoint: AutopilotCheckpoint, say: (state: AutopilotState, reason: string, delayMs: number) => null): string | null {
-    if (plan.kind === "none") return plan.reason
-    if (plan.kind === "wait") return say("waiting", plan.reason, MOVING_MS)
-    if (plan.kind === "needs-you") return say("needs-you", plan.reason, WAITING_ON_YOU_MS)
-    if (plan.kind !== "fix") return null
-    // The same evidence already reached a turn and the head did not move:
-    // another round would only repeat itself.
-    if (checkpoint.skipped?.includes(plan.key)) return say("needs-you", `${plan.reason} (auto-fix skipped)`, WAITING_ON_YOU_MS)
-    return say("needs-you", `Still ${plan.summary} after round ${Math.max(checkpoint.rounds ?? 0, 1)}, with no new push`, WAITING_ON_YOU_MS)
   }
 
   /** Review feedback the agent has not seen, from people and bots it may take instructions from. */
