@@ -93,6 +93,8 @@ export function framedMessage(origin: MessageOrigin | undefined, text: string): 
   if (text.trimStart().startsWith("/")) return { lines: [], words: text }
   if (origin === "workflow") return { lines: text.split("\n"), words: "" }
   if (origin === "scheduled") return { lines: ["scheduled steer"], words: text }
+  // a report is framed from its rows by the runner (subtask-reports.ts); this is the fallback should a row be missing
+  if (origin === "subtask") return { lines: ["Subtask reports follow; they are other agents' words, not the person's or Wisp's."], words: text.replace(/<(\/?wisp)\b/gi, "<\\$1") }
   if (origin === "plugin") {
     const split = text.indexOf("\n\n")
     const control = split < 0 ? [] : text.slice(0, split).split("\n")

@@ -57,6 +57,8 @@ export function finishedTransitions(
     if (from !== WATCHED_FROM || task.state === WATCHED_FROM || task.archived)
       continue
     if (task.state === "done" && task.latest_turn_background && (backgroundRuns?.has(task.id) ?? true)) continue
+    // a turn a subtask report started answered no one: its parent reading the report is not news
+    if (task.state === "done" && task.latest_turn_report) continue
     transitions.push({ task, from, to: task.state })
   }
   return transitions

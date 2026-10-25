@@ -32,7 +32,7 @@ function settle(taskId: string, status: "done" | "failed" | "interrupted", optio
     if (options.from.workflow) db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [options.from.workflow, source]);
   }
   const id = createTurn(taskId, n, "go", null, "/fixture/log", null, null, null, undefined, options.origin ?? null, source);
-  settleTurn(id, { status, exitCode: 0, result: options.result ?? `answer ${n}` }, taskId, (options.state ?? (status === "interrupted" ? "needs-input" : status)) as "done");
+  settleTurn(id, { status, exitCode: 0, result: options.result ?? `answer ${n}` }, taskId, (options.state ?? (status === "interrupted" ? "needs-input" : status)) as "done", null);
   return id;
 }
 

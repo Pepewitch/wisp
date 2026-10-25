@@ -18,6 +18,8 @@ export interface LatestTurnOutcome {
   hasResult: boolean;
   /** The turn was one background work woke, not a message's. */
   background: boolean;
+  /** The turn was one a subtask report started. */
+  report: boolean;
 }
 
 export function latestTurnOutcomes(): Map<string, LatestTurnOutcome> {
@@ -27,7 +29,7 @@ export function latestTurnOutcomes(): Map<string, LatestTurnOutcome> {
        WHERE (task_id, n) IN (SELECT task_id, MAX(n) FROM turns GROUP BY task_id)`,
     )
     .all() as { task_id: string; model: string | null; exit_code: number | null; has_result: number; origin: string | null }[];
-  return new Map(rows.map((r) => [r.task_id, { model: r.model, exitCode: r.exit_code, hasResult: r.has_result === 1, background: r.origin === "background" }]));
+  return new Map(rows.map((r) => [r.task_id, { model: r.model, exitCode: r.exit_code, hasResult: r.has_result === 1, background: r.origin === "background", report: r.origin === "report" }]));
 }
 
 /**
@@ -66,6 +68,7 @@ export function listTasksWithLatestTurn(includeArchived: boolean, includeCleanup
       exitCode: latest_turn_exit_code,
       hasResult: latest_turn_has_result === 1,
       background: latest_turn_origin === "background",
+      report: latest_turn_origin === "report",
     },
   }));
 }

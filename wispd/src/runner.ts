@@ -1,4 +1,5 @@
-import { assertTaskCapacity, SubtaskCapError } from "./task-admission";
+import { assertTaskCapacity, SubtaskCapError, TaskCapacityError } from "./task-admission";
+import { reportFraming } from "./subtask-reports";
 import { liveNonReviewerChildren } from "./subtasks";
 import { updateTaskAndEmit } from "./task-update";
 import { pauseTaskWorkflows } from "./workflows/store";
@@ -102,7 +103,7 @@ import {
   outputReminder,
   withWispSection,
 } from "./turn-input";
-import type { SendResult, Task, TaskMessage, Turn } from "./types";
+import type { SendResult, Task, TaskMessage, Turn, TurnOrigin } from "./types";
 
 export { startStuckLoop, stuckTick } from "./stuck";
 export { finalizeTurn } from "./turn-finalize";
@@ -147,9 +148,15 @@ function startCapture(
   return { recorder, sink: recorder, stderrPump: drainLines(child.stderr, "stderr", stderrTo ? followingSink(stderrTo) : recorder) };
 }
 
-/** Who wrote a queued message, for its framing at delivery (turn-input framedMessage); a direct turn is the person's. */
-function messageOrigin(sourceMessageId: string | undefined) {
-  return sourceMessageId ? getTaskMessage(sourceMessageId)?.origin : undefined;
+/**
+ * A message's framing at delivery, from who wrote it (turn-input
+ * framedMessage); a direct turn is the person's. A subtask report is framed
+ * from its rows, never from its stored text, and its turn is a `report` one.
+ */
+function framedInput(sourceMessageId: string | undefined, message: string): { framed: ReturnType<typeof framedMessage>; turnOrigin: TurnOrigin | null } {
+  const origin = sourceMessageId ? getTaskMessage(sourceMessageId)?.origin : undefined;
+  if (origin === "subtask" && sourceMessageId) return { framed: reportFraming(sourceMessageId), turnOrigin: "report" };
+  return { framed: framedMessage(origin, message), turnOrigin: null };
 }
 
 /**
@@ -198,10 +205,10 @@ export function startTurn(
   const lingering = lingeringProcess(task);
   const autopilot = standingNotes(task.id, n, command);
   const notes = [...(autopilot?.notes ?? []), ...(command ? [] : [outputReminder(n)])];
-  const framed = framedMessage(messageOrigin(sourceMessageId), message);
+  const { framed, turnOrigin } = framedInput(sourceMessageId, message);
   const prompt = withWispSection([...(n === 1 ? taskPreambleLines(task) : []), ...notes, ...framed.lines, ...attached], framed.words);
   if (lingering) {
-    adoptTurn(lingering, task, n, message, prompt, attachments, autopilot, sourceMessageId);
+    adoptTurn(lingering, task, n, message, prompt, attachments, autopilot, sourceMessageId, turnOrigin);
     return;
   }
   const outPath = join(LOG_DIR, `${task.id}-turn${n}.out.log`);
@@ -281,7 +288,7 @@ export function startTurn(
       attachmentManifest(attachments),
       null,
       { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
-      null,
+      turnOrigin,
       sourceMessageId ?? null,
     );
     setTaskFields(task.id, { turn_count: n });
@@ -315,7 +322,7 @@ export function startTurn(
         attachmentManifest(attachments),
         recorderEligible ? "recorder-v1" : null,
         { context_n: task.context_n, harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
-        null,
+        turnOrigin,
         sourceMessageId ?? null,
       );
       recordProcessGroup(id);
@@ -603,6 +610,8 @@ export function startNextQueuedMessage(
     releaseTaskMessageClaim(message.id, taskId);
     // A sibling holds the parent's last running slot: the message stays queued
     // and starts when one of them settles (drainSubtaskQueues), never failing.
+    // a subtask report waits for a free slot; its delivery starts it again by id
+    if (error instanceof TaskCapacityError && message.origin === "subtask") return null;
     if (error instanceof SubtaskCapError) {
       updateTaskAndEmit(taskId, { state_detail: `waiting for a subtask slot under ${error.parentId}` });
       return null;

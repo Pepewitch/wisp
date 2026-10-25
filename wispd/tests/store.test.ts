@@ -139,9 +139,9 @@ describe("task-list rows", () => {
       expect(listed(false, false).map(({ task }) => task.id)).toEqual([live.id]);
       expect(listed(false, true).map(({ task }) => task.id)).toEqual([live.id, pending.id, complete.id]);
       expect(listed(true, true).map(({ task }) => task.id)).toEqual([live.id, pending.id, complete.id, hidden.id]);
-      expect(listed(false, false)[0]!.latestTurn).toEqual({ model: "new-model", exitCode: 7, hasResult: true, background: false });
+      expect(listed(false, false)[0]!.latestTurn).toEqual({ model: "new-model", exitCode: 7, hasResult: true, background: false, report: false });
       expect(listed(true, false).find(({ task }) => task.id === hidden.id)!.latestTurn)
-        .toEqual({ model: null, exitCode: null, hasResult: false, background: false });
+        .toEqual({ model: null, exitCode: null, hasResult: false, background: false, report: false });
     } finally {
       for (const id of ids) {
         db.run("DELETE FROM archive_cleanup_progress WHERE task_id = ?", [id]);
@@ -495,8 +495,8 @@ describe("per-turn model + per-task effort (P5b)", () => {
     createTurn(b.id, 1, "one", null, "/tmp/b1.out.log"); // never finalized
     const c = makeTask(); // no turns at all (still creating)
     const outcomes = latestTurnOutcomes();
-    expect(outcomes.get(a.id)).toEqual({ model: "new-model", exitCode: 0, hasResult: true, background: false });
-    expect(outcomes.get(b.id)).toEqual({ model: null, exitCode: null, hasResult: false, background: false });
+    expect(outcomes.get(a.id)).toEqual({ model: "new-model", exitCode: 0, hasResult: true, background: false, report: false });
+    expect(outcomes.get(b.id)).toEqual({ model: null, exitCode: null, hasResult: false, background: false, report: false });
     expect(outcomes.has(c.id)).toBe(false);
   });
 

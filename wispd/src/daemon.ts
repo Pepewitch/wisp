@@ -27,6 +27,7 @@ import { maintainDiagnosticArchives } from "./recording/diagnostic";
 import { TaskSkillCache, type TaskSkillCacheOptions } from "./skills";
 import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./runner";
 import { startSubtaskQueueLoop } from "./subtask-queue";
+import { SubtaskDelivery } from "./subtask-delivery";
 import { settleStrandedTasks } from "./turn-finalize";
 import { startArchiveCleanupLoop } from "./archive-worker";
 import { startTurnTextBackfillLoop } from "./turn-text-backfill";
@@ -756,6 +757,7 @@ async function serveOwned(
     { name: "model discovery", stop: () => modelCache.stop() },
     { name: "process groups", ...startProcessGroupLoop() },
     startedService("workflows", new WorkflowRuntime(cfg, adapters)),
+    startedService("subtask reports", new SubtaskDelivery(cfg, adapters)),
     startedService("autopilot", new AutopilotRuntime(cfg, adapters, { models: modelCache })),
     startedService("plan limits refresh", new LimitsTurnRefresh(limitsCache, cfg, adapters)),
   );

@@ -44,7 +44,8 @@ export type TurnStatus = "running" | "done" | "failed" | "interrupted";
  * answer (a Monitor event, a background command finishing). Nobody asked for
  * it, so its finish raises no notification.
  */
-export type TurnOrigin = "background";
+/** `background`: work the agent started woke it; `report`: a subtask report started it. Neither is news when it ends done. */
+export type TurnOrigin = "background" | "report";
 /** Durable selection of the turn-capture semantics used when a process starts. */
 export type TurnCaptureMode = "recorder-v1";
 export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy" | "evicted";
@@ -246,6 +247,8 @@ export interface ApiTaskListItem extends ApiTask {
   latest_turn_has_result: boolean;
   /** The latest turn was one background work woke (TurnOrigin), not a message: its finish is not news. */
   latest_turn_background: boolean;
+  /** The latest turn was one a subtask report started: its finish is not news either. */
+  latest_turn_report: boolean;
 }
 
 /** A turn as the API serves it: internal JSON columns parsed, never relayed raw. */

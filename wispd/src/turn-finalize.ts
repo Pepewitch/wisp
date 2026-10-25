@@ -238,7 +238,8 @@ async function finalizeInterruptedTurn(
  * answered nobody, so it is not news; one that needs the person still is.
  */
 function isNews(turn: Turn | null, parsed: ParsedTurn): boolean {
-  return parsed.needsInput || turn?.origin !== "background";
+  // a turn a subtask report started answered no one either: the report is not the person's request
+  return parsed.needsInput || (turn?.origin !== "background" && turn?.origin !== "report");
 }
 
 /** Finalize from a recorder checkpoint, or from whole files for a durable legacy turn. */
