@@ -160,13 +160,14 @@ wisp new [repo] "prompt" … --subtask | --parent <id> [--report]
          [--kind review|explore|continue] [--base <ref>]
 ```
 
-Subtasks, available when the daemon reports `features.subtasks` (a preview,
-off by default; they are not in `wisp help` yet). A subtask is a task with a
+Subtasks, on by default (`subtasks: false` in `config.json` turns them off, and
+the daemon then reports `features.subtasks` false). A subtask is a task with a
 parent, in its own worktree and `wisp/<id>-…` branch. `--subtask` inside a task
 makes that task the parent and turns reporting on; `--parent <id>` names one
-from anywhere, and reports only with `--report` (the flag is stored; a later
-release delivers reports). `repo` defaults to the parent's, and must be the
-parent's if given. The CLI checks `features.subtasks` before it uploads any
+from anywhere, and reports only with `--report`. A reporting child tells its
+parent when a turn ends done, needs input, fails or goes quiet, or its setup
+fails; see [supervise.md](supervise.md#subtasks). `repo` defaults to the
+parent's, and must be the parent's if given. The CLI checks `features.subtasks` before it uploads any
 attachment and refuses on a daemon without it, so it never makes a root task by
 mistake. An agent that names a parent that is not its own task gets a warning.
 
@@ -175,7 +176,12 @@ a fork PR or an unreachable GitHub is refused with "pass --base"), `continue`
 pins the parent's committed branch tip, and `explore` (the default) starts from
 the project's usual base, as a new task would. An explicit `--base` wins
 over the kind. A parent must be a root task: subtasks have one level. A
-subtask takes no autopilot switch and may not be `--local`. At most
+subtask may not be `--local`. An `explore` child may have auto-fix,
+auto-review and auto-merge, at creation (`--auto-fix`, `--auto-review`,
+`--auto-merge`) or later with `wisp pr`; `review` and `continue` children none. An agent may turn on
+auto-merge only for its own `explore` child, and only while its own task has
+merge rights from a person (a person's auto-merge, or a live workflow with
+`allowMerge` a person turned on); otherwise it is refused with a 409. At most
 `maxSubtasks` (default 10) live children per parent, and at most
 `maxRunningSubtasks` (default 3) running at once: past that a new child or a
 direct message is refused, and a queued message waits for a slot. Prints `created <id> (…, <kind> subtask of <parent>) — <title>`.
@@ -326,7 +332,7 @@ its effects and `--log`, then use `--confirm-complete` to skip that script or
 scripts and their children stopped and add `--verified-stopped`. A task with live
 subtasks is refused unless `--subtasks archive` (each must be archivable as it
 is) or `--subtasks force` (each is forced) takes them with it, all or nothing
-(available when the daemon reports `features.subtasks`); the CLI lists the
+(on when subtasks are on); the CLI lists the
 children it takes and prints each child that refused. Auto-review's reviewers
 always go with their author. See
 [Archive cleanup](../../../docs/ARCHIVE-CLEANUP.md). Archiving a `--local` task is bookkeeping only —

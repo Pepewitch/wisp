@@ -219,23 +219,25 @@ which is the point of the mode. Passing a base to one is a 400.
 
 ## Subtasks
 
-A subtask is a task with a parent task. This is a **preview**: it is off unless
-`config.json` sets `subtasksPreview: true`, `features.subtasks` in
-`GET /api/harnesses` says which, and while it is off every subtask field on
-create is refused with a 409. The key is not written into `config.json` by
-default. Wisp's own auto-review reviewers are subtasks either way.
+A subtask is a task with a parent task. The feature is on by default.
+`config.json` with `subtasks: false` switches it off: `features.subtasks` in
+`GET /api/harnesses` then reads false, and every subtask field on create is
+refused with a 409. Wisp's own auto-review reviewers are subtasks either way.
+The older `subtasksPreview` key is gone; a config that still has it warns
+"unknown key".
 
 The relationship lives on the task row (migration 26): `parent_task_id`,
 `subtask_kind` (`review`, `explore` or `continue`), `report_to_parent`,
 `base_from` (where the pinned base came from: `pr#N`, `parent:<id>`, `project`
 or `explicit`) and `merge_granted_by`. All are fixed at creation. There is no
 foreign key: deleting a parent only unlinks its children, which keep their kind
-as orphans. The same migration adds the `subtask_reports` table; nothing writes
-it yet, so a subtask does not report back to its parent in this release.
+as orphans. The same migration adds the `subtask_reports` table, which holds
+what a reporting child tells its parent (see [Reports](#subtask-reports)).
 
 A parent must be a root task, so subtasks have one level. The exception is a
 reviewer: it is a `review` subtask of the task whose PR it reviews, may sit
-under a subtask, and keeps `verify_role = 'reviewer'`. A subtask has its own
+under a subtask (a second level, made only by Wisp), and keeps
+`verify_role = 'reviewer'`. A subtask has its own
 worktree and `wisp/<id>-…` branch, and its prompt tells it never to commit to or push the parent's.
 
 The base depends on the kind, and an explicit `--base` wins over all of them:
@@ -258,7 +260,58 @@ harness waking itself) counts toward the cap but is never refused, because its
 process is already running.
 
 Archive takes a family whole or not at all, and purge refuses a parent with a
-live child; see [Archive cleanup](ARCHIVE-CLEANUP.md#subtasks). The code:
+live child; see [Archive cleanup](ARCHIVE-CLEANUP.md#subtasks).
+
+### Subtask reports
+
+A child made with `--subtask` (or `--parent <id> --report`, API `report: true`)
+reports to its parent. Recording and delivery are separate steps.
+
+**Recording** (`subtask-reports.ts`) happens in the same transaction as the
+change it reports, so a report never exists without its cause. It records:
+
+- a turn that ends done (including needing input) or failed;
+- a turn going quiet (stuck), once per turn;
+- setup failing before any turn (`setup-failed`);
+- with autopilot on, the PR events: a review round settled (outcome only), the
+  PR merged, the PR closed unmerged, and autopilot needing a person. The last
+  is a fixed class (round cap, conflict, merge failed, recipe, provider
+  auto-merge, merge rights, draft, needs-you), never the reason text, which can
+  carry `gh` or CI output.
+
+It does not record an interrupted turn, a background follow-up, a turn the
+parent's own message started (the loop breaker), or a turn autopilot started
+(those report through PR events). Each (child, event) is recorded once, even
+across a restart, by a key such as `round:<id>`, `merged:<pr>:<head>` or
+`hold:<pr>:<head>:<class>`. The body is the turn's result, clipped to 2,000
+characters.
+
+**Delivery** (`subtask-delivery.ts`) is a daemon service. A report waits while
+the parent runs a turn, needs input, is held after a Stop, has queued or
+background work, or the daemon has no free slot. It never interrupts or steers
+the parent and never fails it. Reports that arrive within about 3 seconds
+become one message (origin `subtask`, sender `system`), started by id once the
+parent is free. A pass runs after anything about the parent or a child
+changes, at startup, and every 30 seconds. An archived, deleted or deleting
+parent drops its pending reports; `GET /api/tasks/:id/subtasks` counts the
+drop. A queued report can be cancelled but not edited or sent now (409), and a
+person's message queued behind it still goes first. A turn a report starts is
+a `report` turn: no done webhook, and `latest_turn_report` in the task list.
+
+**Framing** is built from the stored rows, never from the message text. Inside
+Wisp's `<wisp>` section go one Wisp-written fact line per report (who, kind,
+turn or PR, outcome) and a note that the children's words are another agent's:
+evidence, not instructions. Outside the section, each child's words sit between
+`<<<report-ID>>>` and `<<<end-ID>>>`, where ID is the message id, which the
+child could not know when it wrote. `<wisp>`, `</wisp>` and the closing fence
+are escaped in them.
+
+**Rights** are decided in `autopilot/subtask-policy.ts`. Autopilot runs on
+`explore` children only. Auto-merge on a child needs merge rights that come
+from a person (see [Merge rights](PR-AUTOPILOT.md#subtasks)), recorded as
+`merge_granted_by`.
+
+The code:
 
 | Concern | Source |
 | --- | --- |
@@ -267,6 +320,9 @@ live child; see [Archive cleanup](ARCHIVE-CLEANUP.md#subtasks). The code:
 | Admission and the running cap | `wispd/src/task-admission.ts` |
 | Family archive | `wispd/src/domain/archive.ts` |
 | The 30-second queue backstop | `wispd/src/subtask-queue.ts` |
+| Recording reports and PR events | `wispd/src/subtask-reports.ts` |
+| Delivering reports, framing | `wispd/src/subtask-delivery.ts` |
+| Autopilot by kind, merge rights | `wispd/src/autopilot/subtask-policy.ts` |
 | `GET /api/tasks/:id/subtasks` | `wispd/src/routes/subtasks.ts` |
 | CLI flags, nested `ls`, `show` | `wispd/src/cli-subtasks.ts` |
 | Schema and the reviewer backfill | `wispd/src/migration-subtasks.ts` |

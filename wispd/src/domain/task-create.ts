@@ -131,7 +131,7 @@ function localTaskRefusal(input: NewTaskInput): NewTaskRefusal | null {
 function armRequestedAutopilot(taskId: string, requested: NewTaskInput["autopilot"], actor: TaskAuditActor): void {
   if (!requested || (!requested.autoMerge && !requested.autoFix && !requested.autoReview)) return;
   try {
-    const armed = setAutopilot(taskId, { autoMerge: requested.autoMerge, autoFix: requested.autoFix, autoReview: requested.autoReview === true });
+    const armed = setAutopilot(taskId, { autoMerge: requested.autoMerge, autoFix: requested.autoFix, autoReview: requested.autoReview === true }, new Date(), actor);
     const detail = autopilotSwitchDetail(null, armed);
     if (detail) recordAudit(taskId, "autopilot", actor, detail);
   } catch (error) {

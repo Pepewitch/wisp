@@ -16,7 +16,7 @@ import type { ModelProbeCache } from "../src/model-probes";
 import { createTaskRoute, listTasksRoute } from "../src/routes/tasks";
 import { interruptTurn, startNextQueuedMessage } from "../src/runner";
 import { workflowRoute } from "../src/routes/workflows";
-import { db, getTask, setTaskFields, transition } from "../src/store";
+import { db, getTask, setTaskFields, transition, createTaskMessage } from "../src/store";
 import { taskAudit } from "../src/task-audit";
 import { taskPreambleLines, wispSection } from "../src/turn-input";
 import type { Task } from "../src/types";
@@ -367,6 +367,29 @@ describe("the loop", () => {
     expect(state.merges).toHaveLength(0);
     expect(autopilotStatus(task.id).state).toBe("held");
     setTaskFields(task.id, { turn_count: task.turn_count + 1 });
+    await pass(rt, task.id, clock);
+    expect(state.merges).toHaveLength(1);
+  });
+
+  test("an unread subtask report holds the merge back, but never the Stop hold's release", async () => {
+    const task = doneTask();
+    const clock = { now: START + 10 * 60_000 };
+    const { state, github } = fakeGitHub();
+    const rt = runtime(github, clock);
+    setAutopilot(task.id, { autoMerge: true });
+    seed(task.id, clock);
+    // a report restored after a crash, queued but not started, and one still waiting to be queued
+    createTaskMessage({ id: `msstop${task.id}`, taskId: task.id, text: "reports", attachmentHash: "", origin: "subtask", actor: "system" }, false);
+    db.run(`INSERT INTO subtask_reports (id, child_task_id, parent_task_id, kind, event_key, facts_json, state, created_at, updated_at)
+      VALUES (?, 'tkidstop', ?, 'turn', 'turn:1', '{"kind":"turn"}', 'pending', 'x', 'x')`, [`srstop${task.id}`, task.id]);
+    pauseTaskWorkflows(task.id);
+    setTaskFields(task.id, { turn_count: task.turn_count + 1 });
+    await pass(rt, task.id, clock);
+    // the person's next turn released the hold; the reports still keep auto-merge from acting over them
+    expect(checkpointOf(autopilotRow(task.id)!).stopHold).toBeUndefined();
+    expect(state.merges).toHaveLength(0);
+    db.run("DELETE FROM subtask_reports WHERE id = ?", [`srstop${task.id}`]);
+    db.run("UPDATE task_messages SET status = 'cancelled' WHERE id = ?", [`msstop${task.id}`]);
     await pass(rt, task.id, clock);
     expect(state.merges).toHaveLength(1);
   });

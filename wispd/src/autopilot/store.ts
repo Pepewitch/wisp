@@ -4,6 +4,8 @@
  * on); everything that evolves — the bound PR, heads seen, a Stop hold, a merge
  * attempt — lives in the checkpoint, so a toggle is never an edit to evidence.
  */
+import { mergeGrant, MergeRightsError, subtaskAutopilotRefusal } from "./subtask-policy"
+import { holdClass, latestHead, recordPrEvent } from "../subtask-reports"
 import type { AutopilotBy, AutopilotHistoryEntry, AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
 import { db } from "../store-database"
 import { emit } from "../events"
@@ -247,7 +249,11 @@ export class AutopilotError extends Error {
 }
 
 /** Arm, update, or disarm. Idempotent: setting what is already set changes nothing. */
-export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new Date()): AutopilotStatus {
+export function setAutopilot(
+  taskId: string, update: AutopilotUpdate, now = new Date(),
+  /** who asked (the task audit's actor): an agent may grant auto-merge only as subtask-policy.ts allows */
+  actor = "api",
+): AutopilotStatus {
   const result = db.transaction(() => {
     const task = getTask(taskId)
     if (!task) throw new AutopilotError("Task not found", 404)
@@ -257,6 +263,7 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
       autoMerge: update.autoMerge ?? current.autoMerge, autoFix: update.autoFix ?? current.autoFix, autoReview: update.autoReview ?? current.autoReview,
     }
     const at = now.toISOString()
+    if (!next.autoMerge) db.run("UPDATE tasks SET merge_granted_by = NULL WHERE id = ? AND merge_granted_by IS NOT NULL", [taskId])
     if (!anySwitch(next)) {
       if (row) changeWorkflowState(row.id, "completed", "Auto-merge off", now)
       return
@@ -264,8 +271,7 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
     if (task.archived) throw new AutopilotError("An archived task cannot be switched on", 409)
     if (task.mode === "local") throw new AutopilotError("Auto-merge, auto-fix and auto-review need a task with its own branch; this one runs in the project checkout", 409)
     if (task.verify_role) throw new AutopilotError("A reviewer or verification-recipe task cannot switch these on", 409)
-    // until merge rights exist (the next step of subtasks), no subtask may be armed: not at creation, not later
-    if (task.subtask_kind) throw new AutopilotError("Auto-merge, auto-fix and auto-review are not available on subtasks yet", 409)
+    grantAutoMerge(task, current.autoMerge && row?.state !== "completed", next, actor)
     const label = [next.autoMerge && "Auto-merge on", next.autoFix && "Auto-fix on", next.autoReview && "Auto-review on"].filter(Boolean).join(", ")
     if (row) {
       reconfigure(row, current, next, label, now)
@@ -285,6 +291,24 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
   result()
   announceWorkflow(taskId)
   return autopilotStatus(taskId)
+}
+
+/**
+ * The subtask policy for switching on (subtask-policy.ts), and who granted
+ * auto-merge when it goes from off to on, written in the same transaction.
+ */
+function grantAutoMerge(task: Task, wasOn: boolean, next: AutopilotParams, actor: string): void {
+  const kindRefusal = subtaskAutopilotRefusal(task, true)
+  if (kindRefusal) throw new AutopilotError(kindRefusal, 409)
+  if (!next.autoMerge || wasOn) return
+  let grant: string
+  try {
+    grant = mergeGrant(task, actor)
+  } catch (error) {
+    if (error instanceof MergeRightsError) throw new AutopilotError(error.message, 409)
+    throw error
+  }
+  db.run("UPDATE tasks SET merge_granted_by = ? WHERE id = ?", [grant, task.id])
 }
 
 /** Change the switches of a row that is already on. */
@@ -403,13 +427,19 @@ export function saveAutopilotCheck(row: WorkflowRow, check: AutopilotCheck, now:
   })
   if (paced.backoff) checkpoint.backoff = paced.backoff
   else delete checkpoint.backoff
-  db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, check_count = check_count + 1, failures = ?,
-    last_checked_at = ?, next_check_at = ?, updated_at = CASE WHEN reason = ? THEN updated_at ELSE ? END WHERE id = ?`,
-  [JSON.stringify(checkpoint), check.reason, check.failures ?? 0, at, new Date(now.getTime() + paced.delayMs).toISOString(), check.reason, at, row.id])
+  // one transaction: a needs-you a reporting subtask's parent must hear commits with its report, or not at all
+  db.transaction(() => {
+    db.run(`UPDATE workflows SET checkpoint_json = ?, reason = ?, check_count = check_count + 1, failures = ?,
+      last_checked_at = ?, next_check_at = ?, updated_at = CASE WHEN reason = ? THEN updated_at ELSE ? END WHERE id = ?`,
+    [JSON.stringify(checkpoint), check.reason, check.failures ?? 0, at, new Date(now.getTime() + paced.delayMs).toISOString(), check.reason, at, row.id])
+    if (reasonClass(previous.state ?? "", current.reason) !== reasonClass(check.state, check.reason)) {
+      recordWorkflow(row.id, check.state === "needs-you" ? "blocked" : "wait", check.reason, at)
+    }
+    // every needs-you look, not only a changed one: a new head with the same hold is a new event,
+    // and the event's own key (PR, head, class) keeps a repeat from reporting twice
+    if (check.state === "needs-you") recordHold(current, checkpoint, check.reason)
+  })()
   const changed = current.reason !== check.reason || previous.state !== check.state
-  if (reasonClass(previous.state ?? "", current.reason) !== reasonClass(check.state, check.reason)) {
-    recordWorkflow(row.id, check.state === "needs-you" ? "blocked" : "wait", check.reason, at)
-  }
   if (changed) announceWorkflow(row.task_id)
   return true
 }
@@ -439,6 +469,7 @@ export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: s
     const current = getWorkflow(row.id)
     if (!current) return
     const previous = checkpointOf(current)
+    recordPrEvent(current.task_id, `merged:${merged.pr}:${head ?? ""}`, { kind: "merged", pr: merged.pr, ...(head ? { head } : {}) })
     // Switched off, or the task archived, while the look was reading the PR:
     // never bring the row back. Remember the merge on it, for the PR line and
     // the one-time note, and stop there.
@@ -487,16 +518,32 @@ export function endMergeAttempt(row: WorkflowRow, reported: boolean): void {
 }
 
 export function finishAutopilot(row: WorkflowRow, outcome: "merged" | "closed", reason: string, now: Date, merged?: { base: string; byWisp: boolean }): void {
-  const checkpoint: AutopilotCheckpoint = { ...checkpointOf(getWorkflow(row.id) ?? row), outcome }
-  if (merged) checkpoint.merged = { ...merged, noted: false }
-  db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify(checkpoint), row.id])
-  changeWorkflowState(row.id, "completed", reason, now)
+  db.transaction(() => {
+    const checkpoint: AutopilotCheckpoint = { ...checkpointOf(getWorkflow(row.id) ?? row), outcome }
+    if (merged) checkpoint.merged = { ...merged, noted: false }
+    db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify(checkpoint), row.id])
+    // the parent of a reporting subtask hears it, with the change that ended the row
+    const head = latestHead(checkpoint.heads)
+    if (checkpoint.pr) recordPrEvent(row.task_id, `${outcome}:${checkpoint.pr}:${head}`, { kind: outcome, pr: checkpoint.pr, ...(head ? { head } : {}) })
+    changeWorkflowState(row.id, "completed", reason, now)
+  })()
 }
 
 export function pauseAutopilot(row: WorkflowRow, reason: string, now: Date): void {
   const current = getWorkflow(row.id)
   if (!current || current.state !== "active") return
-  changeWorkflowState(row.id, "paused", reason, now)
+  db.transaction(() => {
+    recordHold(current, checkpointOf(current), reason)
+    changeWorkflowState(row.id, "paused", reason, now)
+  })()
+}
+
+/** A reporting subtask's PR needs a person: its parent hears the class, keyed so each hold reports once. */
+function recordHold(row: WorkflowRow, checkpoint: AutopilotCheckpoint, reason: string): void {
+  if (!checkpoint.pr) return
+  const head = latestHead(checkpoint.heads)
+  const kind = holdClass(reason)
+  recordPrEvent(row.task_id, `hold:${checkpoint.pr}:${head}:${kind}`, { kind: "needs-you", pr: checkpoint.pr, ...(head ? { head } : {}), class: kind })
 }
 
 /**

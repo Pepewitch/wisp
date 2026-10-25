@@ -11,6 +11,7 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { autopilotStatus } from "../autopilot/store";
+import { mergeGrant, MergeRightsError, subtaskAutopilotRefusal } from "../autopilot/subtask-policy";
 import { originRepository } from "../autopilot/bind";
 import { ghAutopilot, type AutopilotGitHub } from "../autopilot/github";
 import { subtasksEnabled, totalSubtaskCap } from "../config-subtasks";
@@ -171,10 +172,8 @@ export async function resolveSubtask(
   if (input.repoPath && real(input.repoPath) !== real(parent.repo_path)) {
     return refuse("invalid", `a subtask uses its parent's repository (${parent.repo_path}); omit the repository`);
   }
-  const autopilot = input.autopilot;
-  if (!reviewer && (autopilot?.autoMerge || autopilot?.autoFix || autopilot?.autoReview)) {
-    return refuse("conflict", "auto-merge, auto-fix and auto-review are not available on subtasks yet");
-  }
+  const refused = reviewer ? null : autopilotRefusal(input, kind, parent);
+  if (refused) return refused;
   const resolved = { parent, kind, report: !reviewer && request.report === true, reviewer };
   if (typeof input.base === "object") return { ...resolved, base: input.base, baseFrom: input.base.from };
   // an explicit base wins over the kind's, so a fork PR's review child can still be given one
@@ -183,6 +182,27 @@ export async function resolveSubtask(
   const pinned = kind === "review" ? await reviewBase(parent, deps) : await continueBase(parent);
   if ("error" in pinned) return pinned;
   return { ...resolved, base: pinned, baseFrom: pinned.from };
+}
+
+/**
+ * The switches a new subtask asks for, judged before its row exists by the
+ * same policy as a later switch-on: explore only, and auto-merge only from a
+ * person or from a parent agent holding rights from a person.
+ */
+function autopilotRefusal(input: NewTaskInput, kind: SubtaskKind, parent: Task): Refusal | null {
+  const asked = input.autopilot;
+  if (!asked?.autoMerge && !asked?.autoFix && !asked?.autoReview) return null;
+  const draft = { id: "the new subtask", subtask_kind: kind, parent_task_id: parent.id } as Task;
+  const kindRefusal = subtaskAutopilotRefusal(draft, true);
+  if (kindRefusal) return refuse("conflict", kindRefusal);
+  if (!asked.autoMerge) return null;
+  try {
+    mergeGrant(draft, input.actor);
+    return null;
+  } catch (error) {
+    if (error instanceof MergeRightsError) return refuse("conflict", error.message);
+    throw error;
+  }
 }
 
 /** The parent's goal for its child's first prompt: a person's title, else what it was first asked, else its title. */

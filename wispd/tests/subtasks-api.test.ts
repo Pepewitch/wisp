@@ -15,7 +15,7 @@ import { getTask, turnsFor } from "../src/store";
 
 const cfg = (preview: boolean): WispConfig => ({
   instanceId: "123e4567-e89b-42d3-a456-426614174000", port: 0, host: "127.0.0.1", token: "test", webhooks: [], repos: [],
-  stuckMinutes: 10, logMaxBytes: 5_000_000, setupTimeoutMinutes: 10, envAllowlist: {}, harnessDefaults: {}, subtasksPreview: preview,
+  stuckMinutes: 10, logMaxBytes: 5_000_000, setupTimeoutMinutes: 10, envAllowlist: {}, harnessDefaults: {}, subtasks: preview,
 });
 const adapters: Record<string, AdapterDef> = { quick: { bin: "bash", exec: ["-c", "printf done"], parse: { format: "text" }, attach: null } };
 
@@ -82,7 +82,7 @@ describe("the subtask API", () => {
     const list = await (await call(`/api/tasks/${parent}/subtasks`)).json();
     expect(list).toEqual([expect.objectContaining({
       id: child.id, kind: "explore", reviewer: false, state: "done", archived: false, report_to_parent: true, base_from: "project",
-      result: "done", reports: { pending: 0, queued: 0, dropped: 0 },
+      result: "done", reports: { pending: 1, queued: 0, dropped: 0 },
     })]);
     expect(await (await call(`/api/tasks/${child.id}/subtasks`)).json()).toEqual([]);
   });

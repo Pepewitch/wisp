@@ -108,6 +108,22 @@ describe("a turn background work woke", () => {
   })
 })
 
+/** A subtask report starts a turn on its parent; reading it answered nobody, so its end is no banner either. */
+describe("a turn a subtask report started", () => {
+  const report = (id: string, state: TaskState, on = true): ApiTask => ({ ...task(id, state), latest_turn_report: on })
+
+  it("is not news when it ends done, and is when it needs the person or fails", () => {
+    const previous = snapshotTaskStates([report("t1", "running"), report("t2", "running"), report("t3", "running")])
+    expect(finishedTransitions(previous, [report("t1", "done"), report("t2", "needs-input"), report("t3", "failed")]).map((t) => t.to))
+      .toEqual(["needs-input", "failed"])
+  })
+
+  it("leaves an ordinary turn's finish alone", () => {
+    const previous = snapshotTaskStates([task("t1", "running")])
+    expect(finishedTransitions(previous, [report("t1", "done", false)])).toHaveLength(1)
+  })
+})
+
 describe("task transition tracker", () => {
   it("seeds silently, then reports per connection, and forgets on request", () => {
     const tracker = createTaskTransitionTracker()

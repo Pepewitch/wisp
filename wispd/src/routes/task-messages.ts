@@ -132,6 +132,9 @@ export async function serveAttachment(filePath: string, name: string, missingMes
   });
 }
 
+/** Subtask reports are Wisp's record of what a child said: cancelling one is fine, rewriting or rushing it is not. */
+const SUBTASK_REPORT = "a subtask report is delivered by Wisp: it cannot be edited or sent now, only cancelled";
+
 /** Edit or cancel a message only while it is still waiting in the durable FIFO. */
 export function taskMessageRoute(req: Request, path: string, method: string): Response | Promise<Response> | null {
   const match = path.match(/^\/api\/tasks\/([a-z0-9]+)\/messages\/([A-Za-z0-9_-]+)$/);
@@ -146,6 +149,7 @@ export function taskMessageRoute(req: Request, path: string, method: string): Re
   }
   if (method === "PATCH") {
     if (message.workflow_id) return err("Configure the workflow instead of editing its generated instruction", 409);
+    if (message.origin === "subtask") return err(SUBTASK_REPORT, 409);
     return (async () => {
       const parsed = await jsonObjectBody(req);
       if (parsed instanceof Response) return parsed;
@@ -207,6 +211,7 @@ export function taskMessageSendNowRoute(
   if (task.state === "creating") return err("task is still being created", 409);
   if (!task.worktree_path) return err("task has no worktree (failed before setup?)", 409);
   if (message.workflow_id) return err("a workflow's generated instruction is sent by its workflow", 409);
+  if (message.origin === "subtask") return err(SUBTASK_REPORT, 409);
   const running = hasRunningTurn(task.id);
   if (compacts.isCompacting(task.id) || (running && isCompactPrompt(adapters[running.harness], running.prompt))) {
     return err("compaction is still running — wait for it to finish", 409);

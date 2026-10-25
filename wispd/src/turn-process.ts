@@ -227,10 +227,11 @@ export function adoptTurn(
   attachments: StoredAttachment[],
   autopilot: TurnNotes | null,
   messageId: string | undefined,
+  origin: TurnOrigin | null = null,
 ): void {
   const settled = proc.slot;
   const before = getTask(task.id);
-  const slot = openSlot(proc, task.id, n, message, attachments, null, messageId ?? null);
+  const slot = openSlot(proc, task.id, n, message, attachments, origin, messageId ?? null);
   setTaskFields(task.id, { turn_count: n });
   transition(task.id, "running", `turn ${n}`);
   const turn: LiveTurn = { turnId: slot.turnId, turn: n, sink: slot.sink };

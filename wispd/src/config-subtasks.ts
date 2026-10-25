@@ -6,7 +6,7 @@
  */
 import type { WispConfig } from "./config";
 
-export const SUBTASK_CONFIG_KEYS = ["maxRunningSubtasks", "maxSubtasks", "subtasksPreview"] as const;
+export const SUBTASK_CONFIG_KEYS = ["maxRunningSubtasks", "maxSubtasks", "subtasks"] as const;
 
 export interface SubtaskConfig {
   /** Unarchived non-reviewer children of one parent that may be starting or running a turn at once. Default 3. */
@@ -14,16 +14,16 @@ export interface SubtaskConfig {
   /** Unarchived non-reviewer children one parent may have. Default 10. */
   maxSubtasks?: number;
   /**
-   * Turns subtasks on before the feature is finished. Off by default: until
-   * then the daemon refuses every subtask field and reports
-   * `features.subtasks: false`. Wisp's own reviewers are subtasks either way.
+   * `false` turns subtasks off: the daemon refuses every subtask field and
+   * reports `features.subtasks: false`. On when unset. Wisp's own reviewers
+   * are subtasks either way.
    */
-  subtasksPreview?: boolean;
+  subtasks?: boolean;
 }
 
 export const runningSubtaskCap = (cfg: Pick<WispConfig, "maxRunningSubtasks">): number => cfg.maxRunningSubtasks ?? 3;
 export const totalSubtaskCap = (cfg: Pick<WispConfig, "maxSubtasks">): number => cfg.maxSubtasks ?? 10;
-export const subtasksEnabled = (cfg: Pick<WispConfig, "subtasksPreview">): boolean => cfg.subtasksPreview === true;
+export const subtasksEnabled = (cfg: Pick<WispConfig, "subtasks">): boolean => cfg.subtasks !== false;
 
 /** The valid subtask keys of a raw config.json; a wrong one throws with its name, like every other key. */
 export function subtaskConfig(raw: Record<string, unknown>): SubtaskConfig {
@@ -34,9 +34,9 @@ export function subtaskConfig(raw: Record<string, unknown>): SubtaskConfig {
     if (!Number.isSafeInteger(value) || (value as number) < 1) throw new Error(`config.json: ${key} must be a positive integer`);
     out[key] = value as number;
   }
-  if (raw.subtasksPreview !== undefined) {
-    if (typeof raw.subtasksPreview !== "boolean") throw new Error("config.json: subtasksPreview must be true or false");
-    out.subtasksPreview = raw.subtasksPreview;
+  if (raw.subtasks !== undefined) {
+    if (typeof raw.subtasks !== "boolean") throw new Error("config.json: subtasks must be true or false");
+    out.subtasks = raw.subtasks;
   }
   return out;
 }

@@ -54,7 +54,7 @@ export async function autopilotRoute(req: Request, path: string): Promise<Respon
     const invalid = autopilotUpdateError(body)
     if (invalid) return err(invalid, 400)
     const before = autopilotStatus(taskId)
-    const after = setAutopilot(taskId, body as AutopilotUpdate)
+    const after = setAutopilot(taskId, body as AutopilotUpdate, new Date(), requestActor(req))
     const moved = autopilotSwitchDetail(before, after)
     if (moved) recordAudit(taskId, "autopilot", requestActor(req), moved)
     return json(after)

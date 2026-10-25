@@ -131,6 +131,12 @@ archive the task or stop a turn that already received an instruction.
   it on, but it is then the agent's, not a person's. `web`, `desktop`, `cli` (a
   person typing in a task's terminal included) and `api` count as a person. The
   client name is a self-report, and it can only narrow what a request may do.
+  A person's `allowMerge` workflow is also what lets that task pass merge
+  rights to its `explore` subtasks (see
+  [Subtasks](PR-AUTOPILOT.md#subtasks)), but only while it is live: active and
+  unexpired. A person's Stop pauses it, an agent's resume makes it the agent's,
+  and expiry ends it, and each of these takes the rights away. A child that
+  inherited them is held at merge time.
   A workflow plugin may not use the type id of autopilot.
 - Permission flags are instructions to the agent, not an OS sandbox. Agents and
   custom plugins run as your OS user, and workflow turns have the same tool

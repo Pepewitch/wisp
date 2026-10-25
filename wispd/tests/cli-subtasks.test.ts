@@ -18,11 +18,11 @@ let server: Awaited<ReturnType<typeof serve>> | null = null;
 function writeConfig(port: number): void {
   writeFileSync(CONFIG_PATH, JSON.stringify({
     port, host: "127.0.0.1", token, webhooks: [], repos: [], stuckMinutes: 10, logMaxBytes: 5_000_000,
-    setupTimeoutMinutes: 10, envAllowlist: {}, harnessDefaults: {},
+    setupTimeoutMinutes: 10, envAllowlist: {}, harnessDefaults: {}, subtasks: false,
   }));
 }
 
-/** A daemon with the feature off: what an older daemon looks like to this CLI. */
+/** A daemon with the feature switched off: what an older daemon looks like to this CLI. */
 async function startDaemon(): Promise<void> {
   writeConfig(18710);
   server = await serve({ port: 0, modelProbeSpawn: () => { throw new Error("probe disabled in tests"); }, modelProbeTimeoutMs: 100 });

@@ -61,8 +61,8 @@ export function harnessesRoute(
       reviewPanel: true,
       // POST /api/tasks/:id/capture, GET /api/tasks/:id/captures, and capture provenance on review evidence
       capture: true,
-      // POST /api/tasks with parentTaskId, archive's `subtasks`, GET /api/tasks/:id/subtasks;
-      // off until the feature is finished, unless config.json's subtasksPreview turns it on
+      // POST /api/tasks with parentTaskId, archive's `subtasks`, GET /api/tasks/:id/subtasks,
+      // and reports to the parent; config.json's `subtasks: false` turns it off
       subtasks: subtasksEnabled(cfg),
     },
     harnesses: Object.entries(adapters).map(([name, def]) => ({

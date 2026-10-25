@@ -79,13 +79,13 @@ describe("validateConfig (a prior audit)", () => {
   });
 
   test("the subtask caps are positive integers, the preview a boolean, and none of them is defaulted into the file", () => {
-    const raw = { maxRunningSubtasks: 2, maxSubtasks: 5, subtasksPreview: true };
+    const raw = { maxRunningSubtasks: 2, maxSubtasks: 5, subtasks: false };
     expect(validateConfig(raw)).toEqual(raw);
     expect(thrownMessage(() => validateConfig({ maxRunningSubtasks: 0 }))).toBe("config.json: maxRunningSubtasks must be a positive integer");
     expect(thrownMessage(() => validateConfig({ maxSubtasks: 2.5 }))).toBe("config.json: maxSubtasks must be a positive integer");
-    expect(thrownMessage(() => validateConfig({ subtasksPreview: "yes" }))).toBe("config.json: subtasksPreview must be true or false");
-    expect([runningSubtaskCap({}), totalSubtaskCap({}), subtasksEnabled({})]).toEqual([3, 10, false]);
-    expect([runningSubtaskCap(raw), totalSubtaskCap(raw), subtasksEnabled(raw)]).toEqual([2, 5, true]);
+    expect(thrownMessage(() => validateConfig({ subtasks: "yes" }))).toBe("config.json: subtasks must be true or false");
+    expect([runningSubtaskCap({}), totalSubtaskCap({}), subtasksEnabled({})]).toEqual([3, 10, true]);
+    expect([runningSubtaskCap(raw), totalSubtaskCap(raw), subtasksEnabled(raw)]).toEqual([2, 5, false]);
   });
 
   test("an empty object is valid (all defaults)", () => {
@@ -296,7 +296,7 @@ describe("validateConfig (a prior audit)", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, hiddenModels, modelTaskDefaults, setupTimeoutMinutes, envAllowlist, harnessDefaults, jevApiKey, factoryApiKey, maxRunningSubtasks, maxSubtasks, subtasksPreview)",
+      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, hiddenModels, modelTaskDefaults, setupTimeoutMinutes, envAllowlist, harnessDefaults, jevApiKey, factoryApiKey, maxRunningSubtasks, maxSubtasks, subtasks)",
     ]);
     expect(out).toEqual({ port: 9000 });
   });
