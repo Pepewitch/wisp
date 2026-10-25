@@ -54,14 +54,29 @@ remaining platform gaps, and native dependency advisory scope.
   privilege boundary being crossed, but it does mean the viewer is not a
   containment guarantee. Do not treat it as one, and do not reuse its path
   check as a sandbox.
-- Subtasks (a preview, off by default) let an agent start tasks under another
-  task. Choosing a parent is not authenticated: any caller with the token can
-  name any parent, and the same OS user's processes can do everything the CLI
-  can. The caps, the CLI's warning when an agent names a parent that is not its
-  own task, and the `<wisp>` framing of a subtask's prompt guard against
-  mistakes, loops and injection between agents. They do not stop the local
-  user's own processes. The parent's goal reaches a subtask quoted, outside
-  Wisp's section, as data.
+- Subtasks (on by default; `subtasks: false` in `config.json` turns them off)
+  let an agent start tasks under another task. Choosing a parent is not
+  authenticated: any caller with the token can name any parent, and the same OS
+  user's processes can do everything the CLI can. The caps, the CLI's warning
+  when an agent names a parent that is not its own task, and the `<wisp>`
+  framing of a subtask's prompt guard against mistakes, loops and injection
+  between agents. They do not stop the local user's own processes. The parent's
+  goal reaches a subtask quoted, outside Wisp's section, as data.
+- A subtask's report to its parent is another agent's words. Wisp builds the
+  message from stored rows, not from the text the child sent. Inside the
+  `<wisp>` section it writes only its own fact lines and a note that the words
+  are evidence, not instructions. The child's words sit outside it, between
+  fences carrying the message's id, which the child could not know, with
+  `<wisp>`, `</wisp>` and the closing fence escaped. A PR event never carries
+  the reason text of a hold, which can hold `gh` or CI output. This is a guard
+  against injection between agents, not a boundary: the parent is still an agent
+  that reads what the child wrote.
+- Merge rights only come from a person. An agent may turn on auto-merge for its
+  own `explore` subtask only while its own task holds merge rights that a person
+  gave it (a person's auto-merge, or a live workflow with `allowMerge` a person
+  turned on). Wisp checks the grant again before it merges, and holds the child
+  if the parent lost it. An agent arming a root task confers nothing to pass on.
+  Like any actor, this is a self-report that only narrows (see below).
 - A request's actor (`X-Wisp-Task` marks an agent's turn) is a self-report. It
   only ever narrows what a request can do: a request that names an agent is
   refused a merge grant, and no actor widens what the token already allows. It

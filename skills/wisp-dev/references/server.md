@@ -145,9 +145,10 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 - A subtask is a task row with `parent_task_id`, `subtask_kind` and
   `base_from` (migration 26, `migration-subtasks.ts`), fixed at creation. There
   is no foreign key: deleting a parent only unlinks its children. The feature is
-  a preview behind `subtasksPreview`; `subtasksEnabled(cfg)` is the one switch,
-  and create refuses every subtask field while it is off. Wisp's own reviewers
-  skip it: they are `review` subtasks with `verify_role = 'reviewer'`.
+  on by default; `subtasks: false` in config turns it off. `subtasksEnabled(cfg)`
+  is the one switch, and create refuses every subtask field while it is off.
+  Wisp's own reviewers skip it: they are `review` subtasks with
+  `verify_role = 'reviewer'`.
 - The domain owns the rules. `domain/subtask-create.ts` validates the parent,
   resolves the base by kind and refuses a bad request; `domain/archive.ts` owns
   the family archive. Routes, the CLI and auto-review call them and never repeat
@@ -167,6 +168,24 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   The parent's goal follows it, quoted, as data.
 - The actor (`requestActor`) only narrows. A merge grant from an agent's turn is
   refused, and `workflows.merge_allowed_by` records who allowed one.
+- Reports are two modules. `subtask-reports.ts` RECORDS a `subtask_reports` row
+  inside the caller's transaction, the one that changes the turn, the task or
+  the PR state, so a report never outlives or precedes its cause. Each
+  (child, event key) is unique, which is what makes it once across a restart.
+  Do not record from a later tick. `subtask-delivery.ts` DELIVERS: it is a
+  daemon service, run after any change to a parent or child, at startup and
+  every 30 seconds. It batches reports within about 3 seconds into one message
+  (origin `subtask`, sender `system`), waits on a busy, needing-input or held
+  parent or a full daemon, and never steers a turn. Archived, deleted or
+  deleting parents drop their reports.
+- Framing is built from the stored rows, never from the message text: Wisp's
+  fact lines inside `<wisp>`, the child's words outside it between
+  `<<<report-ID>>>` fences with `<wisp>`, `</wisp>` and the fence escaped. A PR
+  hold event stores a fixed class, never the reason text.
+- `autopilot/subtask-policy.ts` owns autopilot by kind (`explore` only) and
+  merge rights: `merge_granted_by` is `person`, `parent:<id>` or `agent:<id>`,
+  cleared when auto-merge goes off, and an inherited grant is re-checked before
+  the merge. Do not repeat these rules in a route or the CLI.
 
 ### API and realtime
 
@@ -333,7 +352,7 @@ cannot tell you a browser stopped attaching a credential.
 | Authentication and HTTP responses | `wispd/src/routes/auth.ts`, `wispd/src/routes/http.ts` |
 | Task/API behavior | `wispd/src/routes/` |
 | Task operations every caller shares (create and launch, archive) | `wispd/src/domain/`; a route parses the request and maps the result to HTTP, and lint keeps store writes out of `routes/` |
-| Subtasks: family queries, caps, create, archive, queue backstop, CLI, schema | `wispd/src/subtasks.ts`, `wispd/src/domain/subtask-create.ts`, `wispd/src/task-admission.ts`, `wispd/src/domain/archive.ts`, `wispd/src/subtask-queue.ts`, `wispd/src/routes/subtasks.ts`, `wispd/src/cli-subtasks.ts`, `wispd/src/migration-subtasks.ts` |
+| Subtasks: family queries, caps, create, archive, queue backstop, CLI, schema | `wispd/src/subtasks.ts`, `wispd/src/domain/subtask-create.ts`, `wispd/src/task-admission.ts`, `wispd/src/domain/archive.ts`, `wispd/src/subtask-queue.ts`, `wispd/src/subtask-reports.ts`, `wispd/src/subtask-delivery.ts`, `wispd/src/autopilot/subtask-policy.ts`, `wispd/src/routes/subtasks.ts`, `wispd/src/cli-subtasks.ts`, `wispd/src/migration-subtasks.ts` |
 | Persistence and state transitions | `wispd/src/store.ts` |
 | Harness process lifecycle | `wispd/src/runner.ts` (spawn, queue, recovery), `wispd/src/turn-process.ts` (exit watcher, a process that serves several turns) |
 | Worktrees, git, setup hooks | `wispd/src/worktree.ts` |

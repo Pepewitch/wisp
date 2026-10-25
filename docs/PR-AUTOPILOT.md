@@ -145,6 +145,57 @@ Wisp's next look finds out.
   task still notices when its PR is merged (and carries on with the next PR)
   or closed.
 
+## Subtasks
+
+A task can start subtasks (`wisp new --subtask`; see
+[Architecture](ARCHITECTURE.md#subtasks)). The switches work on them by kind:
+
+- An `explore` child may run auto-fix, auto-review and auto-merge.
+- A `review` or `continue` child may run none. Switching off always works.
+
+**Merge rights.** A person may turn on auto-merge for any `explore` child. An
+agent, meaning a request from a task's own turn, may do it only for its own
+`explore` children, and only while its own task holds merge rights from a
+person: its auto-merge was turned on by a person, or it has a live (active,
+unexpired) [workflow](WORKFLOWS.md#lifecycle-and-safety) with `allowMerge` that
+a person turned on. Otherwise the request is refused with a 409 ("merge rights:
+task tX has none from a person …"). Wisp records the source as
+`merge_granted_by`: `person`, `parent:<id>`, or `agent:<id>`. An agent arming
+a root task is allowed as before, but it confers nothing to pass on. The record
+is cleared when auto-merge goes off. A task from before this release confers no
+rights, so an orchestrator arms its children once more.
+
+**Re-check at merge time.** Before it merges, Wisp checks an inherited grant
+again. If the parent lost its rights (auto-merge off, or its workflow ended,
+expired, or paused by a person's Stop, or was resumed by an agent and so became
+the agent's), autopilot holds the child. The child needs you: "Merge rights
+came from task tX, which no longer has them". Merge order between siblings is
+the parent's job.
+
+**Events to the parent.** A child that reports to its parent and has an
+autopilot switch on sends the parent these events, since only autopilot
+watches a PR:
+
+- a review round settled, with the outcome only (read the findings with
+  `wisp review show <child>`);
+- the PR merged, or closed without a merge (Wisp does not say who merged it);
+- autopilot needs a person, as a fixed class: round cap, conflict, merge
+  failed, recipe, provider auto-merge, merge rights, draft, or needs-you. The
+  reason text is never sent, because it can carry `gh` or CI output.
+
+A merged or closed event may wake an idle parent. Events wait for the parent
+like any other report and never interrupt it.
+
+**Report turns.** The turn an event starts on the parent is a `report` turn:
+no done webhook, and no "finished" banner in the web UI. While a report
+waits, autopilot does not count the parent as idle, so it does not merge the
+parent's own PR over it. After a Stop, the parent's autopilot hold also keeps
+reports from starting a turn, until your next turn finishes or
+`wisp pr <task> resume`.
+
+Wisp's own reviewers of an `explore` child's PR are `review` subtasks of that
+child, a second level only Wisp makes.
+
 ## When the network drops
 
 A turn that ends because the machine lost its connection to the provider
