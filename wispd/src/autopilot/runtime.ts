@@ -19,6 +19,7 @@ import { startNextQueuedMessage } from "../runner"
 import { getTask } from "../store"
 import { hasTaskCapacity, type Workload } from "../task-admission"
 import { nothingToSend } from "./fix-plan"
+import { inheritedRightsLost } from "./subtask-policy"
 import { recordAudit } from "../task-audit"
 import type { Task } from "../types"
 import { announceWorkflow, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
@@ -700,6 +701,9 @@ export class AutopilotRuntime {
     // has already finished (it may have committed work the check never saw).
     const task = getTask(row.task_id)
     if (!task || !taskIsIdle(task) || task.turn_count !== look.turnCount) return
+    // rights a parent passed on stand only while it still holds them from a person (subtask-policy.ts)
+    const lost = inheritedRightsLost(task)
+    if (lost) return void this.saveCheck(row, { state: "needs-you", reason: lost, checkpoint, delayMs: WAITING_ON_YOU_MS, about: "pr" })
     const attempt: AutopilotCheckpoint = { ...checkpoint, mergeAttempt: { head: pr.head, at: now.toISOString() }, state: "merging", about: "pr", by: "auto-merge" }
     delete attempt.done
     const merging = `Merging #${pr.number} (${pr.mergeMethod.toLowerCase()})`

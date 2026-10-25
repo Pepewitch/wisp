@@ -4,6 +4,7 @@
  * on); everything that evolves — the bound PR, heads seen, a Stop hold, a merge
  * attempt — lives in the checkpoint, so a toggle is never an edit to evidence.
  */
+import { mergeGrant, MergeRightsError, subtaskAutopilotRefusal } from "./subtask-policy"
 import { holdClass, latestHead, recordPrEvent } from "../subtask-reports"
 import type { AutopilotBy, AutopilotHistoryEntry, AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
 import { db } from "../store-database"
@@ -248,7 +249,11 @@ export class AutopilotError extends Error {
 }
 
 /** Arm, update, or disarm. Idempotent: setting what is already set changes nothing. */
-export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new Date()): AutopilotStatus {
+export function setAutopilot(
+  taskId: string, update: AutopilotUpdate, now = new Date(),
+  /** who asked (the task audit's actor): an agent may grant auto-merge only as subtask-policy.ts allows */
+  actor = "api",
+): AutopilotStatus {
   const result = db.transaction(() => {
     const task = getTask(taskId)
     if (!task) throw new AutopilotError("Task not found", 404)
@@ -258,6 +263,7 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
       autoMerge: update.autoMerge ?? current.autoMerge, autoFix: update.autoFix ?? current.autoFix, autoReview: update.autoReview ?? current.autoReview,
     }
     const at = now.toISOString()
+    if (!next.autoMerge) db.run("UPDATE tasks SET merge_granted_by = NULL WHERE id = ? AND merge_granted_by IS NOT NULL", [taskId])
     if (!anySwitch(next)) {
       if (row) changeWorkflowState(row.id, "completed", "Auto-merge off", now)
       return
@@ -265,8 +271,7 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
     if (task.archived) throw new AutopilotError("An archived task cannot be switched on", 409)
     if (task.mode === "local") throw new AutopilotError("Auto-merge, auto-fix and auto-review need a task with its own branch; this one runs in the project checkout", 409)
     if (task.verify_role) throw new AutopilotError("A reviewer or verification-recipe task cannot switch these on", 409)
-    // until merge rights exist (the next step of subtasks), no subtask may be armed: not at creation, not later
-    if (task.subtask_kind) throw new AutopilotError("Auto-merge, auto-fix and auto-review are not available on subtasks yet", 409)
+    grantAutoMerge(task, current.autoMerge && row?.state !== "completed", next, actor)
     const label = [next.autoMerge && "Auto-merge on", next.autoFix && "Auto-fix on", next.autoReview && "Auto-review on"].filter(Boolean).join(", ")
     if (row) {
       reconfigure(row, current, next, label, now)
@@ -286,6 +291,24 @@ export function setAutopilot(taskId: string, update: AutopilotUpdate, now = new 
   result()
   announceWorkflow(taskId)
   return autopilotStatus(taskId)
+}
+
+/**
+ * The subtask policy for switching on (subtask-policy.ts), and who granted
+ * auto-merge when it goes from off to on, written in the same transaction.
+ */
+function grantAutoMerge(task: Task, wasOn: boolean, next: AutopilotParams, actor: string): void {
+  const kindRefusal = subtaskAutopilotRefusal(task, true)
+  if (kindRefusal) throw new AutopilotError(kindRefusal, 409)
+  if (!next.autoMerge || wasOn) return
+  let grant: string
+  try {
+    grant = mergeGrant(task, actor)
+  } catch (error) {
+    if (error instanceof MergeRightsError) throw new AutopilotError(error.message, 409)
+    throw error
+  }
+  db.run("UPDATE tasks SET merge_granted_by = ? WHERE id = ?", [grant, task.id])
 }
 
 /** Change the switches of a row that is already on. */
