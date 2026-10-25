@@ -709,7 +709,8 @@ export function failStaleCreatingTasks(): void {
     const why = "daemon died while this task was being created (still 'creating' at startup); create a new task to retry";
     // a reporting subtask's parent hears it, as it would a setup failure (domain/task-launch.ts)
     db.transaction(() => {
-      if (transition(task.id, "failed", why) && turnsFor(task.id).length === 0) recordSetupFailure(task.id, why);
+      if (turnsFor(task.id).length === 0) recordSetupFailure(task.id, why);
+      transition(task.id, "failed", why);
     })();
     recordAudit(task.id, "fail", "system", "still being created when the daemon started");
   }

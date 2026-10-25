@@ -187,7 +187,7 @@ A merged or closed event may wake an idle parent. Events wait for the parent
 like any other report and never interrupt it.
 
 **Report turns.** The turn an event starts on the parent is a `report` turn:
-no done webhook, and no "finished" banner in the web UI. While a report
+no done webhook, and no "finished" notification from the Desktop app. While a report
 waits, autopilot does not count the parent as idle, so it does not merge the
 parent's own PR over it. After a Stop, the parent's autopilot hold also keeps
 reports from starting a turn, until your next turn finishes or

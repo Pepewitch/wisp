@@ -87,8 +87,10 @@ export async function launchTask(
     if (getTask(task.id)?.archived) return;
     const why = String(e instanceof Error ? e.message : e).slice(0, 300);
     // no turn exists to report on, so the parent is told that setup itself failed
+    // recorded before the transition, so the event it emits finds the report and delivery is prompt
     db.transaction(() => {
-      if (transition(task.id, "failed", why) && turnsFor(task.id).length === 0) recordSetupFailure(task.id, why);
+      if (getTask(task.id)?.state === "creating" && turnsFor(task.id).length === 0) recordSetupFailure(task.id, why);
+      transition(task.id, "failed", why);
     })();
   } finally {
     // A successful write consumed staged files. Every other exit, including

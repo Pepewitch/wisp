@@ -194,7 +194,11 @@ export function holdClass(reason: string): string {
   return classes.find(([pattern]) => pattern.test(reason))?.[1] ?? "needs-you";
 }
 
-/** The head autopilot saw last for its PR (checkpoint `heads`: sha → first seen), for an event's key. */
+/**
+ * The PR's current head, for an event's key: checkpoint `heads` (sha → first
+ * seen) keeps the head of the latest look last (autopilot/look.ts observe,
+ * heads.ts trimHeads), so a force push back to an older head still names it.
+ */
 export function latestHead(heads: Record<string, string> | undefined): string {
-  return Object.entries(heads ?? {}).sort((a, b) => a[1].localeCompare(b[1])).at(-1)?.[0] ?? "";
+  return Object.keys(heads ?? {}).at(-1) ?? "";
 }

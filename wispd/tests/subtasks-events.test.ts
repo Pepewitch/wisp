@@ -4,7 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import { finishAutopilot, pauseAutopilot, rebindAfterMerge, saveAutopilotCheck } from "../src/autopilot/store";
 import { createTask, db, freeSlot, newTaskId, randomId, setTaskFields, transition } from "../src/store";
-import { reportFraming } from "../src/subtask-reports";
+import { latestHead, reportFraming } from "../src/subtask-reports";
 import { settleRound } from "../src/verify/reviews";
 import { getWorkflow, type WorkflowRow } from "../src/workflows/store";
 
@@ -74,6 +74,20 @@ describe("a reporting subtask's PR events", () => {
     expect(framed.lines.join("\n")).toContain("PR #12 needs a decision (merge-failed)");
     expect(framed.lines.join("\n")).not.toContain("ghp_notreal");
     expect(framed.words).toBe("");
+  });
+
+  test("the same hold on a new head is a new event, and the head is the current one even after a force push back", () => {
+    const { child: id, row } = child();
+    const draft = (heads: Record<string, string>) =>
+      saveAutopilotCheck(row(), { state: "needs-you", reason: "Draft — auto-review starts once it is ready for review", checkpoint: { pr: 12, heads }, delayMs: 60_000 }, new Date());
+    draft({ aaa111: "2026-01-01" });
+    draft({ aaa111: "2026-01-01" });
+    // a push: same reason, so the history is not repeated, but the parent hears of the new head
+    draft({ aaa111: "2026-01-01", bbb222: "2026-01-02" });
+    // forced back to the first head: observe() keeps the current head last, whatever it first saw
+    draft({ bbb222: "2026-01-02", aaa111: "2026-01-01" });
+    expect(events(id).map(([key]) => key)).toEqual(["hold:12:aaa111:draft", "hold:12:bbb222:draft"]);
+    expect(latestHead({ bbb222: "2026-01-02", aaa111: "2026-01-01" })).toBe("aaa111");
   });
 
   test("a hold commits with its report or not at all", () => {

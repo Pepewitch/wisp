@@ -434,8 +434,10 @@ export function saveAutopilotCheck(row: WorkflowRow, check: AutopilotCheck, now:
     [JSON.stringify(checkpoint), check.reason, check.failures ?? 0, at, new Date(now.getTime() + paced.delayMs).toISOString(), check.reason, at, row.id])
     if (reasonClass(previous.state ?? "", current.reason) !== reasonClass(check.state, check.reason)) {
       recordWorkflow(row.id, check.state === "needs-you" ? "blocked" : "wait", check.reason, at)
-      if (check.state === "needs-you") recordHold(current, checkpoint, check.reason)
     }
+    // every needs-you look, not only a changed one: a new head with the same hold is a new event,
+    // and the event's own key (PR, head, class) keeps a repeat from reporting twice
+    if (check.state === "needs-you") recordHold(current, checkpoint, check.reason)
   })()
   const changed = current.reason !== check.reason || previous.state !== check.state
   if (changed) announceWorkflow(row.task_id)
