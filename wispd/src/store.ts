@@ -2,6 +2,7 @@ import { db } from "./store-database";
 export { db, initializeStore } from "./store-database";
 export { latestTurnOutcomes, listTasksWithLatestTurn, type LatestTurnOutcome } from "./store-task-list";
 import { emit } from "./events";
+import { recordTurnReport } from "./subtask-reports";
 import type {
   OutboxRow,
   SubtaskKind,
@@ -440,6 +441,8 @@ export function settleTurn(
 ): void {
   const seq = db.transaction((): number | null => {
     finishTurnRow(turnId, turn.status, turn.exitCode, turn.result);
+    // a subtask's report is written with the settlement it reports, never after it
+    recordTurnReport(turnId, state);
     return transitionBody(taskId, state, detail, undefined, notify);
   })();
   emitTurnFinished(turnId, turn.status);

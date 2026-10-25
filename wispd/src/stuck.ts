@@ -2,7 +2,8 @@ import { backgroundPass } from "./home-lifetime";
 import { stat } from "node:fs/promises";
 import type { WispConfig } from "./config";
 import { isUnresolvedInterrupt } from "./interrupt-state";
-import { getTask, getTurn, runningTurns, transition } from "./store";
+import { db, getTask, getTurn, runningTurns, transition } from "./store";
+import { recordStuckReport } from "./subtask-reports";
 
 /**
  * One stuck-detection pass. Quiet running turns become stuck, while fresh
@@ -29,7 +30,10 @@ export async function stuckTick(cfg: WispConfig, nowMs = Date.now()): Promise<vo
     if (getTurn(turn.id)?.status !== "running") continue;
     const quietMin = (nowMs - mtime) / 60000;
     if (task.state === "running" && quietMin >= cfg.stuckMinutes) {
-      transition(task.id, "stuck", `no output for ${Math.round(quietMin)} min (turn ${turn.n})`, task.seq);
+      // a reporting subtask tells its parent once per turn, with the transition that made it stuck
+      db.transaction(() => {
+        if (transition(task.id, "stuck", `no output for ${Math.round(quietMin)} min (turn ${turn.n})`, task.seq)) recordStuckReport(task.id, turn.n);
+      })();
     } else if (task.state === "stuck" && quietMin < 1) {
       transition(task.id, "running", `turn ${turn.n} (recovered)`, task.seq);
     }

@@ -15,7 +15,8 @@ import {
 import type { WispConfig } from "../config";
 import { homeIsDraining } from "../home-lifetime";
 import { startTurn, taskEnv } from "../runner";
-import { getTask, setTaskFields, transition } from "../store";
+import { db, getTask, setTaskFields, transition, turnsFor } from "../store";
+import { recordSetupFailure } from "../subtask-reports";
 import { taskMode, type Task } from "../types";
 import { createWorktree, localWorktree, runSetup } from "../worktree";
 import type { PinnedBase } from "./subtask-create";
@@ -84,7 +85,11 @@ export async function launchTask(
     startTurn(fresh, prompt, def, cfg, stored, undefined, adapters);
   } catch (e) {
     if (getTask(task.id)?.archived) return;
-    transition(task.id, "failed", String(e instanceof Error ? e.message : e).slice(0, 300));
+    const why = String(e instanceof Error ? e.message : e).slice(0, 300);
+    // no turn exists to report on, so the parent is told that setup itself failed
+    db.transaction(() => {
+      if (transition(task.id, "failed", why) && turnsFor(task.id).length === 0) recordSetupFailure(task.id, why);
+    })();
   } finally {
     // A successful write consumed staged files. Every other exit, including
     // archive/drain during setup, must retire the one-shot upload references.
