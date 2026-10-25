@@ -1409,6 +1409,64 @@ control in a tooltip component or draw one by hand. A tip is neutral: the
 accent stays in its five places (§1). A device with no hover keeps the OS
 behaviour.
 
+## 5m. Subtasks — nested, rolled up, archived as a family
+
+Gated on `features.subtasks`; without it the sidebar is flat and none of this
+renders. One answer drives the sidebar and the keyboard alike:
+`lib/subtask-tree.ts` (pure) nests each list, and `hooks/useSidebarTree.ts`
+hands the same lists to `Sidebar` and to Ctrl+Tab (`visibleIds`), so the two
+never disagree about which rows are on screen.
+
+- **Nesting.** A task sits under its parent only when the parent is in the
+  same list (a project, or one archive section); reviewers sit a level under
+  the task they review. Roots sort by their FAMILY's latest activity, so a
+  parent with a busy child does not sink; children keep the order they were
+  made in, so a busy child does not reshuffle its siblings. The archive still
+  splits into Cleanup then Archived first, and nests inside each.
+- **Collapsed by default**, per parent, in connection storage
+  (`useSubtaskDisclosure`). Selecting a hidden child from anywhere (search, a
+  deep link, a notification, Ctrl+Tab) opens every parent above it ONCE:
+  collapsing one again while the child stays selected sticks.
+- **The disclosure is its own button beside the row**, never inside it (a
+  button in a button, and opening must not select). It takes the left gutter
+  on a pointer, and every row in a list with a family keeps that gutter so the
+  dots line up; on touch it is a 44px target at the row's right edge.
+- **The rollup** is the count plus one dot on a COLLAPSED parent: blue while a
+  subtask runs (a reviewer counts: the parent's PR waits on it), amber when a
+  subtask needs the person. A reviewer needing input lights nothing — Wisp
+  answers it. Display only; nothing decides anything from it.
+- **A subtask drawn apart from its parent** (the parent is archived, or in the
+  other archive section) names it: `↳ <parent>`. An orphan says
+  `parent deleted`.
+- **The task view.** `SubtaskCrumb` puts `↳ <kind> subtask of <parent> · from
+  <base>` over the title, and the parent's name opens it; the phone header
+  carries it as one meta item. The **Subtasks** tab (`subtasks-pane.tsx`)
+  lists children with state, kind, clipped result and where their reports
+  stand. The daemon announces a child's change about the CHILD, so
+  `useSubtasks` keys on the family's stamp from the live task list rather than
+  polling. On a phone the tab shows only while the task has subtasks.
+- **New subtask** (`new-subtask-dialog.tsx`, from the tab and the task menu) is
+  the new-task composer scoped to the parent: kind, the base it pins
+  (`subtaskBasePreview`), Report back (on), the agent pickers, and autopilot
+  for `explore` only. Its draft is the parent's (`subtaskDraftScope`), apart
+  from the project's. The daemon's refusals (caps, no PR, merge rights) show
+  inline, verbatim.
+- **Archiving a parent** goes through the same `useArchiveFlow` and dialog at
+  all three entry points. The first attempt is unforced and without
+  `subtasks`, so the daemon names the family; the dialog lists every child
+  with what happens to it (`familyPlan`). Taking them (`subtasks: "archive"`),
+  forcing them (`"force"`) and stopping their autopilot (`stopAutopilot`) are
+  three separate yeses, and each one given is kept for the next attempt.
+- **A report turn is Wisp's**, not the person's: `ReportBubble` sits on the
+  left under Wisp's name, Wisp's fact lines first, each child's words quoted
+  and labelled as theirs (`lib/report-text.ts` reads the fences back). Its end
+  is no "finished" banner; the tracker treats report and background turns as
+  one kind of quiet turn, and a person's turn that ended just before one is
+  still news.
+
+The gallery's *Subtasks* section draws the nesting, both rollup rules, the
+archive's nesting, both family-confirm steps and a report turn.
+
 ## 6. Panes and dividers
 
 Every divider is draggable **and says so**: a hairline with a 3px grip in its
@@ -1434,7 +1492,7 @@ clear, restart and close. Find is ⌘F on Apple platforms and Ctrl+Alt+F
 elsewhere: plain Ctrl+F is readline's, and the terminal never takes a key the
 shell uses.
 
-### The task panel: Autopilot · Changes · Workflows
+### The task panel: Autopilot · Changes · Workflows · Subtasks
 
 `Changes` used to be a label that merely kept a tab's shape, "so `Checks` can
 slot in beside it later". **Workflows** is the sibling that arrived first, and
@@ -1447,7 +1505,7 @@ never closes the diff you had open. The strip is handed to the VISIBLE pane's
 `PaneHeader`, never to both — two tablists in one tree is the bug that trades
 one duplicated label for a broken a11y tree. Each pane still renders its own
 plain label when it is given no strip. The strip is built from the daemon's
-features (`taskAutopilot`, `taskWorkflows`): a daemon with none gets Changes
+features (`taskAutopilot`, `taskWorkflows`, `subtasks`): a daemon with none gets Changes
 alone, with its own label. The panel paints nothing until those features are
 known, so a cold load never opens on Changes and then jumps to Autopilot.
 
@@ -1533,8 +1591,8 @@ version wrapped onto two lines inside the width the title needed.
    the title left both unreadable.
 4. **The tab strip fills the row** (`flex-1 basis-auto`, `px-1`), a segmented
    control rather than left-packed pills with a dead right half. It is `Chat ·
-   Autopilot · Changes · Workflows · Terminal`; Autopilot and Workflows appear only
-   where the daemon supports them. Tabs are sized by their content plus an
+   Autopilot · Changes · Workflows · Subtasks · Terminal`; Autopilot and Workflows appear only
+   where the daemon supports them, and Subtasks only while the task has some. Tabs are sized by their content plus an
    equal share, so all five still fit at 320px. Each pane's `PaneHeader` takes
    `touch` so its own action reaches 44px.
 

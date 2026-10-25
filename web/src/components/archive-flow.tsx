@@ -1,4 +1,5 @@
 import { Dialog } from "@base-ui/react/dialog"
+import type { ReactNode } from "react"
 
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
 import type { ArchiveFlow } from "@/hooks/useArchiveFlow"
@@ -25,6 +26,8 @@ const stops = (task: ApiTask): string => {
   if (verbs.length === 0) return "merging"
   return verbs.length === 1 ? verbs[0]! : `${verbs.slice(0, -1).join(", ")} and ${verbs.at(-1)}`
 }
+
+const ARCHIVE_TITLE = "text-[14.5px] font-semibold tracking-[-0.01em]"
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
 
@@ -57,13 +60,60 @@ function FamilyList({ members }: { members: FamilyMember[] }) {
   )
 }
 
-/** The flow's one dialog: the daemon's refusal of this task, or of its family. */
-export function ArchiveConfirmDialog({ task, flow }: { task: ApiTask; flow: ArchiveFlow }) {
+/** What the confirm says and asks: the dialog's body, and the gallery's specimen of it. */
+export function ArchiveConfirmContent({ task, flow, title }: { task: ApiTask; flow: ArchiveFlow; title: ReactNode }) {
   const { reason, family, pending, stopsAutopilot } = flow
-  const title = `${task.title.slice(0, 40)}${task.title.length > 40 ? "…" : ""}`
   const refused = family?.members.filter((member) => member.refused).length ?? 0
   return (
-    <Dialog.Root open={reason !== null || family !== null} onOpenChange={(open) => !open && flow.dismiss()}>
+    <>
+      {title}
+      {family ? (
+        <>
+          <p className="mt-2 text-[12px] leading-relaxed text-fg-secondary">
+            {refused > 0
+              ? `${plural(refused, "subtask")} cannot be archived as ${refused === 1 ? "it is" : "they are"}, so nothing was archived.`
+              : `It has ${plural(family.members.length, "subtask")}; archiving it archives them too.`}
+          </p>
+          <FamilyList members={family.members} />
+          <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">{FAMILY_NOTE[family.next]}</p>
+        </>
+      ) : (
+        <>
+          {/* the daemon's own sentence, verbatim: it names what is unsaved
+              and what the remedies are, which is the whole decision */}
+          <p className="mt-2 text-[12px] leading-relaxed text-fg-secondary">{reason}</p>
+          <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
+            {stopsAutopilot
+              ? `Wisp stops ${stops(task)} it; the PR stays open on GitHub. Anything unsaved in the worktree is still checked before it is removed.`
+              : task.mode === "local"
+                ? "This task runs in the project directory, so archiving only files it — nothing is removed."
+                : "Forcing commits any uncommitted work onto the branch (it is never discarded) and then removes the worktree. The branch is kept, so the commit is where you will find that work."}
+          </p>
+        </>
+      )}
+      <div className="mt-4 flex justify-end gap-2">
+        <Button type="button" size="lg" onClick={flow.dismiss}>
+          Cancel
+        </Button>
+        <Button
+          type="button"
+          size="lg"
+          tone="primary"
+          disabled={pending}
+          onClick={() => (family ? flow.confirmFamily() : flow.request(true))}
+        >
+          {pending ? "Archiving…" : family ? familyVerb(family.next, family.members) : "Archive anyway"}
+        </Button>
+      </div>
+    </>
+  )
+}
+
+/** The flow's one dialog: the daemon's refusal of this task, or of its family. */
+export function ArchiveConfirmDialog({ task, flow }: { task: ApiTask; flow: ArchiveFlow }) {
+  const name = `${task.title.slice(0, 40)}${task.title.length > 40 ? "…" : ""}`
+  return (
+    <Dialog.Root open={flow.reason !== null || flow.family !== null} onOpenChange={(open) => !open && flow.dismiss()}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
         <Dialog.Popup
@@ -73,47 +123,15 @@ export function ArchiveConfirmDialog({ task, flow }: { task: ApiTask; flow: Arch
             "rounded-xl p-5 shadow-modal outline-none",
           )}
         >
-          <Dialog.Title className="text-[14.5px] font-semibold tracking-[-0.01em]">
-            Archive {title}{family ? " and its subtasks" : ""}?
-          </Dialog.Title>
-          {family ? (
-            <>
-              <p className="mt-2 text-[12px] leading-relaxed text-fg-secondary">
-                {refused > 0
-                  ? `${plural(refused, "subtask")} cannot be archived as ${refused === 1 ? "it is" : "they are"}, so nothing was archived.`
-                  : `It has ${plural(family.members.length, "subtask")}; archiving it archives them too.`}
-              </p>
-              <FamilyList members={family.members} />
-              <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">{FAMILY_NOTE[family.next]}</p>
-            </>
-          ) : (
-            <>
-              {/* the daemon's own sentence, verbatim: it names what is unsaved
-                  and what the remedies are, which is the whole decision */}
-              <p className="mt-2 text-[12px] leading-relaxed text-fg-secondary">{reason}</p>
-              <p className="mt-2 text-[11.5px] leading-relaxed text-muted-foreground">
-                {stopsAutopilot
-                  ? `Wisp stops ${stops(task)} it; the PR stays open on GitHub. Anything unsaved in the worktree is still checked before it is removed.`
-                  : task.mode === "local"
-                    ? "This task runs in the project directory, so archiving only files it — nothing is removed."
-                    : "Forcing commits any uncommitted work onto the branch (it is never discarded) and then removes the worktree. The branch is kept, so the commit is where you will find that work."}
-              </p>
-            </>
-          )}
-          <div className="mt-4 flex justify-end gap-2">
-            <Button type="button" size="lg" onClick={flow.dismiss}>
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              size="lg"
-              tone="primary"
-              disabled={pending}
-              onClick={() => (family ? flow.confirmFamily() : flow.request(true))}
-            >
-              {pending ? "Archiving…" : family ? familyVerb(family.next, family.members) : "Archive anyway"}
-            </Button>
-          </div>
+          <ArchiveConfirmContent
+            task={task}
+            flow={flow}
+            title={
+              <Dialog.Title className={ARCHIVE_TITLE}>
+                Archive {name}{flow.family ? " and its subtasks" : ""}?
+              </Dialog.Title>
+            }
+          />
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>
