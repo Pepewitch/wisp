@@ -23,7 +23,7 @@ import * as worktree from "../src/worktree";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000", port: 0, host: "127.0.0.1", token: "test", webhooks: [], repos: [],
-  stuckMinutes: 10, logMaxBytes: 5_000_000, setupTimeoutMinutes: 10, envAllowlist: {}, harnessDefaults: {}, subtasksPreview: true,
+  stuckMinutes: 10, logMaxBytes: 5_000_000, setupTimeoutMinutes: 10, envAllowlist: {}, harnessDefaults: {},
 };
 const adapters: Record<string, AdapterDef> = { quick: { bin: "bash", exec: ["-c", "printf done"], parse: { format: "text" }, attach: null } };
 

@@ -32,7 +32,6 @@ const cfg = (extra: Partial<WispConfig> = {}): WispConfig => ({
   setupTimeoutMinutes: 10,
   envAllowlist: {},
   harnessDefaults: {},
-  subtasksPreview: true,
   ...extra,
 });
 
@@ -62,7 +61,7 @@ async function project(): Promise<{ repo: string; prHead: string }> {
   await git(repo, "reset", "-q", "--hard", "HEAD~1");
   // the fetched copy is what a task would not have: prove the fetch brings it
   await git(repo, "reflog", "expire", "--expire=now", "--all");
-  await git(repo, "gc", "-q", "--prune=now");
+  await git(repo, "prune", "--expire=now");
   return { repo, prHead };
 }
 
@@ -109,7 +108,7 @@ describe("creating a subtask", () => {
   test("refused while the feature is off; Wisp's reviewers are subtasks either way", async () => {
     const { repo } = await project();
     const parent = await parentIn(repo);
-    const off = cfg({ subtasksPreview: false });
+    const off = cfg({ subtasks: false });
     expect(await createAndLaunchTask(input({ subtask: { parentId: parent.id } }), off, adapters, null))
       .toEqual({ kind: "conflict", error: "subtasks are not enabled on this daemon" });
     const reviewer = created(await createAndLaunchTask(input({
@@ -130,14 +129,11 @@ describe("creating a subtask", () => {
     expect(await refusal({ mode: "local" })).toMatchObject({ kind: "invalid", error: expect.stringContaining("local mode is refused") });
     expect(await refusal({ repoPath: parent.worktree_path! })).toMatchObject({ kind: "invalid", error: expect.stringContaining("omit the repository") });
     expect(await refusal({ repoPath: (await project()).repo })).toMatchObject({ kind: "invalid", error: expect.stringContaining("omit the repository") });
-    expect(await refusal({ autopilot: { autoMerge: false, autoFix: true } })).toMatchObject({ kind: "conflict", error: expect.stringContaining("not available on subtasks") });
+    // autopilot by kind: subtasks-autopilot.test.ts
+    expect(await refusal({ subtask: { parentId: parent.id, kind: "continue" }, autopilot: { autoMerge: false, autoFix: true } }))
+      .toMatchObject({ kind: "conflict", error: expect.stringContaining("A continue subtask opens no PR") });
     // the parent's own path is the same repository, so naming it is fine
     expect(created(await refusal({ repoPath: repo }))).toMatchObject({ repo_path: repo, parent_task_id: parent.id });
-    // nor can a switch be turned on later, through any client; turning them off stays possible
-    for (const update of [{ autoMerge: true }, { autoFix: true }, { autoReview: true }]) {
-      expect(() => setAutopilot(child.id, update)).toThrow("not available on subtasks yet");
-    }
-    expect(setAutopilot(child.id, { autoMerge: false })).toMatchObject({ autoMerge: false, autoFix: false, autoReview: false });
   });
 
   test("an explore child takes the project's base when its worktree is made, and reports only when asked", async () => {
@@ -264,7 +260,7 @@ describe("creating a subtask", () => {
     const lines = taskPreambleLines(getTask(child.id)!).join("\n");
     expect(lines).toContain(`This is an explore subtask of task ${parent.id}`);
     expect(lines).toContain("Never commit to or push your parent's branch");
-    expect(lines).toContain("off for subtasks");
+    expect(lines).toContain("Auto-fix and auto-review may run on your PR");
     expect(taskPreambleLines(getTask(parent.id)!).join("\n")).not.toContain("subtask");
     expect(taskPreambleLines({ ...getTask(child.id)!, verify_role: "reviewer" }).join("\n")).not.toContain("subtask");
     expect(taskPreambleLines({ ...getTask(child.id)!, subtask_kind: "review" }).join("\n")).toContain("Never push");

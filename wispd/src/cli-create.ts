@@ -26,7 +26,7 @@ export async function createCommand(positional: string[], flags: Flags): Promise
     [repo, prompt] = [subtask ? null : process.cwd(), positional[0]!];
   } else {
     printError(
-      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--attach <path>]…`,
+      `usage: ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--attach <path>]… [--subtask | --parent <task> [--report]] [--kind <kind>]`,
     );
     process.exit(1);
   }

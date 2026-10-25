@@ -21,6 +21,7 @@ const COMMAND = wispCommand();
 const COMMAND_USAGE = {
   serve: `  ${COMMAND} serve                                   run the daemon`,
   new: `  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--attach <path>]…
+          [--subtask | --parent <task> [--report]] [--kind review|explore|continue]
                                                        create a task (repo defaults to cwd;
                                                        model/effort fall back to config.json harnessDefaults,
                                                        then Wisp's default model for the harness;
@@ -33,9 +34,13 @@ const COMMAND_USAGE = {
                                                        --auto-review has an independent reviewer task verify each PR head;
                                                        --attach repeats, up to 10 files and 50 MB per turn:
                                                        images 5 MB, pdf and text 20 MB, video 50 MB
-                                                       (--image is the old name and still works))`,
+                                                       (--image is the old name and still works);
+                                                       --subtask makes this task's child (reporting back to it),
+                                                       --parent <task> another task's (--report to report);
+                                                       --kind: review starts at the parent's PR head, explore
+                                                       (default) at the project's base, continue at its tip)`,
   ls: `  ${COMMAND} ls [-a|--all] [--json]                    list your tasks, subtasks under their parent (alias: list; -a includes archived)`,
-  show: `  ${COMMAND} show <task>                             task detail: turns, attachments, diffstat`,
+  show: `  ${COMMAND} show <task>                             task detail: turns, attachments, diffstat, parent and subtasks`,
   result: `  ${COMMAND} result <task> [turn]                    the agent's full answer for a turn (default: latest)`,
   log: `  ${COMMAND} log <task> [turn] [-f|--follow] [--raw] [--diagnostic]
                                                activity feed; --raw is the retained harness stream;
@@ -82,8 +87,10 @@ const COMMAND_USAGE = {
   cleanup: `  ${COMMAND} cleanup <task> [--log|--retry|--confirm-complete|--rerun] [--verified-stopped]
                                                inspect or resolve cleanup; --verified-stopped confirms
                                                the cleanup scripts and their children have stopped`,
-  archive: `  ${COMMAND} archive <task> [-f|--force]             cleanup + remove worktree (refuses on unsaved work, or while
-                                               auto-merge / auto-fix watches its PR)`,
+  archive: `  ${COMMAND} archive <task> [-f|--force] [--subtasks archive|force]
+                                               cleanup + remove worktree (refuses on unsaved work, or while
+                                               auto-merge / auto-fix watches its PR); a task with live
+                                               subtasks takes them along only with --subtasks`,
   export: `  ${COMMAND} export <task>                           print portable JSON (redirect to a private file)`,
   purge: `  ${COMMAND} purge <task> --confirm <task>          permanently delete archived Wisp data; keep Git branches
   ${COMMAND} purge --archived-before <30d|YYYY-MM-DD> [--confirm-count <n>]

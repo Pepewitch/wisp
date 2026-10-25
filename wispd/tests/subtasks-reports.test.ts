@@ -17,7 +17,7 @@ import { withWispSection } from "../src/turn-input";
 
 const cfg = (extra: Partial<WispConfig> = {}): WispConfig => ({
   instanceId: "123e4567-e89b-42d3-a456-426614174000", port: 0, host: "127.0.0.1", token: "test", webhooks: [], repos: [],
-  stuckMinutes: 10, logMaxBytes: 5_000_000, setupTimeoutMinutes: 10, envAllowlist: {}, harnessDefaults: {}, subtasksPreview: true, ...extra,
+  stuckMinutes: 10, logMaxBytes: 5_000_000, setupTimeoutMinutes: 10, envAllowlist: {}, harnessDefaults: {}, ...extra,
 });
 const scratch = () => realpathSync(mkdtempSync(join(tmpdir(), "wisp-reports-")));
 const held = (gate: string): AdapterDef => ({ bin: "bash", exec: ["-c", `while [ ! -e '${gate}' ]; do sleep 0.05; done; printf done`], parse: { format: "text" }, attach: null });
