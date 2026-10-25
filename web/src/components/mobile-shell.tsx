@@ -119,11 +119,14 @@ export function MobileShell({
   zoomControl?: ReactNode
   connectionStatus?: ReactNode
 }) {
-  const [tab, setTab] = useState<MobileTab>("chat")
+  const [chosen, setTab] = useState<MobileTab>("chat")
   const [drawer, setDrawer] = useState(false)
   const viewportRef = useMobileViewport(!desktop)
   const hasSubtasks = useSubtaskCount(task?.id ?? null) > 0
   const tabs = surfaceTabs(autopilot !== undefined, workflows !== undefined, subtasks !== undefined && hasSubtasks)
+  // a surface can leave while it is open (the last subtask archived
+  // elsewhere): the conversation takes over rather than an empty pane
+  const tab = tabs.includes(chosen) ? chosen : "chat"
   useChatOnFind(tab, setTab)
 
   // a task switch is always about reading the conversation next

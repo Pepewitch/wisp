@@ -107,9 +107,13 @@ function SubtaskForm({ parent, harnesses, harnessesError, onClose }: {
   useEffect(() => box.current?.focus(), [])
   const restoreComposer = () => requestAnimationFrame(() => box.current?.focus())
   const ready = canSubmit && !createTask.isPending && !uploading
+  // Synchronous, from the first ⌘↵: two within one render would both see
+  // `ready`, and each would make a child (the new-task composer's guard).
+  const submitting = useRef(false)
 
   const submit = () => {
-    if (!ready || !choice) return
+    if (submitting.current || !ready || !choice) return
+    submitting.current = true
     setValidationError(null)
     setUploading(true)
     const chosen = choice
@@ -142,10 +146,15 @@ function SubtaskForm({ parent, harnesses, harnessesError, onClose }: {
           onError: () => {
             if (payloads) void discardAttachmentPayloads(payloads, discardUpload)
           },
-          onSettled: () => setUploading(false),
+          // released either way: a refused create must be retryable
+          onSettled: () => {
+            submitting.current = false
+            setUploading(false)
+          },
         },
       ),
       (failure) => {
+        submitting.current = false
         setUploading(false)
         setValidationError(failure instanceof Error ? failure.message : String(failure))
       },

@@ -33,9 +33,9 @@ interface TaskRowProps {
   parentTitle?: string | null
 }
 
-/** Each level of subtask nesting steps the row in by this much. */
-const INDENT_PX = 14
-const INDENT_TOUCH_PX = 16
+/** Each level of subtask nesting steps the row in; there are two levels (a child, its reviewers). */
+const INDENT: Record<number, string> = { 1: "ml-3.5", 2: "ml-7" }
+const INDENT_TOUCH: Record<number, string> = { 1: "ml-4", 2: "ml-8" }
 
 /**
  * Cleanup outranks the task's own state while it is unfinished, and wears the
@@ -87,8 +87,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect, depth =
 
   return (
     <div
-      className="group/row relative"
-      style={depth ? { marginLeft: depth * INDENT_PX } : undefined}
+      className={cn("group/row relative", INDENT[depth])}
       // the pointer can leave a 26px row between two pointerleave targets;
       // resetting both here keeps a stuck hover from suppressing the card
       onPointerLeave={() => {
@@ -223,7 +222,7 @@ export function RowArchiveButton({
  */
 export function TaskRowTouch({ task, status, pullRequest, selected, onSelect, depth = 0, lead, trail }: TaskRowProps) {
   return (
-    <div className="relative" style={depth ? { marginLeft: depth * INDENT_TOUCH_PX } : undefined}>
+    <div className={cn("relative", INDENT_TOUCH[depth])}>
       <AutopilotRail status={task.autopilot} />
       {lead}
       <button

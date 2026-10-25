@@ -27,6 +27,11 @@ import type { ApiTask } from "@/lib/types";
  * as `subtasks` and `stopAutopilot`, and each one given is kept for the next
  * attempt: the parent's own refusal after them does not undo them.
  *
+ * The daemon has one `stopAutopilot` for the whole batch. So a yes to the
+ * parent's own autopilot sentence also covers its children's, and the family
+ * list says so for each child it reaches ("its autopilot is switched off")
+ * before the Archive click that sends it.
+ *
  * It lives in hooks/ rather than beside that dialog because a `.tsx` file may
  * only export components (the react-refresh rule this repo lints as an error),
  * and a hook is not one.

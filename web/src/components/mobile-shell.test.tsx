@@ -190,3 +190,22 @@ describe("subtasks on a phone", () => {
     expect(uiIntentsFor("test-connection").taskFocusRequest()).toEqual({ taskId: parent.id, seq: seen + 1 })
   })
 })
+
+describe("a surface that leaves while it is open", () => {
+  it("falls back to Chat when the last subtask goes away under the Subtasks tab", async () => {
+    const parent = TASKS[0]!
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const key = createConnectionQueryKeys("test-connection").tasksList(false)
+    client.setQueryData(key, [parent, { ...TASKS[1]!, parent_task_id: parent.id, subtask_kind: "explore" }])
+    render(
+      <MobileShell task={parent} sidebar={() => null} conversation={<div>The conversation</div>} changes={<div />} terminal={<div />} composer={<div />} subtasks={<div>Subtask list</div>} />,
+      { wrapper: runtimeWrapper(fakeDaemonTransport(), client) },
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Subtasks" }))
+    expect(screen.getByText("Subtask list")).toBeVisible()
+    // archived from another client: the live list no longer has it
+    act(() => client.setQueryData(key, [parent]))
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Subtasks" })).toBeNull())
+    expect(screen.getByText("The conversation")).toBeVisible()
+  })
+})

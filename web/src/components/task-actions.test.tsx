@@ -182,7 +182,7 @@ describe("the overflow menu", () => {
     ])
     fireEvent.click(screen.getByRole("button", { name: "Archive with 3 subtasks" }))
     expect(await screen.findByText("worktree has 2 uncommitted changes")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: "Force 1 subtask" }))
+    fireEvent.click(screen.getByRole("button", { name: "Force all subtasks" }))
     expect(await screen.findByText("Auto-merge is on for PR #9 — archiving switches it off.")).toBeInTheDocument()
     fireEvent.click(screen.getByRole("button", { name: "Stop their autopilot" }))
     await waitFor(() => expect(bodies()).toHaveLength(4))

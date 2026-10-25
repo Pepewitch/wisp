@@ -1442,9 +1442,16 @@ never disagree about which rows are on screen.
   <base>` over the title, and the parent's name opens it; the phone header
   carries it as one meta item. The **Subtasks** tab (`subtasks-pane.tsx`)
   lists children with state, kind, clipped result and where their reports
-  stand. The daemon announces a child's change about the CHILD, so
-  `useSubtasks` keys on the family's stamp from the live task list rather than
-  polling. On a phone the tab shows only while the task has subtasks.
+  stand. The daemon announces a child's change about the CHILD (a PR event
+  moves a report without touching any task row), so the events bridge
+  refreshes a parent's list for every event about it or one of its children
+  (`lib/sse.ts`); nothing polls. On a phone the tab shows only while the task
+  has subtasks, and if it goes while open, Chat takes over.
+- **Reading the live task list** (a parent's title, a subtask count) goes
+  through `useLiveTasks(select)`, which registers the list's real fetch with
+  `enabled: false`. Never a `skipToken` query on that key: a query runs
+  whichever observer's options were set last, so a passive reader there turned
+  the next refresh into "Missing queryFn".
 - **New subtask** (`new-subtask-dialog.tsx`, from the tab and the task menu) is
   the new-task composer scoped to the parent: kind, the base it pins
   (`subtaskBasePreview`), Report back (on), the agent pickers, and autopilot

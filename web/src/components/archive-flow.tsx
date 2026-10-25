@@ -33,8 +33,8 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`
 
 /** The family confirm's button, for the one yes it asks next. */
 function familyVerb(next: FamilyStep, members: FamilyMember[]): string {
-  const refused = members.filter((member) => member.refused).length
-  if (next === "force") return `Force ${plural(refused, "subtask")}`
+  // `subtasks: "force"` forces every subtask, so the button says so, not just the ones named
+  if (next === "force") return "Force all subtasks"
   if (next === "stopAutopilot") return "Stop their autopilot"
   return `Archive with ${plural(members.length, "subtask")}`
 }
@@ -42,7 +42,7 @@ function familyVerb(next: FamilyStep, members: FamilyMember[]): string {
 /** What the yes covers, and what it leaves for another. */
 const FAMILY_NOTE: Record<FamilyStep, string> = {
   archive: "Each subtask is checked as it is first: one with unsaved work, a running turn or autopilot on is named here before anything is archived.",
-  force: "Forcing commits a subtask's uncommitted work onto its branch (it is never discarded), stops a running turn, and removes its worktree. Its autopilot is still asked about on its own.",
+  force: "Forcing applies to every subtask, not only the ones named: any uncommitted work is committed onto its branch (it is never discarded), a running turn stops, and the worktree is removed. Autopilot is still asked about on its own.",
   stopAutopilot: "Wisp switches off autopilot on the subtasks named; their PRs stay open on GitHub. Nothing else is waived.",
 }
 

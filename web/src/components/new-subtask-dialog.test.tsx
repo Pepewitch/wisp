@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { clearConnectionDrafts } from "@/lib/drafts"
@@ -68,6 +68,21 @@ describe("New subtask", () => {
     fireEvent.click(await screen.findByRole("menuitemradio", { name: /continue/ }))
     expect(await screen.findByText(/this task's tip \(wisp\/tparent-release\), pinned when it starts/)).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Manual PR" })).toBeNull()
+  })
+
+  it("makes one child however fast ⌘↵ is pressed twice", async () => {
+    const { posts } = mount()
+    await screen.findByText("of Orchestrate the release")
+    fireEvent.change(prompt(), { target: { value: "only once" } })
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Create/ })).toBeEnabled())
+    // both before React renders again: render-state guards cannot see the first
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }))
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }))
+    })
+    await waitFor(() => expect(posts).toHaveLength(1))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(posts).toHaveLength(1)
   })
 
   it("shows the daemon's own refusal, and sends no reporting when it is turned off", async () => {
