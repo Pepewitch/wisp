@@ -1592,8 +1592,10 @@ version wrapped onto two lines inside the width the title needed.
 4. **The tab strip fills the row** (`flex-1 basis-auto`, `px-1`), a segmented
    control rather than left-packed pills with a dead right half. It is `Chat ·
    Autopilot · Changes · Workflows · Subtasks · Terminal`; Autopilot and Workflows appear only
-   where the daemon supports them, and Subtasks only while the task has some. Tabs are sized by their content plus an
-   equal share, so all five still fit at 320px. Each pane's `PaneHeader` takes
+   where the daemon supports them, and Subtasks only while the task has some.
+   Tabs are sized by their content plus an equal share, so five still fit at
+   320px; six do not, so the strip scrolls sideways there (scrollbar hidden)
+   rather than spilling off the screen. Each pane's `PaneHeader` takes
    `touch` so its own action reaches 44px.
 
 **App-level state lives in the drawer footer on touch**, beside the gear that is

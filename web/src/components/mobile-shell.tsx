@@ -249,7 +249,9 @@ export function MobileShell({
       <div
         role="tablist"
         aria-label="Task surface"
-        className="flex h-11 shrink-0 items-center gap-1 border-b border-border bg-surface px-1.5"
+        // six surfaces (a task with subtasks) no longer fit a 320px screen:
+        // the strip scrolls sideways there instead of spilling off the edge
+        className="flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-surface px-1.5 [scrollbar-width:none]"
       >
         {tabs.map((t) => (
           <Tab key={t} size="lg" active={tab === t} onClick={() => setTab(t)} className="h-full flex-1 basis-auto justify-center px-1">

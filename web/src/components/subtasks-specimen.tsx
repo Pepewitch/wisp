@@ -60,9 +60,9 @@ function Pane({ label, children }: { label: string; children: ReactNode }) {
 
 /** The rollup's two rules, side by side: a running reviewer lights it, a reviewer needing input does not. */
 function RollupPairs() {
-  const running = nestTasks([parent, reviewer("trv1", parent.id, "running")])
-  const asking = nestTasks([{ ...parent, id: "tpar2" }, { ...reviewer("trv2", "tpar2", "needs-input") }])
-  const child_ = nestTasks([{ ...parent, id: "tpar3" }, child("tch3", "Needs a decision on the format", { parent_task_id: "tpar3", state: "needs-input" })])
+  const running = nestTasks([{ ...parent, title: "A reviewer runs: lit" }, reviewer("trv1", parent.id, "running")])
+  const asking = nestTasks([{ ...parent, id: "tpar2", title: "A reviewer asks: Wisp answers" }, { ...reviewer("trv2", "tpar2", "needs-input") }])
+  const child_ = nestTasks([{ ...parent, id: "tpar3", title: "A subtask asks: lit" }, child("tch3", "Needs a decision on the format", { parent_task_id: "tpar3", state: "needs-input" })])
   return (
     <Pane label="Collapsed: what the rollup says">
       <TaskTree nodes={running} view={view([])} selectedId={null} onSelect={() => {}} touch={false} />

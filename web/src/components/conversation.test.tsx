@@ -907,7 +907,8 @@ describe("the bubble's caption", () => {
 describe("a turn a subtask report started", () => {
   const at = new Date(Date.now() - 5.5 * 60_000).toISOString()
   const turn = (n: number, origin: "report" | null, prompt: string) => ({
-    id: n, task_id: "tparent", n, prompt, origin, result: null, status: "done", model: "fake-model", usage: null,
+    // a settled turn with a result: nothing loads its timeline unasked
+    id: n, task_id: "tparent", n, prompt, origin, result: `answer ${n}`, status: "done", model: "fake-model", usage: null,
     attachments: [], log_file: "/tmp/turn.log", started_at: at, ended_at: at,
   })
   const task = {
