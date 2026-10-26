@@ -2,10 +2,60 @@
 
 This ledger separates release evidence from the version label. The 0.8 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.8.0 is prepared and not yet published; its publication record lands
-here after the tag's release workflow completes. The 0.7 records remain in
+coverage. 0.8.0 is the current release. The 0.7 records remain in
 [the 0.7 ledger](../v0.7/QUALIFICATION.md).
 
-Until then, the tested limits, remaining platform gaps and native dependency
-advisory scope are those recorded for 0.5 under
-[Still unqualified or outside scope](../v0.5/QUALIFICATION.md#still-unqualified-or-outside-scope).
+The tested limits, remaining platform gaps and native dependency advisory scope
+recorded for 0.5 under
+[Still unqualified or outside scope](../v0.5/QUALIFICATION.md#still-unqualified-or-outside-scope)
+still apply to 0.8.0.
+
+## 0.8.0 publication
+
+**Published and promoted on 2026-10-26.**
+[Wisp 0.8.0](https://github.com/Pepewitch/wisp/releases/tag/v0.8.0) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 16:22:19 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`5293a6388d2a855f398e1ad2c55229c85a9bcad1`](https://github.com/Pepewitch/wisp/commit/5293a6388d2a855f398e1ad2c55229c85a9bcad1),
+landed through [PR #436](https://github.com/Pepewitch/wisp/pull/436). It carries
+the redesigned task screen
+([#430](https://github.com/Pepewitch/wisp/pull/430)–[#435](https://github.com/Pepewitch/wisp/pull/435)),
+fallback reviewers for auto-review
+([#427](https://github.com/Pepewitch/wisp/pull/427)), live updates that
+connect at once ([#435](https://github.com/Pepewitch/wisp/pull/435)), and the
+other changes listed in the release notes since 0.7.2.
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/40356921797)
+completed every job successfully on its first run:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, supply-chain, update-verifier, and public-promotion dry-run checks passed; the exact-main [release candidate](https://github.com/Pepewitch/wisp/actions/runs/40356497539) also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |
+| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit `5293a63` were verified |
+| Homebrew installability | The Formula and Cask were audited offline before publication, and the published Formula was installed the way a user does before the tap advanced |
+
+Promotion completed at 16:24:25 UTC with Homebrew tap commit
+[`2892304c438b248cb299e9deb52f4bad204de28a`](https://github.com/Pepewitch/homebrew-tap/commit/2892304c438b248cb299e9deb52f4bad204de28a).
+The Formula, Cask, daemon update channel, and Desktop update channel all serve
+0.8.0.
+
+0.8.0 adds database migration 27, so a 0.7.2 daemon cannot reopen a profile that
+0.8.0 has opened. No PNG asset or brand-generator input changed since 0.7.2, so
+the PNG assets were not re-rendered. This is a fully automated publication: no
+maintainer qualification — fresh-install or upgrade receipts, a Desktop updater
+journey across this version, the token-spending harness probes, or the paid
+evaluator panel — was performed, and this record does not claim them. The
+published assets and release body remain immutable; this ledger records the
+completed outcome separately.
+
+Not run for this release either: the redesigned top bar's window drag and the
+⌘\\ / ⌃\` shortcuts in the signed Desktop app (reviewed in code and in the
+browser only), and a live fallback-reviewer substitution against a real
+provider outage. The release gate passed on its third local run; the first two
+ran on a machine under heavy load, and the second also exposed a codex usage
+race fixed before tagging in [#437](https://github.com/Pepewitch/wisp/pull/437).
