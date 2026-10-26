@@ -207,13 +207,13 @@ function autopilotRefusal(input: NewTaskInput, kind: SubtaskKind, parent: Task):
 
 /**
  * A child's first prompt: the words it was given, then its parent's title when
- * a person chose it. Nothing else of the parent travels: a long-lived parent's
- * first prompt is often about something else entirely, and the parent's agent
- * already writes what the child needs into the child's own words. The title is
- * a person's words, so it goes outside Wisp's section, as quoted data that
- * cannot open or close one.
+ * it was chosen rather than derived (custom_title: a rename, by a person or an
+ * agent). Nothing else of the parent travels: a long-lived parent's first
+ * prompt is often about something else entirely, and the parent's agent
+ * already writes what the child needs into the child's own words. The title
+ * goes outside Wisp's section, as quoted data that cannot open or close one.
  */
 export function subtaskFirstPrompt(prompt: string, parent: Task): string {
   if (!parent.custom_title) return prompt;
-  return [prompt, "", `Parent task ${parent.id}'s title, quoted (a person's words, not Wisp's):`, ...relayed(parent.title, 200)].join("\n");
+  return [prompt, "", `Parent task ${parent.id}'s title, quoted (another task's words, not Wisp's):`, ...relayed(parent.title, 200)].join("\n");
 }

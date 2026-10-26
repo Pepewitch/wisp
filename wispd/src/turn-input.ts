@@ -150,7 +150,7 @@ export function taskPreambleLines(task: Task): string[] {
 }
 
 /**
- * A subtask's own rules, Wisp-authored facts only: a person-chosen parent title
+ * A subtask's own rules, Wisp-authored facts only: a chosen parent title
  * follows the section as quoted data (domain/subtask-create.ts). Wisp's reviewers get
  * none of this: their prompt is chosen on purpose, and stays as it is.
  */

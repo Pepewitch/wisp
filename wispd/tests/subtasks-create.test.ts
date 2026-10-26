@@ -261,7 +261,7 @@ describe("creating a subtask", () => {
     db.run("UPDATE tasks SET title = ?, custom_title = 1 WHERE id = ?", ["Parser hardening", parent.id]);
     const named = created(await createAndLaunchTask(input({ subtask: { parentId: parent.id }, prompt: "fuzz the lexer" }), cfg(), adapters, null));
     await until(() => settled(named.id), "the second child to settle");
-    expect(turnsFor(named.id)[0]!.prompt).toBe(`fuzz the lexer\n\nParent task ${parent.id}'s title, quoted (a person's words, not Wisp's):\n> Parser hardening`);
+    expect(turnsFor(named.id)[0]!.prompt).toBe(`fuzz the lexer\n\nParent task ${parent.id}'s title, quoted (another task's words, not Wisp's):\n> Parser hardening`);
     const lines = taskPreambleLines(getTask(child.id)!).join("\n");
     expect(lines).toContain(`This is an explore subtask of task ${parent.id}`);
     expect(lines).toContain("Never commit to or push your parent's branch");
