@@ -272,7 +272,8 @@ No third face, ever.
 | Size | Weight | Use |
 |---|---|---|
 | 22 / −1.8% | 600 | page titles only |
-| 14.5 / −1% | 600 | task header |
+| 14.5 / −1% | 600 | the phone's task title |
+| 13 / −0.5% | 600 | the top bar's task title |
 | 13 / 1.7 (~22px) | 400 | agent prose — long-form reading at the widest measure in the app |
 | 12.5 | 500 | list rows, buttons, tabs |
 | 11.5 | 400 | one metadata line, never two |
@@ -599,7 +600,7 @@ runs is a scoping decision, not a control-bar one:
   refuses a second live local task in one repo — two agents, no isolation.
 
 Worktree is the default and a `wisp/…` branch already announces itself, so only
-**local** is marked in the UI (the task header and the hover card). Marking both
+**local** is marked in the UI (the top bar's `Local` word and the hover card). Marking both
 would be two labels where one is news.
 
 ## 5d. Project settings
@@ -829,7 +830,8 @@ older as current would be a confident lie. The public response is the provider-n
 implementation is GitHub through the daemon's authenticated `gh`, and it
 accepts same-repository heads only — fork pull requests are outside this slice.
 
-Only `found` renders. Desktop uses one neutral external link in the task header;
+Only `found` renders. The pointer shell uses one neutral external link in the top
+bar, after the title (until the summary card takes it over);
 mobile uses the same facts in a thumb-sized two-line link. Both say PR number,
 lifecycle, CI, and review, and replace the old prominent Push button. The
 branch icon relays GitHub's policy-aware merge state: green is ready, yellow is
@@ -846,7 +848,7 @@ line truncates: a reason appended at the end would be the first thing cut. The
 hover title keeps every fact. A PR Wisp merged reads `Merged by Wisp`. The
 switches — Auto-merge, Auto-fix and Auto-review — live in the Autopilot tab (§5k) with
 their live line, the one action the state asks for, and History; the task's
-`…` menu keeps them as checkbox rows (`MenuCheckboxItem`, a trailing switch)
+title menu (§5h) keeps them as checkbox rows (`MenuCheckboxItem`, a trailing switch)
 naming the PR they are bound to, and nothing else. Only a reason about the PR's own state
 (`about: "pr"`) may stand in for CI and review; one about the task never does.
 The daemon checks armed PRs on its own loop (docs/PR-AUTOPILOT.md), separate
@@ -915,8 +917,8 @@ quietly hold every later message. The send keeps its arrow in every case.
 Against a daemon without `steerDelivery` there is no toggle, no `when`, and
 the older `send won't interrupt` note.
 
-Both things that yield are things the **task header two rows up still says**,
-so nothing leaves the screen. Width is not `touch`'s question: `touch` sizes
+Both things that yield are things the **title menu (the phone header on touch)
+still says**, so nothing becomes unreachable. Width is not `touch`'s question: `touch` sizes
 controls for a thumb, it does not know how much room the bar has. A squeezed
 bar announced itself as `xhigh` above `effort` and a four-word note wrapped
 between the suffix picker and the send button; every item in the bar is
@@ -1078,12 +1080,43 @@ draft keeps only pressed switches, so a default changed mid-draft still
 lands, and picking another model forgets the presses the way it reseeds
 effort.
 
-### 5h. The top bar's right end is one cluster
+### 5h. The top bar: which daemon, which task, this app
 
-The pointer shell's top bar has app chrome at both ends and they answer
-different questions. The left end is **which daemon am I on** — the mark, then
-the connection tabs. The right end is **this app**: the connection indicator
-states what it is doing, and then everything you can do TO it sits in one
+The pointer shell's top bar is its only bar, and it answers three questions,
+left to right. The **left end** is *which daemon am I on*: the mark in the
+browser, the connection tabs on Desktop (after the traffic lights' 80px). It
+is at least the sidebar's width (`--sidebar-width`, written by the sidebar
+panel's `onResize` straight onto the bar's style, so a divider drag never
+re-renders the app), with a hairline that continues the sidebar's divider.
+
+The **middle** is *which task* (`top-bar-task.tsx`), and it is why there is no
+task header above the conversation. `● Title ⌄` is one control: the state dot,
+the `h1` title and a chevron open the **title menu**, whose header carries the
+facts the old meta line showed and nobody needs in view (id · branch, then
+state · harness · model · effort, then a subtask's kind and base). Under it sit
+the task's verbs: Find ⌘F, Rename, New subtask…, Archive, Export or delete, the
+Auto-merge / Auto-fix / Auto-review switches, then Copy task id and Copy branch
+name. The phone keeps its `⋯` (`TaskActions` without `title`). A subtask leads
+with `Parent ›`: the parent opens the parent, is capped at 14rem and shrinks
+three times as fast as the title, so the task you are in stays readable.
+`Local` and `Archived` follow as quiet words, only when true. The PR link and
+the context reading ride after them for now; the summary card takes them over.
+The dot's hover names background work, as everywhere (`StateDot`).
+
+What is left of the old header is `task-notices.tsx`: the archive-cleanup panel
+and the worktree reason, in the reading column above the transcript, and only
+when there is something to decide.
+
+**On Desktop the whole bar is the window's drag region.** Tauri starts a drag
+only when the element under the pointer carries `data-tauri-drag-region`
+ITSELF (a bare attribute does not reach children) and never on a button, link
+or other control. So every non-interactive box in the bar carries the
+attribute (the three sections, the empty stretch, the quiet words), glyphs
+inside them are `pointer-events-none`, and no control carries it. The empty
+stretch between the title and the right cluster is the big drag target.
+
+The **right end** is *this app*: the connection indicator states what it is
+doing, and then everything you can do TO it sits in one
 cluster, `gap-1` against the header's `gap-2.5`, so three same-sized icon
 buttons read as a group rather than as three controls that happen to be near
 each other. Usage limits, then Updates, then zoom (Desktop only), then the
@@ -1123,7 +1156,12 @@ of icons, in the corner that answers a different question. It is a
 that failed, which is the badge budget §1 already allows at that size. An
 icon-only trigger's accessible name carries what the dot cannot say
 (`Updates, 2 available`), and the name still starts with the surface's own
-word, because that is what someone searches for.
+word, because that is what someone searches for. The browser's one-daemon
+control is the same glyph when there is nothing to install from here: the
+daemon's version used to sit in the bar as a mono label, and it is in the
+glyph's popover now (`VersionLine`), with the reason a manual update cannot be
+installed. Only an update the daemon can install itself turns it into the
+labelled `Update daemon <version>` action.
 
 On touch this cluster does not exist: there is no persistent top bar, so the
 gear, the usage ring and the update surface live in the drawer footer (§6b).
@@ -1279,7 +1317,7 @@ The rules it exists to keep:
   `state-creating` ring, `state-failed` for blocked. No badges, no chips, no
   progress bar, no step numbers: it is a status list you keep, not a sequence
   you finish.
-- **It replaces the whole centre column, including the task header.** That
+- **It replaces the whole centre column, and the top bar shows no task.** That
   band said *"Select a task"* over a panel already explaining there were none.
   The right column keeps its panes — they show the workspace you are about to
   get, which is worth seeing, and they no longer repeat the centre.

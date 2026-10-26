@@ -65,6 +65,7 @@ export function PullRequestStatusLink({
   others = 0,
   compact = false,
   autoMerge,
+  className,
 }: {
   pullRequest: PullRequestInfo
   /** How many MORE this task has — it is showing its newest. */
@@ -72,6 +73,7 @@ export function PullRequestStatusLink({
   compact?: boolean
   /** the task's auto-merge status, whose reason stands in for CI and review while armed */
   autoMerge?: AutopilotStatus | null
+  className?: string
 }) {
   // a finished row names its PR; one that stayed on for the next PR remembers the last merge
   const mergedByWisp = pullRequest.lifecycle === "merged" && Boolean(autoMerge) &&
@@ -110,6 +112,7 @@ export function PullRequestStatusLink({
         // compact owns a full row in the mobile header, so it is bounded by that
         // row rather than by a share of the viewport it split with the title
         compact ? "h-11 max-w-full gap-1.5 px-2" : "h-8 max-w-[420px] gap-1.5 px-2 text-[11.5px]",
+        className,
       )}
     >
       <BranchRequest

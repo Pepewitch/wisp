@@ -8,7 +8,7 @@ import { sameOriginWebTransport } from "@/lib/web-transport"
 import { runtimeWrapper } from "@/test/runtime"
 
 import { composerStatus } from "./composer-status"
-import { TaskHeader } from "./task-header"
+import { TopBarTask } from "./top-bar-task"
 import { TaskCard, TaskRow } from "./task-row"
 
 /**
@@ -96,13 +96,12 @@ describe.each(["browser", "desktop"] as const)("rendered through the %s runtime"
       : createDesktopTransport("http://127.0.0.1:45678/fixture-capability", "remote-fixture", 1))
   }
 
-  it("the header reads Done on the hollow background ring, and its hover names the process", () => {
-    render(<TaskHeader task={TASK} />, { wrapper: wrapper() })
+  it("the top bar's title reads Done on the hollow background ring, and its hover names the process", () => {
+    render(<TopBarTask task={TASK} dragRegion={false} />, { wrapper: wrapper() })
 
-    const word = screen.getByText("Done · 1 background process running")
-    const line = word.parentElement!
-    expect(line.getAttribute("title")).toMatch(/^Done · 1 background process running\nvite · started in turn 4 · 12m 0\ds ago$/)
-    const dot = line.querySelector('[data-state="done"]')!
+    const dot = screen.getByRole("heading", { level: 1 }).querySelector('[data-state="done"]')!
+    expect(dot.getAttribute("title")).toMatch(/^Done · 1 background process running\nvite · started in turn 4 · 12m 0\ds ago$/)
+    expect(dot.getAttribute("aria-label")).toBe(dot.getAttribute("title"))
     expect(dot).toHaveAttribute("data-background", "running")
     expect(dot).toHaveClass("border-state-background", "bg-transparent")
     expect(dot).not.toHaveClass("bg-state-done")

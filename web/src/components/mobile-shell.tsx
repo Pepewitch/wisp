@@ -181,7 +181,7 @@ export function MobileShell({
                 <Meta
                   className="mt-1"
                   items={[
-                    task.subtask_kind && <SubtaskCrumb key="subtask" task={task} compact />,
+                    task.subtask_kind && <SubtaskCrumb key="subtask" task={task} />,
                     <span key="state" className="flex shrink-0 items-center gap-1.5">
                       <StateDot state={task.state} background={task.background} pausedOnNetwork={pausedOnNetwork(task)} />
                       <span className="text-fg-secondary">{stateWord(task)}</span>

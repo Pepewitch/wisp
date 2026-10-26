@@ -128,6 +128,39 @@ describe("browser daemon update control", () => {
   })
 })
 
+describe("the browser control with nothing to install", () => {
+  const current: UpdateStatus = { ...DAEMON_STATUS, latestVersion: null, state: "up-to-date" }
+
+  it("is an icon, not a version label, and keeps the version in its popover", async () => {
+    render(<WispUpdateControl status={current} updating={false} error={null} onUpdate={() => undefined} />)
+    expect(screen.queryByText("0.4.0-alpha.8")).toBeNull()
+    const trigger = screen.getByRole("button", { name: "Updates" })
+    expect(trigger).toHaveAttribute("title", "Wisp daemon 0.4.0-alpha.8")
+    expect(trigger.querySelector("span[aria-hidden]")).toBeNull()
+
+    fireEvent.click(trigger)
+    const popover = await screen.findByRole("region", { name: "Daemon version" })
+    expect(popover).toHaveTextContent("Wisp daemon0.4.0-alpha.8")
+  })
+
+  it("dots a manual update and says why it cannot install it", async () => {
+    render(
+      <WispUpdateControl
+        status={{ ...DAEMON_STATUS, canAutoUpdate: false }}
+        updating={false}
+        error={null}
+        onUpdate={() => undefined}
+      />
+    )
+    const trigger = screen.getByRole("button", { name: "Updates, 1 available" })
+    expect(trigger.querySelector("span[aria-hidden]")).toHaveClass("bg-state-needs-input")
+    fireEvent.click(trigger)
+    const popover = await screen.findByRole("region", { name: "Daemon version" })
+    expect(popover).toHaveTextContent("0.4.0-alpha.8 → 0.4.0-alpha.9")
+    expect(popover).toHaveTextContent("this installation updates manually")
+  })
+})
+
 describe("the update trigger", () => {
   it("names an icon-only trigger with everything the dot cannot say", () => {
     renderCenter()

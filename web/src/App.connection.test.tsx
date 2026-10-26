@@ -244,7 +244,8 @@ vi.mock("@/components/panes", () => ({
 vi.mock("@/components/project-settings-dialog", () => ({ ProjectSettingsDialog: () => null }))
 vi.mock("@/components/sidebar", () => ({ Sidebar: () => null }))
 vi.mock("@/components/steer-box", () => ({ SteerBox: () => null }))
-vi.mock("@/components/task-header", () => ({ TaskHeader: () => null }))
+vi.mock("@/components/task-notices", () => ({ TaskNotices: () => null }))
+vi.mock("@/components/top-bar-task", () => ({ TopBarTask: () => null }))
 vi.mock("@/components/terminal-pane", () => ({ TerminalSection: () => null }))
 
 import App from "./App"

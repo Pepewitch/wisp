@@ -30,7 +30,8 @@ import { RightColumn, Shell } from "@/components/panes"
 import { Button } from "@/components/primitives"
 import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
-import { TaskHeader } from "@/components/task-header"
+import { TaskNotices } from "@/components/task-notices"
+import { TopBarTask } from "@/components/top-bar-task"
 import { headerTask } from "@/lib/header-task"
 import { buildTaskSurfaces, type TaskSurfaces } from "@/components/task-surfaces"
 import {
@@ -451,12 +452,8 @@ function MainView({
       surfaces={taskSurfaces}
       composer={composerNode}
       firstRun={firstRunNode}
-      taskHeader={
-        <TaskHeader
-          task={header}
-          pullRequest={pullRequests.selected}
-          worktreeReason={status?.worktreeReason ?? null}
-        />
+      taskNotices={
+        <TaskNotices task={header} worktreeReason={status?.worktreeReason ?? null} />
       }
       updateControl={updateControls.desktop}
       onOpenSettings={() => setSettingsOpen(true)}
@@ -474,7 +471,7 @@ function AppShell({
   conversation,
   surfaces,
   composer,
-  taskHeader,
+  taskNotices,
   updateControl,
   onOpenSettings,
   dialogs,
@@ -492,14 +489,16 @@ function AppShell({
   /** the task's surfaces beside the conversation (buildTaskSurfaces) */
   surfaces: TaskSurfaces
   composer: ReactNode
-  taskHeader: ReactNode
+  /** what the task asks you to act on, above its conversation (task-notices.tsx) */
+  taskNotices: ReactNode
   updateControl: ReactNode
   /** The pointer shell's gear. Touch reaches the same modal from the drawer. */
   onOpenSettings: () => void
   dialogs: ReactNode
-  /** When set, it OWNS the centre column — header, transcript and composer. */
+  /** When set, it OWNS the centre column — notices, transcript and composer. */
   firstRun: ReactNode
 }) {
+  const barRef = useRef<HTMLElement>(null)
   // Below `md`, the three-pane grid is replaced rather than squeezed, so no
   // resizable group applies phone dimensions to desktop geometry.
   if (mobile) {
@@ -525,32 +524,42 @@ function AppShell({
     )
   }
 
+  const drag = desktop ? "" : undefined
   return (
     <div className="flex h-dvh flex-col bg-background text-foreground">
       <header
-        data-tauri-drag-region={desktop ? "" : undefined}
-        className={`flex h-9 shrink-0 items-center gap-2.5 border-b border-border bg-surface pr-3 ${desktop ? "pl-20" : "pl-3"}`}
+        ref={barRef}
+        data-tauri-drag-region={drag}
+        className="flex h-9 shrink-0 items-center border-b border-border bg-surface pr-3"
       >
-        {/* The mark is the browser's only left-end identity: no window chrome,
-            no tabs, so a bare 36px bar would otherwise be empty. Desktop drops
-            it — the traffic lights own that corner and the connection tabs
-            already say which daemon is on screen (§5h). */}
-        {!desktop && (
-          <span role="img" aria-label="Wisp" className="shrink-0">
-            <WispMark className="size-[17px]" />
-          </span>
-        )}
-        {desktop && <DesktopConnectionChrome />}
-        <span className="flex-1" />
+        {/* The left end answers WHICH DAEMON: the mark in the browser, the
+            connection tabs on Desktop (whose traffic lights own the first 80px).
+            It is at least the sidebar's width, so the task's title starts where
+            the centre column does, over the conversation it names (§5h). */}
+        <div
+          data-tauri-drag-region={drag}
+          className={`flex h-full min-w-(--sidebar-width) shrink-0 items-center gap-2.5 border-r border-border pr-3 ${desktop ? "pl-20" : "pl-3"}`}
+        >
+          {/* The mark is the browser's only left-end identity: no window chrome,
+              no tabs. Desktop drops it — the traffic lights own that corner and
+              the connection tabs already say which daemon is on screen. */}
+          {!desktop && (
+            <span role="img" aria-label="Wisp" className="shrink-0">
+              <WispMark className="pointer-events-none size-[17px]" />
+            </span>
+          )}
+          {desktop && <DesktopConnectionChrome />}
+        </div>
+        {/* The middle answers WHICH TASK: its title opens its menu. */}
+        <div data-tauri-drag-region={drag} className="flex h-full min-w-0 flex-1 items-center gap-2.5 pl-4.5">
+          {firstRun === null && <TopBarTask task={task} pullRequest={pullRequest} dragRegion={desktop} />}
+        </div>
         {/* Everything you can do TO the app is ONE cluster at the right end,
             4px apart against the header's 10px, so the three of them read as a
             group rather than as three unrelated controls that happen to be
-            near each other. Updates used to sit at the LEFT end, hard against
-            the connection tabs — app news in the corner that answers "which
-            daemon am I on", and the only labelled button in a bar of icons.
-            Usage limits lead: they are read the most. The gear stays last:
-            it is still the top-right corner (§5g). */}
-        <div className="flex shrink-0 items-center gap-1">
+            near each other. Usage limits lead: they are read the most. The
+            gear stays last: it is still the top-right corner (§5g). */}
+        <div data-tauri-drag-region={drag} className="flex h-full shrink-0 items-center gap-1 pl-2.5">
           <UsageLimitsControl harness={task?.harness ?? null} onOpenSettings={onOpenSettings} />
           {updateControl}
           {desktop && <DesktopZoomControl />}
@@ -562,11 +571,14 @@ function AppShell({
 
       <Shell
         sidebar={sidebar()}
+        // written to the bar's style rather than to state, so a divider drag
+        // does not re-render the app on every frame
+        onSidebarResize={(px) => barRef.current?.style.setProperty("--sidebar-width", `${px}px`)}
         centre={
           <main className="flex h-full min-w-0 flex-col bg-background">
             {firstRun ?? (
               <>
-                {taskHeader}
+                {taskNotices}
                 {conversation}
                 {composer}
               </>

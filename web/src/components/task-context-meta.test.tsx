@@ -5,10 +5,10 @@ import { describe, expect, it } from "vitest"
 import type { ApiTask } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
-import { TaskHeader } from "./task-header"
+import { TopBarTask } from "./top-bar-task"
 
 /**
- * The header's context reading. It exists so nobody has to run `/context` to
+ * The top bar's context reading (it rides beside the title until the summary card takes it). It exists so nobody has to run `/context` to
  * learn it — which on the harnesses that answer costs real context, because
  * the report is written into the session it measures. What is pinned here is
  * the honesty rule: the number shows when the daemon observed one, and the
@@ -43,15 +43,15 @@ function withClient(node: ReactNode) {
   })
 }
 
-describe("the header's context reading", () => {
-  it("shows what the model is carrying, in the same register as the rest of the meta row", () => {
-    withClient(<TaskHeader task={{ ...TASK, context_tokens: 467_964 }} />)
+describe("the top bar's context reading", () => {
+  it("shows what the model is carrying, beside the title", () => {
+    withClient(<TopBarTask task={{ ...TASK, context_tokens: 467_964 }} dragRegion={false} />)
     expect(screen.getByText("468.0k context")).toBeInTheDocument()
   })
 
   it("follows a compaction down, because the boundary is a reading too", () => {
-    const view = withClient(<TaskHeader task={{ ...TASK, context_tokens: 467_964 }} />)
-    view.rerender(<TaskHeader task={{ ...TASK, context_tokens: 9472 }} />)
+    const view = withClient(<TopBarTask task={{ ...TASK, context_tokens: 467_964 }} dragRegion={false} />)
+    view.rerender(<TopBarTask task={{ ...TASK, context_tokens: 9472 }} dragRegion={false} />)
     expect(screen.getByText("9.5k context")).toBeInTheDocument()
     expect(screen.queryByText("468.0k context")).not.toBeInTheDocument()
   })
@@ -59,13 +59,13 @@ describe("the header's context reading", () => {
   it("says nothing at all for a harness that cannot report one", () => {
     // droid and cursor report usage only as a per-turn SUM; the daemon sends
     // no number rather than a wrong one, and the header must not invent a 0.
-    withClient(<TaskHeader task={{ ...TASK, harness: "droid", context_tokens: null }} />)
+    withClient(<TopBarTask task={{ ...TASK, harness: "droid", context_tokens: null }} dragRegion={false} />)
     expect(screen.queryByText(/context$/)).not.toBeInTheDocument()
     expect(screen.queryByText(/^0 context/)).not.toBeInTheDocument()
   })
 
   it("says nothing before the first turn settles", () => {
-    withClient(<TaskHeader task={TASK} />)
+    withClient(<TopBarTask task={TASK} dragRegion={false} />)
     expect(screen.queryByText(/context$/)).not.toBeInTheDocument()
   })
 
@@ -73,7 +73,7 @@ describe("the header's context reading", () => {
     // Desktop drives the same bundle through its native proxy transport. The
     // reading arrives on the task payload both clients already fetch, and this
     // pins that nothing connection-scoped creeps into rendering it.
-    render(<TaskHeader task={{ ...TASK, context_tokens: 467_964 }} />, {
+    render(<TopBarTask task={{ ...TASK, context_tokens: 467_964 }} dragRegion={false} />, {
       wrapper: runtimeWrapper(fakeDaemonTransport("desktop-remote-connection")),
     })
     expect(screen.getByText("468.0k context")).toBeInTheDocument()

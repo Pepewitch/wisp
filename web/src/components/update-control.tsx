@@ -60,22 +60,50 @@ export function WispUpdateControl({
     )
   }
 
-  const title =
+  // Nothing to install from here: the version, and why (a manual update, a
+  // failure), wait one click away instead of sitting in the bar as a label.
+  const manual = Boolean(target && status.state === "available")
+  const note =
     error ??
     status.message ??
-    (target && status.state === "available"
-      ? `Wisp daemon ${target} is available; this installation updates manually`
-      : `Wisp daemon ${status.currentVersion}`)
+    (manual ? `Wisp daemon ${target} is available; this installation updates manually.` : null)
   return (
-    <span
-      className={cn(
-        error && "text-[11.5px] text-destructive",
-        !error && "font-mono text-[10.5px] text-faint"
-      )}
-      title={title}
-    >
-      {error ? "Daemon update failed" : status.currentVersion}
-    </span>
+    <Popover.Root>
+      <Popover.Trigger
+        render={<Button size="sm" icon />}
+        className="relative"
+        aria-label={updateTriggerLabel(Number(manual), error !== null)}
+        title={error ? "Daemon update failed" : `Wisp daemon ${status.currentVersion}`}
+      >
+        <Download />
+        {(manual || error) && (
+          <span
+            aria-hidden
+            className={cn(
+              "absolute top-0 right-0 size-1.5 rounded-full",
+              error ? "bg-destructive" : "bg-state-needs-input"
+            )}
+          />
+        )}
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner side="bottom" align="end" sideOffset={6} collisionPadding={12} className="z-(--z-menu)">
+          <Popover.Popup className={cn(POPOVER_SURFACE, "w-[300px] max-w-[calc(100vw-24px)] rounded-xl p-3 outline-none")}>
+            <section aria-label="Daemon version">
+              <div className="flex items-baseline justify-between gap-3">
+                <Popover.Title className="text-[12.5px] font-medium">Wisp daemon</Popover.Title>
+                <VersionLine current={status.currentVersion} latest={target} />
+              </div>
+              {note && (
+                <p className={cn("mt-1 text-[11px] leading-normal", error ? "text-destructive" : "text-muted-foreground")}>
+                  {note}
+                </p>
+              )}
+            </section>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
   )
 }
 

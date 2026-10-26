@@ -46,10 +46,13 @@ export function Shell({
   sidebar,
   centre,
   right,
+  onSidebarResize,
 }: {
   sidebar: ReactNode
   centre: ReactNode
   right: ReactNode
+  /** the sidebar's width in px, on every change — the top bar lines its task up with the centre */
+  onSidebarResize?: (px: number) => void
 }) {
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: MAIN_LAYOUT_ID })
   return (
@@ -59,7 +62,13 @@ export function Shell({
       onLayoutChanged={onLayoutChanged}
       className="flex min-h-0 flex-1"
     >
-      <Resizable.Panel id="sidebar" minSize={220} maxSize={380} defaultSize={268}>
+      <Resizable.Panel
+        id="sidebar"
+        minSize={220}
+        maxSize={380}
+        defaultSize={268}
+        onResize={(size) => onSidebarResize?.(size.inPixels)}
+      >
         {sidebar}
       </Resizable.Panel>
       <Handle />
