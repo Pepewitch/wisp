@@ -38,6 +38,7 @@ import { acquireHomeOwnership, HomeBusyError } from "./home-lock";
 import { modelsReport } from "./models";
 import { backgroundSummary, displayStateWord, STATE_ICON, type ApiTask, type ApiTaskListItem, type ApiTurn, type TaskDetail, type TaskState } from "./types";
 import { BUILD_INFO, versionLine } from "./version";
+import { sourceLine } from "../../shared/turn-source";
 
 const COMMAND = wispCommand();
 
@@ -190,8 +191,10 @@ function printTurn(
   turn: ApiTurn,
 ): void {
   const model = turn.model ?? (turn.requested_model ? `${turn.requested_model} (requested)` : null);
+  // who wrote the input: Wisp or the harness by its stored source, else the person
+  const who = (turn.source ? sourceLine(turn.source) : null) ?? (turn.origin === "report" ? "Wisp · reports from subtasks" : "you");
   print(
-    `\n— turn ${turn.n} [${turn.status}]${model ? ` · ${model}` : ""} you: ${turn.prompt.slice(0, 120).replaceAll("\n", " ")}`,
+    `\n— turn ${turn.n} [${turn.status}]${model ? ` · ${model}` : ""} ${who}: ${turn.prompt.slice(0, 120).replaceAll("\n", " ")}`,
   );
   if (turn.attachments?.length) {
     const files = turn.attachments.map((attachment) => `${attachment.name} (${formatBytes(attachment.size)})`).join(", ");

@@ -48,7 +48,12 @@ describe("a turn's source", () => {
     turnFrom(id, 1, "[Wisp auto-fix · PR #3 · round 1 of 5 · head abcdef0]", { origin: "workflow" });
     const broken = turnFrom(id, 2, "a heartbeat", { origin: "workflow" });
     db.run("UPDATE task_messages SET source_json = ? WHERE id = ?", ["{not json", broken]);
-    expect(served(id)).toEqual([null, null]);
+    // a whole shape or nothing: an autopilot source missing its PR and round would read "PR #undefined"
+    const partial = turnFrom(id, 3, "a round", { origin: "workflow" });
+    db.run("UPDATE task_messages SET source_json = ? WHERE id = ?", [JSON.stringify({ by: "autopilot", kind: "auto-fix" }), partial]);
+    const unknown = turnFrom(id, 4, "a round", { origin: "workflow" });
+    db.run("UPDATE task_messages SET source_json = ? WHERE id = ?", [JSON.stringify({ by: "autopilot", kind: "made-up", pr: 1, round: 1, rounds: 5 }), unknown]);
+    expect(served(id)).toEqual([null, null, null, null]);
   });
 
   test("is never relayed raw on the message", () => {

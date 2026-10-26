@@ -477,19 +477,25 @@ it:
   verdict reminder, a resume after the network dropped), a workflow's wake
   (`Wisp · workflow · heartbeat`), and a harness's own notice, by its
   product's name (`Claude Code · background update`) so it never reads as
-  Wisp's. `lib/turn-source.ts` makes the label.
+  Wisp's. `shared/turn-source.ts` makes the label, and `wisp show` prints the
+  same words.
 
 **The label is read from the source, never from the text.** A person who
 types `[Wisp auto-fix` gets their own bubble; so does a scheduled steer (the
 person's words, sent later: it has no source), a turn stored before sources
-existed, and a source this client does not know (`sourceLabel` returns null).
+existed and could not be backfilled from its workflow links (migration 28),
+and a source this client does not know (`sourceLabel` returns null).
 Never pattern-match a prompt to decide whose it is.
 
 A long one (over 4 lines or 360 characters) opens on `line-clamp-4` with
 **Show all**. The clamp clips, it does not cut: the whole text stays in the
 DOM, so find-in-task counts it, and `revealMatch` sends `FIND_REVEAL_EVENT`
-from the match first, which opens the block synchronously (`flushSync`)
-before the scroll measures it. Copy always takes the whole text. The gallery's
+from the match first, with its range: the block opens in state and centres
+the match again from a layout effect once it has committed. Never `flushSync`
+there: find reveals from its own effect, where nothing can commit first. Both
+scrolls go through `centerMatch`, which centres the match's own range in its
+scroller rather than its element: a long prompt is one text node, and
+centring that node can leave the match a screen away. Copy always takes the whole text. The gallery's
 prompt-bubble section draws all three beside a person's bubble.
 
 The stream starts at byte zero. Its first read is budgeted to 1 MB so opening a

@@ -177,8 +177,8 @@ export function PromptBubbleSpecimens() {
             </p>
             <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
               The label comes from the source the daemon stored with the input, never from its text: a person who
-              types <span className="text-faint">[Wisp auto-fix</span> is still the person, and a turn stored before
-              sources existed keeps its bubble rather than a guess. A long one opens on four lines with
+              types <span className="text-faint">[Wisp auto-fix</span> is still the person, and an older turn whose
+              workflow links do not say what wrote it keeps its bubble rather than a guess. A long one opens on four lines with
               <span className="text-faint"> Show all</span>; copy takes the whole text, and find-in-task opens it on
               a match.
             </p>

@@ -1,9 +1,10 @@
 import { QueryClient } from "@tanstack/react-query"
-import { fireEvent, render, screen, within } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
 import { FIND_REVEAL_EVENT } from "@/lib/find"
 import type { ConversationDetail, TurnSource } from "@/lib/types"
+import { uiIntentsFor } from "@/lib/ui-intents"
 import { initialStreamState } from "@/stream/reducer"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
@@ -27,6 +28,10 @@ function turn(n: number, prompt: string, source?: TurnSource | null, origin: "ba
 }
 
 function show(...turns: ReturnType<typeof turn>[]) {
+  return showOn("system-turns", ...turns)
+}
+
+function showOn(connectionId: string, ...turns: ReturnType<typeof turn>[]) {
   const task = {
     id: "tsys", title: "System turns", repo_path: "/tmp/repo", worktree_path: "/tmp/worktree", branch: "wisp/tsys",
     base_commit: "abc123", harness: "claude", model: "fake-model", effort: null, slot: 0, state: "done", state_detail: null,
@@ -34,7 +39,7 @@ function show(...turns: ReturnType<typeof turn>[]) {
     turns, messages: [],
   } as unknown as ConversationDetail
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
-  render(<Conversation task={task} stream={initialStreamState} />, { wrapper: runtimeWrapper(fakeDaemonTransport(), client) })
+  render(<Conversation task={task} stream={initialStreamState} />, { wrapper: runtimeWrapper(fakeDaemonTransport(connectionId), client) })
   return screen.getByTestId("conversation-viewport")
 }
 
@@ -104,12 +109,35 @@ describe("a turn Wisp or the harness started", () => {
     expect(text).toHaveAttribute("data-system-text", "collapsed")
 
     // a find match inside opens it before it is scrolled to
-    text.firstChild!.dispatchEvent(new Event(FIND_REVEAL_EVENT, { bubbles: true }))
+    const match = document.createRange()
+    match.selectNodeContents(text)
+    act(() => { text.dispatchEvent(new CustomEvent(FIND_REVEAL_EVENT, { bubbles: true, detail: match })) })
     expect(text).toHaveAttribute("data-system-text", "open")
 
     const { writeClipboardText } = await import("@/lib/clipboard")
     fireEvent.click(within(head).getByRole("button", { name: "Copy the message", hidden: true }))
     expect(writeClipboardText).toHaveBeenCalledWith(long)
+  })
+
+  it("find opens a collapsed one before the match is scrolled to, through find's own effect", async () => {
+    // the reviewer's case: a 91-line workflow input, find aimed at its last line
+    const lines = [...Array.from({ length: 90 }, (_, index) => `line ${index + 1} of the heartbeat`), "FINAL-LINE-MARKER: when you are done, say so."]
+    const viewport = showOn("system-find", turn(1, lines.join("\n"), { by: "workflow", kind: "heartbeat" }))
+    const text = block(viewport, 1)!.querySelector("[data-system-text]")!
+    expect(text).toHaveAttribute("data-system-text", "collapsed")
+    // what each scroll saw: the block's state at the moment it measured
+    const seen: (string | null)[] = []
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element) {
+      if (this.closest("[data-system-turn]")) seen.push(text.getAttribute("data-system-text"))
+    })
+    try {
+      act(() => uiIntentsFor("system-find").openFind("FINAL-LINE-MARKER"))
+      await waitFor(() => expect(text).toHaveAttribute("data-system-text", "open"))
+      // find's own scroll may land on the closed box; the last one is taken on the open block
+      await waitFor(() => expect(seen.at(-1)).toBe("open"))
+    } finally {
+      scroll.mockRestore()
+    }
   })
 
   it("a short one has nothing to open", () => {

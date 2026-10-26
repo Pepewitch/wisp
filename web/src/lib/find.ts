@@ -156,18 +156,50 @@ export function clearMatches(): void {
 }
 
 /**
- * Sent from a match's element, bubbling, just before it is scrolled to: a
- * container that clips its text (a collapsed system block) opens itself,
- * synchronously, so the match is on screen when the scroll lands.
+ * Sent from a match's element, bubbling, just before it is scrolled to, with
+ * the match's range as its `detail`: a container that clips its text (a
+ * collapsed system block) opens itself and, once the open block has
+ * committed, centres the match again (`centerMatch`).
  */
 export const FIND_REVEAL_EVENT = "wisp:find-reveal"
 
 /** Bring a match into the reading column. Centred: a match at the very edge reads as absent. */
 export function revealMatch(range: Range | undefined): void {
-  const node = range?.startContainer
-  const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element | null)
-  element?.dispatchEvent(new Event(FIND_REVEAL_EVENT, { bubbles: true }))
-  element?.scrollIntoView?.({ block: "center", inline: "nearest" })
+  if (!range) return
+  const element = elementOf(range)
+  element?.dispatchEvent(new CustomEvent<Range>(FIND_REVEAL_EVENT, { bubbles: true, detail: range }))
+  centerMatch(range)
+}
+
+function elementOf(range: Range): Element | null {
+  const node = range.startContainer
+  return node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element)
+}
+
+/**
+ * Centre the match itself in the pane that scrolls it, not the element that
+ * holds it: a long prompt is one text node, and centring that node can leave
+ * the match a screen away. Where layout cannot measure a range (jsdom), the
+ * element is scrolled into view instead.
+ */
+export function centerMatch(range: Range): void {
+  const element = elementOf(range)
+  const scroller = element ? scrollerOf(element) : null
+  if (!scroller || typeof range.getBoundingClientRect !== "function") {
+    element?.scrollIntoView?.({ block: "center", inline: "nearest" })
+    return
+  }
+  const match = range.getBoundingClientRect()
+  const pane = scroller.getBoundingClientRect()
+  scroller.scrollTop += match.top + match.height / 2 - (pane.top + pane.height / 2)
+}
+
+function scrollerOf(element: Element): HTMLElement | null {
+  for (let at = element.parentElement; at; at = at.parentElement) {
+    const overflow = getComputedStyle(at).overflowY
+    if ((overflow === "auto" || overflow === "scroll") && at.scrollHeight > at.clientHeight) return at
+  }
+  return null
 }
 
 /** `1/12`, or nothing to say yet. A zero count is the bar's own empty state. */

@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { canPaintMatches, findRanges, matchPosition, snippetParts } from "./find"
+import { canPaintMatches, centerMatch, findRanges, matchPosition, snippetParts } from "./find"
 
 /**
  * The haystack is the DOM on purpose (see lib/find.ts), so these tests build
@@ -93,5 +93,31 @@ describe("snippetParts", () => {
 
   it("keeps a short lead exactly as the daemon sent it", () => {
     expect(snippetParts("wrote vacuum", 6, 6).before).toBe("wrote ")
+  })
+})
+
+describe("centerMatch", () => {
+  it("centres the match itself in its pane, not the long text node that holds it", () => {
+    // a pane 400px tall at the top of the window, scrolled to 1000
+    const pane = document.createElement("div")
+    pane.style.overflowY = "auto"
+    Object.defineProperty(pane, "scrollHeight", { value: 5000 })
+    Object.defineProperty(pane, "clientHeight", { value: 400 })
+    pane.getBoundingClientRect = () => ({ top: 0, height: 400 }) as DOMRect
+    pane.scrollTop = 1000
+    const text = document.createElement("div")
+    text.textContent = "one long block of text whose last line holds the match"
+    pane.append(text)
+    document.body.append(pane)
+    const match = document.createRange()
+    match.setStart(text.firstChild!, 0)
+    match.setEnd(text.firstChild!, 3)
+    // the match sits 900px down the pane, 20px tall: its middle is 710px below the pane's
+    match.getBoundingClientRect = () => ({ top: 900, height: 20 }) as DOMRect
+    const element = vi.spyOn(text, "scrollIntoView")
+    centerMatch(match)
+    expect(pane.scrollTop).toBe(1710)
+    expect(element).not.toHaveBeenCalled()
+    pane.remove()
   })
 })

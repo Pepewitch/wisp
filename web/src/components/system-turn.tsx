@@ -1,10 +1,9 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from "react"
-import { flushSync } from "react-dom"
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 
 import { CopyButton } from "@/components/copy-button"
 import { BranchRequest, Clock, Console, type FluentIcon } from "@/components/icons"
 import { BUBBLE_ACTION, BubbleTimestamp } from "@/components/person-bubble"
-import { FIND_REVEAL_EVENT } from "@/lib/find"
+import { centerMatch, FIND_REVEAL_EVENT } from "@/lib/find"
 import type { SourceLabel } from "@/lib/turn-source"
 import type { TurnSource } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -78,15 +77,30 @@ export function SystemTurn({ source, label, text, at }: { source: TurnSource; la
   const long = isLong(text)
   const [open, setOpen] = useState(false)
   const body = useRef<HTMLDivElement>(null)
+  // the find match that asked a collapsed block to open, centred again once it has
+  const revealing = useRef<Range | null>(null)
 
   useEffect(() => {
     const node = body.current
     if (!node || !long) return
-    // synchronous, so find's scroll that follows measures the opened block
-    const reveal = () => flushSync(() => setOpen(true))
+    // Find's own scroll lands on the four-line box: it runs inside find's
+    // effect, where no update can commit first. So the block opens in state,
+    // and the layout effect below scrolls to the match once it is open.
+    const reveal = (event: Event) => {
+      if (node.dataset.systemText !== "collapsed" || !(event instanceof CustomEvent) || !(event.detail instanceof Range)) return
+      revealing.current = event.detail
+      setOpen(true)
+    }
     node.addEventListener(FIND_REVEAL_EVENT, reveal)
     return () => node.removeEventListener(FIND_REVEAL_EVENT, reveal)
   }, [long])
+
+  useLayoutEffect(() => {
+    const target = revealing.current
+    if (!open || !target) return
+    revealing.current = null
+    centerMatch(target)
+  }, [open])
 
   return (
     <SystemFrame

@@ -2,7 +2,7 @@ import { cleanupSummary } from "../archive-progress";
 import { formatUsage, isCompactPrompt, type AdapterDef, type UsageSummary } from "../adapters";
 import { parseOutputManifest } from "../outputs";
 import { parseAttachmentManifest } from "../attachments";
-import { turnCaptureState, turnDiagnosticState, type ApiTask, type ApiTaskMessage, type ApiTurn, type Task, type TaskMessage, type Turn, type TurnSource } from "../types";
+import { turnCaptureState, turnDiagnosticState, type ApiTask, type ApiTaskMessage, type ApiTurn, type Task, type TaskMessage, type Turn, type TurnSource, type AutopilotSourceKind } from "../types";
 import { logFailure } from "../failure-log";
 import { safeString } from "../text";
 import { typeName } from "../validate";
@@ -57,12 +57,24 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
   };
 }
 
-/** A message's stored source; null for none, or for a blob that does not parse (a label is never guessed). */
+const AUTOPILOT_SOURCE_KINDS: readonly AutopilotSourceKind[] = ["auto-fix", "auto-review", "review-nudge", "network-resume"];
+const numberOrNull = (value: unknown): boolean => value === null || (Number.isInteger(value) && (value as number) > 0);
+
+/** Whether a stored blob is a whole TurnSource: one missing a field is no label, never "PR #undefined". */
+function isStoredSource(value: unknown): value is TurnSource {
+  if (!value || typeof value !== "object") return false;
+  const source = value as Record<string, unknown>;
+  if (source.by === "workflow") return typeof source.kind === "string" && source.kind !== "";
+  return source.by === "autopilot" && AUTOPILOT_SOURCE_KINDS.includes(source.kind as AutopilotSourceKind) &&
+    numberOrNull(source.pr) && numberOrNull(source.round) && numberOrNull(source.rounds);
+}
+
+/** A message's stored source; null for none, or for a blob that is not a whole one (a label is never guessed). */
 function storedSource(json: string | null | undefined): TurnSource | null {
   if (!json) return null;
   try {
     const parsed: unknown = JSON.parse(json);
-    return parsed && typeof parsed === "object" && "by" in parsed && "kind" in parsed ? parsed as TurnSource : null;
+    return isStoredSource(parsed) ? parsed : null;
   } catch {
     return null;
   }
