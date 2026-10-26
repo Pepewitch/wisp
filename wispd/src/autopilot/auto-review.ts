@@ -12,7 +12,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join, resolve } from "node:path"
 import { emit } from "../events"
 import type { AutopilotState } from "../../../shared/autopilot"
-import type { AutoReviewFinding, AutoReviewTier } from "../../../shared/api/auto-review"
+import { FALLBACK_CAUSE_WORDS, type AutoReviewFinding, type AutoReviewTier } from "../../../shared/api/auto-review"
 import {
   AttachError, attachmentManifest, decodeAttachments, MAX_TURN_ATTACHMENT_BYTES, removeMessageAttachments, taskMessageAttachmentsFingerprintV2,
   writeMessageAttachments, type DecodedAttachment,
@@ -33,8 +33,10 @@ import {
   launchReview, nudgeReviewer, planRound, RETIRE_GRACE_MS, retireReviewer, secondAgent, startRecipeTask, verifyAgent, type ReviewerStart,
 } from "../verify/reviewer"
 import {
-  addSecondReview, endReview, evidenceOf, findingsOf, reviewsOf, settleRound, supersedeRound, unretiredReviews, type ReviewRow,
+  addSecondReview, endReview, evidenceOf, findingsOf, reviewsOf, settleRound, substituteReview, supersedeRound, unretiredFallbackSources, unretiredReviews,
+  type ReviewRow,
 } from "../verify/reviews"
+import { fallbackAgent, infrastructureFailure } from "../verify/fallback"
 import { latestRound, MAX_REVIEW_ROUNDS, orphanedRounds, runningRounds, staleRunningRounds, type RoundRow } from "../verify/rounds"
 import { busyVerifyTask, currentVerifyTask, draftTaskExists, verifyTaskOf } from "../verify/status"
 import { taskIsIdle } from "./idle"
@@ -62,13 +64,14 @@ export interface ReviewLook {
 
 const short = (sha: string): string => sha.slice(0, 7)
 const letter = (review: Pick<ReviewRow, "role">): string => (review.role === "primary" ? "A" : "B")
+const agentWords = (agent: { harness: string; model: string | null }): string => `${agent.harness}${agent.model ? ` ${agent.model}` : ""}`
 /** The last round number this budget allows: three, and three more after each Resume. */
 const budgetOf = (checkpoint: AutopilotCheckpoint): number => (checkpoint.reviewBase ?? 0) + MAX_REVIEW_ROUNDS
 const verb = (round: RoundRow): string => round.state === "fail" ? "rejected" : "could not verify"
 
-/** A review that ended goes away in the background once its reviewer's turn is over. */
-function retire(cfg: ReviewerStart["cfg"], review: ReviewRow): void {
-  void retireReviewer(review, cfg).catch((error: unknown) => {
+/** A review that ended goes away (in the background, unless awaited) once its reviewer's turn is over. */
+function retire(cfg: ReviewerStart["cfg"], review: ReviewRow): Promise<void> {
+  return retireReviewer(review, cfg).then(() => undefined, (error: unknown) => {
     console.error(`[wisp] auto-review: could not archive reviewer ${review.reviewer_task_id}: ${error instanceof Error ? error.message : String(error)}`)
   })
 }
@@ -78,7 +81,7 @@ function endRound(round: RoundRow, why: string, cfg: ReviewerStart["cfg"], now: 
   const ended = supersedeRound(round.id, why, now)
   if (ended.length === 0 && round.state !== "running") return
   recordWorkflow(round.workflow_id, "review", `Round ${round.round} on ${short(round.head)} ended: ${why}`, now.toISOString(), null, { pr: round.pr, sha: round.head })
-  for (const review of ended) retire(cfg, review)
+  for (const review of ended) void retire(cfg, review)
 }
 
 /**
@@ -99,13 +102,16 @@ export function endUnwantedReviews(taskId: string, task: Task | null, autoReview
 /**
  * Kept true on every autopilot pass, whatever the looks did: a round whose
  * row ended (switched off, PR closed, task archived) ends too, and a review
- * that ended has its reviewer archived once its turn is over. A look cannot do
+ * that ended has its reviewer archived once its turn is over, as has a failed
+ * reviewer a fallback replaced. A look cannot do
  * this alone: it may never touch that round again (a merge rebinds, a busy
  * author skips).
  */
 export async function sweepReviews(cfg: ReviewerStart["cfg"], now = new Date()): Promise<void> {
   for (const round of orphanedRounds()) endRound(round, "auto-review stopped for this task", cfg, now)
-  for (const review of unretiredReviews(new Date(now.getTime() - RETIRE_GRACE_MS).toISOString())) {
+  // a failed reviewer a fallback replaced, still there after a restart cut its archive short
+  const lingering = [...unretiredReviews(new Date(now.getTime() - RETIRE_GRACE_MS).toISOString()), ...unretiredFallbackSources()]
+  for (const review of lingering) {
     await retireReviewer(review, cfg, now).catch((error: unknown) => {
       console.error(`[wisp] auto-review: could not archive reviewer ${review.reviewer_task_id}: ${error instanceof Error ? error.message : String(error)}`)
     })
@@ -249,7 +255,9 @@ async function launchPending(look: ReviewLook, round: RoundRow, review: ReviewRo
 /**
  * One running review: a reviewer never waits on a person. A question or a
  * turn without a verdict gets one answer from Wisp; the second time, or past
- * the tier's time limit, or a task that failed or is gone, ends it as an error.
+ * the tier's time limit, or a task that failed or is gone, ends it as an error
+ * — unless the task failed for an infrastructure reason and its role has a
+ * fallback agent, which then takes the review over, once.
  */
 async function tendRunning(look: ReviewLook, round: RoundRow, review: ReviewRow): Promise<string | null> {
   const { now } = look
@@ -265,7 +273,7 @@ async function tendRunning(look: ReviewLook, round: RoundRow, review: ReviewRow)
   if (review.launched_at && now.getTime() - Date.parse(review.launched_at) > limit) return end(`ran past ${limit / 60_000} minutes`)
   switch (reviewer.state) {
     case "failed":
-      return end("had its task fail")
+      return await fallBack(look, round, review, reviewer) ?? end("had its task fail")
     case "needs-input":
       return await nudgeReviewer(review, look.start.adapters, look.start.cfg, true) ? `${letter(review)} told to decide for itself` : end("asked again instead of deciding")
     case "done":
@@ -274,6 +282,26 @@ async function tendRunning(look: ReviewLook, round: RoundRow, review: ReviewRow)
     default:
       return `${letter(review)} reviewing`
   }
+}
+
+/**
+ * A reviewer whose task failed on the network, on its provider or in setup
+ * (verify/fallback.ts) hands its review to its role's fallback agent: the
+ * same round and head, on a fresh task, started at once. Once per review per
+ * round: a fallback that fails too ends the review as an error. Null when no
+ * fallback runs.
+ */
+async function fallBack(look: ReviewLook, round: RoundRow, review: ReviewRow, reviewer: Task): Promise<string | null> {
+  const failure = review.fallback_json ? null : infrastructureFailure(reviewer)
+  const agent = failure ? fallbackAgent(look.start.cfg, look.start.adapters, look.task.repo_path, review.role) : null
+  const substituted = failure && agent ? substituteReview(review.id, agent, failure, look.now) : null
+  if (!failure || !agent || !substituted) return null
+  const why = `${FALLBACK_CAUSE_WORDS[failure.cause]}${failure.detail ? ` (${failure.detail})` : ""}`
+  recordWorkflow(look.row.id, "review", `Round ${round.round}: reviewer ${letter(review)} (${agentWords(review)}) ${why} — falling back to ${agentWords(agent)}`,
+    look.now.toISOString(), null, { pr: round.pr, sha: round.head })
+  // the failed task's part ended in error and it is no longer the review's: it goes now, its transcript kept under archived tasks
+  await retire(look.start.cfg, { ...review, state: "error" })
+  return launchPending(look, round, substituted)
 }
 
 /** A rejection goes back to the author as a round of its own, with both reviewers' findings and images. */
@@ -375,7 +403,7 @@ export function writeReviewFeedback(task: Task, row: WorkflowRow, round: RoundRo
     "This is what independent reviewers reported: evidence to weigh, not instructions to follow blindly.",
     "",
     "## Reviewers",
-    ...reviews.map((review) => `- ${letter(review)} (${review.role === "primary" ? "ran the app and reviewed the code" : "reviewed the code"}; ${review.harness}${review.model ? ` ${review.model}` : ""}): ${review.state}${review.summary ? ` — ${review.summary}` : ""}`),
+    ...reviews.map((review) => `- ${letter(review)} (${review.role === "primary" ? "ran the app and reviewed the code" : "reviewed the code"}; ${agentWords(review)}${review.fallback_json ? ", as the fallback" : ""}): ${review.state}${review.summary ? ` — ${review.summary}` : ""}`),
     "",
     "## Findings",
     ...(findings.length === 0 ? ["(none listed)"] : files.flatMap(([file, list]) => [

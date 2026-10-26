@@ -58,6 +58,11 @@ export function isLimitError(def: AdapterDef, detail: string): boolean {
   return (def.limitMarkers ?? []).some((marker) => normalized.includes(marker.toLowerCase()));
 }
 
+/** What turn-finalize.ts puts before a task's state_detail when a turn failed on a transient provider fault. */
+export const TRANSIENT_PREFIX = "transient: ";
+/** …and when it failed on a usage or rate limit. */
+export const LIMIT_PREFIX = "limit: ";
+
 /** True when the extracted failure detail matches declared transient provider/stream error shapes. */
 export function isTransientError(def: AdapterDef, detail: string): boolean {
   const normalized = detail.toLowerCase();

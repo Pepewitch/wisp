@@ -40,10 +40,11 @@ const row = (db: Database, id: string) =>
   db.query("SELECT parent_task_id, subtask_kind, report_to_parent, base_from, merge_granted_by, updated_at FROM tasks WHERE id = ?").get(id);
 
 describe("migration 26: subtasks", () => {
-  test("a schema-25 profile gains the columns and the reports table, and only 26 runs", () => {
+  test("a schema-25 profile gains the columns and the reports table: 26 runs, and nothing before it", () => {
     const db = v25Profile();
     task(db, "troot");
-    expect(migrate(db).applied).toEqual([26]);
+    // later migrations run after it; this one is about 26
+    expect(migrate(db).applied.filter((id) => id <= 26)).toEqual([26]);
     const columns = (table: string) => (db.query(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name);
     expect(columns("tasks")).toEqual(expect.arrayContaining(["parent_task_id", "subtask_kind", "report_to_parent", "base_from", "merge_granted_by"]));
     expect(columns("turns")).toContain("source_message_id");

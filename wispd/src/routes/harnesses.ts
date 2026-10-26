@@ -59,6 +59,8 @@ export function harnessesRoute(
       autoReview: true,
       // auto-review rounds carry a panel (reviews[]), a tier and the rubric; projects a second reviewer
       reviewPanel: true,
+      // projects a fallback agent per reviewer, and reviews say when one stood in (verify/fallback.ts)
+      reviewFallback: true,
       // POST /api/tasks/:id/capture, GET /api/tasks/:id/captures, and capture provenance on review evidence
       capture: true,
       // POST /api/tasks with parentTaskId, archive's `subtasks`, GET /api/tasks/:id/subtasks,

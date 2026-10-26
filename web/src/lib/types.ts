@@ -317,6 +317,13 @@ export interface RepoInfo {
    * without `features.reviewPanel`.
    */
   verifySecond?: ProjectVerifySecond;
+  /**
+   * Who reviews in reviewer A's or B's place, once per round, when its task
+   * fails for an infrastructure reason; null for none. Absent from a daemon
+   * without `features.reviewFallback`.
+   */
+  verifyFallback?: ProjectVerifyAgent | null;
+  verifySecondFallback?: ProjectVerifyAgent | null;
   /** The sidebar's summary of the project's verification recipe. Absent from a daemon older than auto-review. */
   verification?: VerificationSummary;
 }
@@ -444,6 +451,12 @@ export interface HarnessesResponse {
      * second reviewer (`verifySecond`). Absent: rounds are drawn as phase 1.
      */
     reviewPanel?: boolean;
+    /**
+     * A project saves a fallback agent per reviewer (`verifyFallback`,
+     * `verifySecondFallback`), and a review says when one stood in
+     * (`fallback`). Absent: no fallback pickers.
+     */
+    reviewFallback?: boolean;
     /**
      * `wisp capture`: Wisp screenshots a page itself and records where it was
      * served from. Reviews carry each image's provenance and A's waivers, and

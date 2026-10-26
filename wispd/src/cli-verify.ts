@@ -21,7 +21,9 @@ export const VERIFY_USAGE = `usage: ${COMMAND} verify status [project] [--json]
        ${COMMAND} verify checkout <dir> [--project <path>] [--draft <task>]
        ${COMMAND} verify draft save <dir>
        ${COMMAND} verify setup|improve|fix [project] [--area <name>] [--note "…"] [--harness <h>] [--model <m>] [--effort <e>]
-       ${COMMAND} verify activate [project]`
+       ${COMMAND} verify activate [project]
+       ${COMMAND} verify fallback a|b <harness> [--model <m>] [--effort <e>] [--project <path>]
+       ${COMMAND} verify fallback a|b none [--project <path>]`
 
 /** What a draft directory may hold before anything is sent: the daemon checks the rest. */
 const MAX_FILES = 300
@@ -55,7 +57,12 @@ export function formatVerification(status: VerificationStatus, project: string):
   if (status.attention) lines.push(`  needs attention: ${controlFree(status.attention)}`)
   if (status.draft) lines.push(`  draft from task ${status.draft.taskId} (${status.draft.areas.length} areas) — activate with: ${COMMAND} verify activate`)
   if (status.task) lines.push(`  recipe task ${status.task.id} (${status.task.mode}${status.task.area ? ` ${status.task.area}` : ""}): ${status.task.state}`)
-  lines.push(`  reviewer: ${status.reviewer ? `${status.reviewer.harness}${status.reviewer.model ? ` ${status.reviewer.model}` : ""}` : "each task's own agent"}`)
+  const agent = (named: { harness: string; model: string | null; effort?: string | null }) =>
+    `${named.harness}${named.model ? ` ${named.model}` : ""}${named.effort ? ` (${named.effort} effort)` : ""}`
+  lines.push(`  reviewer: ${status.reviewer ? agent(status.reviewer) : "each task's own agent"}`)
+  for (const [role, named] of [["A", status.fallbacks?.primary], ["B", status.fallbacks?.second]] as const) {
+    if (named) lines.push(`  fallback for ${role}: ${agent(named)}, after an infrastructure failure`)
+  }
   return lines.join("\n")
 }
 
@@ -128,6 +135,29 @@ async function showFile(file: string | undefined, flags: Flags): Promise<void> {
   print(data.files && data.files.length > 0 ? data.files.join("\n") : "This project has no verification recipe yet.")
 }
 
+/**
+ * Who stands in for reviewer A or B when its task fails for an infrastructure
+ * reason: a project setting, saved like the reviewer agents are.
+ */
+async function setFallback(role: string | undefined, harness: string | undefined, flags: Flags): Promise<void> {
+  const key = role?.toLowerCase() === "a" ? "verifyFallback" : role?.toLowerCase() === "b" ? "verifySecondFallback" : null
+  if (!key || !harness) usage()
+  const none = harness === "none"
+  if (none && (flags.model !== undefined || flags.effort !== undefined)) { printError("--model and --effort name a fallback agent, not none"); process.exit(2) }
+  for (const flag of ["model", "effort"] as const) {
+    if (flags[flag] !== undefined && typeof flags[flag] !== "string") { printError(`--${flag} requires a value`); process.exit(2) }
+  }
+  const agent = none ? null : {
+    harness, ...(typeof flags.model === "string" ? { model: flags.model } : {}), ...(typeof flags.effort === "string" ? { effort: flags.effort } : {}),
+  }
+  const project = projectOf(flags)
+  await api("/api/projects", "POST", { path: project, [key]: agent })
+  const letter = key === "verifyFallback" ? "A" : "B"
+  print(agent
+    ? `Reviewer ${letter} falls back to ${agent.harness}${agent.model ? ` ${agent.model}` : ""} when its task fails on the network, the provider or setup`
+    : `Reviewer ${letter} has no fallback: an infrastructure failure ends its round for a person`)
+}
+
 export async function verifyCommand(positional: string[], flags: Flags): Promise<void> {
   const [verb, argument, extra] = positional
   if (verb === "status") {
@@ -148,6 +178,7 @@ export async function verifyCommand(positional: string[], flags: Flags): Promise
     print(`created ${created.task.id} — ${controlFree(created.task.title)}`)
     return
   }
+  if (verb === "fallback") return setFallback(argument, extra, flags)
   if (verb === "activate") {
     const project = projectOf(flags, argument)
     const done = await api("/api/projects/verification/activate", "POST", { path: project }) as { version: string; areas: unknown[]; changed: boolean }

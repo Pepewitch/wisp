@@ -238,7 +238,7 @@ function Form({
             {verification ? (
               <VerificationFields {...verification} />
             ) : (
-              <VerificationSection project={project} agent={field.verify} onAgentChange={field.setVerify} second={field.secondField} />
+              <VerificationSection project={project} agent={field.verify} onAgentChange={field.setVerify} second={field.secondField} fallbacks={field.fallbackField} />
             )}
           </Section>
         )}

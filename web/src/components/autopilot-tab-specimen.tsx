@@ -187,6 +187,23 @@ const PANEL_ESCALATED: AutoReviewRound[] = [
   }),
 ]
 
+/** A's first agent failed on the network; its fallback took the round over and is reviewing, beside B. */
+const PANEL_FALLBACK: AutoReviewRound[] = [
+  round("f1", 1, "7a8b9c0d1e2", "running", 4, {
+    tier: "standard", signals: STANDARD,
+    reviews: [
+      review("f1a", "primary", "running", 2, {
+        agent: { harness: "claude", model: "opus-5" },
+        fallback: {
+          cause: "network", detail: "turn exited 1: getaddrinfo ENOTFOUND api.example.test",
+          from: { harness: "droid", model: "kimi-k3", effort: null }, taskId: "tf1old", at: new Date(NOW - 3 * 60_000).toISOString(),
+        },
+      }),
+      review("f1b", "second", "pass", 1),
+    ],
+  }),
+]
+
 /* ── captures: what Wisp itself saw, and what A waived ──────────────────── */
 
 /** A stand-in page for a thumbnail: a header, a sidebar (not on mobile) and two cards; a reviewer's own image is dark. */
@@ -411,7 +428,7 @@ export function AutopilotTabSpecimen() {
           </div>
         </Frame>
         <Frame id="autopilot-review-panel" title="Auto-review's panel: a row per reviewer, and the tier"
-          note="On a daemon with features.reviewPanel each round says its tier (deep, standard or light; its title is what Wisp measured from the diff) and lists its reviewers under it: the letter (A runs the app and reviews the code, B reads the code only), the agent, a dot and its words, and Open for that reviewer's task. Kept is a pass carried from an earlier round on the same head; a light round's A may escalate, and a reviewer waiting for a task slot says so. A round from before the panel keeps its one line and a faint hint.">
+          note="On a daemon with features.reviewPanel each round says its tier (deep, standard or light; its title is what Wisp measured from the diff) and lists its reviewers under it: the letter (A runs the app and reviews the code, B reads the code only), the agent, a dot and its words, and Open for that reviewer's task. Kept is a pass carried from an earlier round on the same head; a light round's A may escalate, and a reviewer waiting for a task slot says so. A reviewer that stood in for one whose task failed on the network, its provider or setup is marked fallback; its title names whom it replaced and why. A round from before the panel keeps its one line and a faint hint.">
           <div>
             <Caption>A deep round under way, over a round from before the panel</Caption>
             <Panel height={420}><TabPane automation={automationOf(REVIEWING, null, PANEL_DEEP, true)} /></Panel>
@@ -423,6 +440,10 @@ export function AutopilotTabSpecimen() {
           <div>
             <Caption>A light round, escalated: B waits for a slot</Caption>
             <Panel height={360}><TabPane automation={automationOf(REVIEWING, null, PANEL_ESCALATED, true)} /></Panel>
+          </div>
+          <div>
+            <Caption>A&apos;s agent failed on the network: its fallback reviews the same round</Caption>
+            <Panel height={460}><TabPane automation={automationOf(REVIEWING, null, PANEL_FALLBACK, true)} /></Panel>
           </div>
           <div>
             <Caption>Touch</Caption>

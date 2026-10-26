@@ -112,6 +112,7 @@ wisp review submit --stdin                       # a reviewer's verdict (wisp re
 wisp verify status [project] [--json]            # the project's recipe, a draft, the recipe task
 wisp verify setup|improve|fix [project] [--area <name>] [--note "…"] [--harness <h>] [--model <m>]
 wisp verify activate [project]                   # make the newest draft the active recipe
+wisp verify fallback a|b <harness> [--model <m>] [--effort <e>] | none [--project <path>]
 wisp verify show [file] | checkout <dir> | draft save <dir>
 ```
 
@@ -120,6 +121,14 @@ The recipe lives in the Wisp home, never in the repository. `checkout` and
 save a draft, and only a person activates it (an agent's `activate` is refused).
 Resume on a task whose reviewer needs you has a fresh reviewer look at the same
 head again without spending a round.
+
+`verify fallback` names who reviews in reviewer A's or B's place when its task
+fails on the network, on the provider (a 5xx, overloaded, unavailable) or in
+setup (before its prompt: worktree, setup script, spawn, or a live session that
+never started): once per round, on the same head. A verdict, a missing one, a
+usage limit and the time limit never fall back. Unset (`none`, the default)
+leaves such a round for you; a harness the daemon does not have is refused. `review show` marks a reviewer that stood
+in (`fallback for <agent>: <cause>`), and its `--json` carries `fallback`.
 
 ## Tasks
 

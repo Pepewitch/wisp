@@ -75,6 +75,14 @@ export interface RepoConfig {
    * in its own independent session.
    */
   verifySecond?: { harness: string; model?: string; effort?: string } | "off";
+  /**
+   * Who reviews in reviewer A's place, once per round, when A's task fails
+   * for an infrastructure reason (verify/fallback.ts). Unset: no fallback,
+   * and that round ends as an error for a person.
+   */
+  verifyFallback?: { harness: string; model?: string; effort?: string };
+  /** The same for reviewer B. */
+  verifySecondFallback?: { harness: string; model?: string; effort?: string };
   /** whether a `wisp capture` page may load public internet hosts (fonts, CDNs); default true */
   capturePublic?: boolean;
 }

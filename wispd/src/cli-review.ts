@@ -4,7 +4,7 @@
  * `submit` is what a reviewer agent runs, so every answer is one short line,
  * and a mistake in its JSON names the field so it can fix it once.
  */
-import type { AutoReviewReview, AutoReviewRound, AutoReviewRoundsResponse } from "../../shared/api/auto-review"
+import { FALLBACK_CAUSE_WORDS, type AutoReviewReview, type AutoReviewRound, type AutoReviewRoundsResponse } from "../../shared/api/auto-review"
 import type { Flags } from "./cli-args"
 import { api, CliApiError, daemonRequest, exitApi } from "./cli-api"
 import { print, printError, printJson } from "./cli-print"
@@ -63,14 +63,28 @@ const oneLine = (text: string, max: number): string => {
   return [...flat].length > max ? `${[...flat].slice(0, max).join("")}…` : flat
 }
 
+/** ` (fallback for droid: network)`: the agent on the row stood in for another. */
+const fallbackWords = (review: AutoReviewReview): string => {
+  const from = review.fallback?.from
+  return from ? ` (fallback for ${controlFree(from.harness)}${from.model ? ` ${controlFree(from.model)}` : ""}: ${review.fallback!.cause})` : ""
+}
+
+/** One reviewer's line; in full, a fallback's adds what became of the agent it replaced. */
+function reviewLines(review: AutoReviewReview, full: boolean): string[] {
+  const who = review.role === "primary" ? "A" : "B"
+  const lines = [`  ${who} ${controlFree(review.agent.harness)}${review.agent.model ? ` ${controlFree(review.agent.model)}` : ""}${fallbackWords(review)}: ${review.state}${review.carried ? " (kept)" : ""}${review.summary ? ` — ${oneLine(review.summary, 140)}` : ""}`]
+  const fallback = review.fallback
+  if (full && fallback) {
+    lines.push(`     ${controlFree(fallback.from.harness)} ${FALLBACK_CAUSE_WORDS[fallback.cause]}${fallback.detail ? `: ${oneLine(fallback.detail, 200)}` : ""}${fallback.taskId ? ` (task ${fallback.taskId})` : ""}`)
+  }
+  return lines
+}
+
 export function formatRound(round: AutoReviewRound, full: boolean): string {
   const head = `round ${round.round}${round.counted ? "" : " (re-run)"} · PR #${round.pr} · ${round.head.slice(0, 7)} · ${round.state}`
   const lines = [head]
   if (round.tier) lines[0] += ` · ${round.tier}${round.legacy ? "" : " review"}`
-  for (const review of round.reviews ?? []) {
-    const who = review.role === "primary" ? "A" : "B"
-    lines.push(`  ${who} ${controlFree(review.agent.harness)}${review.agent.model ? ` ${controlFree(review.agent.model)}` : ""}: ${review.state}${review.carried ? " (kept)" : ""}${review.summary ? ` — ${oneLine(review.summary, 140)}` : ""}`)
-  }
+  for (const review of round.reviews ?? []) lines.push(...reviewLines(review, full))
   if (round.summary && !round.reviews?.length) lines.push(`  ${full ? controlFree(round.summary) : oneLine(round.summary, 160)}`)
   if (full) {
     for (const [index, finding] of round.findings.entries()) {
