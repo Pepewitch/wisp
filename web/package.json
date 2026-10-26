@@ -31,7 +31,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "dayjs": "^1.11.23",
-    "dompurify": "^3.4.16",
+    "dompurify": "^3.4.17",
     "mermaid": "^11.17.2",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
@@ -61,6 +61,6 @@
     "typescript": "~6",
     "typescript-eslint": "^8",
     "vite": "^8.3.4",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.12"
   }
 }
