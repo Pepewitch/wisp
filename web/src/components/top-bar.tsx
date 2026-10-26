@@ -44,8 +44,9 @@ export function TopBar({
     >
       <TopBarLeft desktop={desktop}>
         {/* The mark is the browser's only left-end identity: no window chrome,
-            no tabs. Desktop drops it — the traffic lights own that corner and
-            the connection tabs already say which daemon is on screen. */}
+            no connections. Desktop drops it — the traffic lights own that
+            corner and the connection picker already says which daemon is on
+            screen. */}
         {!desktop && (
           <span role="img" aria-label="Wisp" className="shrink-0">
             <WispMark className="pointer-events-none size-[17px]" />

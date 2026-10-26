@@ -8,7 +8,7 @@ import { createConnectionQueryKeys } from "@/lib/query"
 import type { ApiTask } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
-import { TopBarTask } from "./top-bar-task"
+import { TopBarLeft, TopBarTask } from "./top-bar-task"
 
 /**
  * The top bar carries the task: its title is the trigger for every verb the
@@ -221,5 +221,27 @@ describe("the window drag region on Desktop", () => {
   it("adds nothing in the browser", () => {
     const { container } = mount(<TopBarTask task={TASK} dragRegion={false} />)
     expect(container.querySelector("[data-tauri-drag-region]")).toBeNull()
+  })
+})
+
+/**
+ * #441: the left end once grew with Desktop's connection tabs, and its
+ * hairline left the sidebar's divider. It is the sidebar's width, plus that
+ * divider's 1px, whatever it holds.
+ */
+describe("the top bar's left end", () => {
+  it("is exactly the sidebar's width and its divider, never its content's", () => {
+    render(<TopBarLeft desktop><span>Local</span></TopBarLeft>)
+    const left = screen.getByText("Local").parentElement!
+    expect(left).toHaveClass("w-[calc(var(--sidebar-width)+1px)]", "shrink-0", "border-r")
+    expect(left.className).not.toMatch(/max-w-|min-w-\(/)
+  })
+
+  it("drags the window on Desktop around its controls, and never in the browser", () => {
+    const { rerender } = render(<TopBarLeft desktop><button type="button">Local</button></TopBarLeft>)
+    expect(screen.getByRole("button").parentElement).toHaveAttribute("data-tauri-drag-region", "")
+    expect(screen.getByRole("button")).not.toHaveAttribute("data-tauri-drag-region")
+    rerender(<TopBarLeft desktop={false}><button type="button">Local</button></TopBarLeft>)
+    expect(screen.getByRole("button").parentElement).not.toHaveAttribute("data-tauri-drag-region")
   })
 })

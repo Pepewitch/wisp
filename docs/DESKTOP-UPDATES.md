@@ -16,7 +16,7 @@ are mutually exclusive: a Desktop relaunch cannot interrupt a daemon update,
 and a daemon update cannot start while Desktop is checking, installing, or
 waiting to relaunch. Saved remote daemons are never updated through Wisp
 Desktop; update them on their host or through that daemon's browser UI.
-Changing connection tabs has no effect on the Local row or an operation in
+Switching connections has no effect on the Local row or an operation in
 progress.
 
 A daemon update restarts that daemon, which interrupts every running turn.

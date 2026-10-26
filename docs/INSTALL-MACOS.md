@@ -78,7 +78,7 @@ Open **Updates** in Desktop:
 
 - **Wisp Desktop** installs the application update and relaunches it.
 - **Local daemon** updates this Mac's managed daemon, regardless of the
-  selected connection tab.
+  selected connection.
 
 **Check now** installs nothing. Saved remote daemons must be updated on their
 own host or through their browser UI. The two local update operations cannot

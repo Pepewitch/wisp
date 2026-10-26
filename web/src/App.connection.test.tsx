@@ -267,7 +267,7 @@ describe("connection-bound update recovery", () => {
     expect(connectionStore(connectionId).status()).toBe("opening")
   })
 
-  it("keeps browser mode single-daemon without a misleading Local tab", () => {
+  it("keeps browser mode single-daemon without a misleading connection picker", () => {
     render(
       <DaemonRuntimeProvider transport={fakeDaemonTransport("local")}>
         <App />
@@ -275,7 +275,7 @@ describe("connection-bound update recovery", () => {
     )
 
     expect(screen.getByRole("img", { name: "Wisp" })).toBeInTheDocument()
-    expect(screen.queryByRole("tab", { name: "Local" })).toBeNull()
+    expect(screen.queryByRole("button", { name: /^Connection: / })).toBeNull()
     expect(screen.queryByRole("button", { name: /Zoom/ })).toBeNull()
     expect(screen.queryByText("Wisp")).toBeNull()
   })
@@ -419,7 +419,7 @@ describe("connection-bound update recovery", () => {
 })
 
 describe("the top bar's left end", () => {
-  it("drops the mark on Desktop, where the traffic lights and connection tabs own the corner", () => {
+  it("drops the mark on Desktop, where the traffic lights and the connection picker own the corner", () => {
     const nativeBridge = desktopBridge()
     render(
       <DesktopUpdaterProvider bridge={nativeBridge} launchCheckDelay={60_000}>
@@ -437,7 +437,7 @@ describe("the top bar's left end", () => {
     )
 
     expect(screen.queryByRole("img", { name: "Wisp" })).toBeNull()
-    expect(screen.getByRole("tab", { name: "Local" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Connection: Local" })).toBeInTheDocument()
   })
 
   it("reopens the selected connection's event and log streams after a stable reconnect", async () => {
@@ -465,13 +465,14 @@ describe("the top bar's left end", () => {
     try {
       const eventCalls = mocks.connectEventsBridge.mock.calls.length
       const logGeneration = mocks.useLogStream.mock.lastCall![2]
-      fireEvent.click(screen.getByRole("button", { name: "Reconnect Local" }))
+      fireEvent.click(screen.getByRole("button", { name: "Connection: Local" }))
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Reconnect" }))
 
       await waitFor(() =>
         expect(mocks.connectEventsBridge.mock.calls.length).toBe(eventCalls + 1)
       )
       expect(mocks.useLogStream.mock.lastCall![2]).toBe(logGeneration + 1)
-      expect(screen.getByRole("tab", { name: "Local" })).toHaveAttribute("aria-selected", "true")
+      expect(screen.getByRole("button", { name: "Connection: Local", hidden: true })).toBeInTheDocument()
     } finally {
       view.unmount()
       fixtures.tasks = []
