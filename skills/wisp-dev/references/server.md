@@ -165,7 +165,8 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 - Triggers never touch `tasks.updated_at`: bulk purge compares it row by row,
   so a trigger that bumped it would change a purge's selection.
 - Everything a subtask's prompt says about Wisp goes in the `<wisp>` section.
-  The parent's goal follows it, quoted, as data.
+  Only a person-chosen parent title follows it, quoted, as data: never the
+  parent's first prompt, which in a long-lived parent is often unrelated.
 - The actor (`requestActor`) only narrows. A merge grant from an agent's turn is
   refused, and `workflows.merge_allowed_by` records who allowed one.
 - Reports are two modules. `subtask-reports.ts` RECORDS a `subtask_reports` row

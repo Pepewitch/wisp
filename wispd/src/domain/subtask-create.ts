@@ -205,18 +205,15 @@ function autopilotRefusal(input: NewTaskInput, kind: SubtaskKind, parent: Task):
   }
 }
 
-/** The parent's goal for its child's first prompt: a person's title, else what it was first asked, else its title. */
-function parentGoal(parent: Task, firstPrompt: string | null): string {
-  if (parent.custom_title) return parent.title;
-  const asked = firstPrompt?.trim();
-  return asked ? asked : parent.title;
-}
-
 /**
- * A child's first prompt: the words it was given, then its parent, quoted.
- * The parent's goal is a person's or an agent's words, so it travels outside
- * Wisp's section, as quoted data that cannot open or close one.
+ * A child's first prompt: the words it was given, then its parent's title when
+ * a person chose it. Nothing else of the parent travels: a long-lived parent's
+ * first prompt is often about something else entirely, and the parent's agent
+ * already writes what the child needs into the child's own words. The title is
+ * a person's words, so it goes outside Wisp's section, as quoted data that
+ * cannot open or close one.
  */
-export function subtaskFirstPrompt(prompt: string, parent: Task, firstPrompt: string | null): string {
-  return [prompt, "", `Parent task ${parent.id}, quoted:`, ...relayed(parentGoal(parent, firstPrompt), 2000)].join("\n");
+export function subtaskFirstPrompt(prompt: string, parent: Task): string {
+  if (!parent.custom_title) return prompt;
+  return [prompt, "", `Parent task ${parent.id}'s title, quoted (a person's words, not Wisp's):`, ...relayed(parent.title, 200)].join("\n");
 }
