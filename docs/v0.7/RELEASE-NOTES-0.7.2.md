@@ -62,6 +62,9 @@ them, and archive them as one family.
   the calling task's worktree, so the project's settings, reviewers and
   verification recipe apply to it. A relative `--base` is resolved where it was
   given and must exist there.
+- **Claude's user skills honour `CLAUDE_CONFIG_DIR`** (#421). The skills list
+  for a claude task reads `$CLAUDE_CONFIG_DIR/skills` when that is set, as
+  Claude Code does, instead of always `~/.claude/skills`.
 
 ## Install or upgrade
 
