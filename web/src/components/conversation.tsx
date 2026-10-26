@@ -206,7 +206,7 @@ export function Conversation({
           tabIndex={-1}
           data-testid="conversation-viewport"
           className={cn(
-            "scroll-slim min-h-0 flex-1 overflow-y-auto px-4.5 outline-none [overflow-anchor:auto]",
+            "scroll-slim min-h-0 flex-1 overflow-y-auto outline-none [overflow-anchor:auto]",
             // ONE axis, and it is vertical (§5). `overflow-y-auto` alone left
             // `overflow-x` computing to `auto` — the spec turns a `visible`
             // axis into `auto` the moment its partner scrolls — so anything
@@ -226,8 +226,11 @@ export function Conversation({
         >
           {/* Bottom-aligned while the transcript is shorter than the pane: a
               two-line conversation belongs just above the composer, not floating
-              at the top of 600px of nothing. Once it overflows, this is inert. */}
-          <div className="flex min-h-full flex-col justify-end pt-6">
+              at the top of 600px of nothing. Once it overflows, this is inert.
+              The scroller spans the pane, so a wheel over either margin still
+              scrolls and the bar stays at the pane's edge; what it holds keeps
+              to the reading column the composer shares (§5). */}
+          <div className="mx-auto flex min-h-full w-full max-w-(--reading-measure) flex-col justify-end px-4.5 pt-6">
             {hasOlderTurns && (
               <div className="pb-4 text-center">
                 <button
@@ -284,7 +287,14 @@ export function Conversation({
           </div>
         </div>
 
-        {!pinned && <ConversationFloat waitingQuestions={waitingQuestions} onJump={jumpToLatest} />}
+        {/* Anchored to the column's corner, not the pane's: in a wide pane
+            the pane's corner is a margin away from the words it jumps to. The
+            box has no height, so it never takes a click from the transcript. */}
+        {!pinned && (
+          <div className="absolute inset-x-0 bottom-0 mx-auto max-w-(--reading-measure)">
+            <ConversationFloat waitingQuestions={waitingQuestions} onJump={jumpToLatest} />
+          </div>
+        )}
       </div>
       </QuestionnaireProvider>
     </FileViewerProvider>

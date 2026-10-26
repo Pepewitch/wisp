@@ -387,6 +387,14 @@
   --z-menu: 80;            /* menus and popovers — must clear any open modal */
   --z-tooltip: 90;         /* a tooltip clears everything: it names what you are pointing at */
 
+  /* ── reading measure ─────────────────────────────────────────────────────
+     The width of the ONE column the transcript and the composer share, its
+     own side padding included (frontend §5). A wider centre pane grows the
+     margins either side, never the line: at 1512px an unbounded line ran to
+     about 130 characters and put a prompt bubble ~1000px from the prose it
+     answered. Reference it with `max-w-(--reading-measure)`. */
+  --reading-measure: 680px;
+
   /* sidebar surface family */
   --sidebar: var(--surface);
   --sidebar-foreground: var(--foreground);

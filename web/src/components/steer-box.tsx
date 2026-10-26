@@ -142,6 +142,12 @@ function useCaretRestore(boxRef: RefObject<HTMLTextAreaElement | null>, caretRef
   })
 }
 
+/** The footer pads top and bottom across the pane; the column pads its own sides. */
+const COMPOSER_PADDING = {
+  pointer: { footer: "pt-2.5 pb-3.5", column: "px-4.5" },
+  touch: { footer: "pt-2 pb-2.5", column: "px-3" },
+} as const
+
 export function SteerBox({
   task,
   hasImage = true,
@@ -282,71 +288,76 @@ export function SteerBox({
   const shownReport =
     report && task && report.taskId === task.id ? report : null
   const runtimeStatus = composerStatus(task, delivery.action, compacting, choice)
+  const padding = touch ? COMPOSER_PADDING.touch : COMPOSER_PADDING.pointer
 
   return (
     <div
       className={cn(
-        // @container, not a media query: Desktop's zoom shrinks this pane in
-        // CSS pixels without touching the window, and a dragged divider does
-        // the same. The bar has to answer the space it actually has.
-        "@container relative shrink-0 bg-gradient-to-t from-background from-60% to-transparent",
-        touch ? "px-3 pt-2 pb-2.5" : "px-4.5 pt-2.5 pb-3.5"
+        "relative shrink-0 bg-gradient-to-t from-background from-60% to-transparent",
+        padding.footer
       )}
     >
-      {/* Palette and reports share the composer's content width, not the
-          wider footer outside its responsive padding. */}
-      <div className="relative">
-        <SteerOverlays
-          shownReport={shownReport}
-          task={task}
-          turns={turns}
-          onDismissReport={dismissReport}
-          palette={palette}
-          groups={groups}
-          onPick={pick}
-          commandRef={command}
-          touch={touch}
-          runningSince={runningSince}
-          composerStatus={runtimeStatus}
-          note={shown}
-        />
+      {/* The reading column the transcript shares (frontend §5): the fade
+          spans the pane, the composer keeps to the measure. Palette and
+          reports share the composer's content width, not the wider footer
+          outside its responsive padding. @container, not a media query:
+          Desktop's zoom shrinks this pane in CSS pixels without touching the
+          window, and a dragged divider does the same. The bar has to answer
+          the space it actually has, which the measure caps. */}
+      <div className={cn("mx-auto w-full max-w-(--reading-measure)", padding.column)}>
+        <div className="@container relative">
+          <SteerOverlays
+            shownReport={shownReport}
+            task={task}
+            turns={turns}
+            onDismissReport={dismissReport}
+            palette={palette}
+            groups={groups}
+            onPick={pick}
+            commandRef={command}
+            touch={touch}
+            runningSince={runningSince}
+            composerStatus={runtimeStatus}
+            note={shown}
+          />
 
-        {/* The resume hint hugs the composer's right edge — the same row the
-            running note takes over for as long as there is live work. One
-            line either way: the footer never grows a second one under the
-            reader, and the session id comes back the moment the work ends. */}
-        {task && !runtimeStatus && !compacting && <ResumeHint task={task} />}
+          {/* The resume hint hugs the composer's right edge — the same row the
+              running note takes over for as long as there is live work. One
+              line either way: the footer never grows a second one under the
+              reader, and the session id comes back the moment the work ends. */}
+          {task && !runtimeStatus && !compacting && <ResumeHint task={task} />}
 
-        <SteerComposer
-          task={task}
-          taskId={taskId}
-          value={value}
-          disabled={disabled}
-          blocked={blocked}
-          sending={sending}
-          canSend={canSend}
-          canStop={canStop}
-          touch={touch}
-          palette={palette}
-          reportOpen={shownReport !== null}
-          suffixPromptId={suffixPromptId}
-          boxRef={box}
-          caretRef={caret}
-          commandRef={command}
-          attachments={attachments}
-          harnesses={harnesses}
-          canSwitchAgent={canSwitchAgent}
-          agentChoice={agent.choice}
-          delivery={delivery}
-          onValueChange={setValue}
-          onTrack={track}
-          onDismissPalette={dismiss}
-          onDismissReport={dismissReport}
-          onSuffixPromptChange={(value) => setSuffixSelection({ taskId, value })}
-          onAgentChange={agent.setChoice}
-          onSend={send}
-          onStop={stop}
-        />
+          <SteerComposer
+            task={task}
+            taskId={taskId}
+            value={value}
+            disabled={disabled}
+            blocked={blocked}
+            sending={sending}
+            canSend={canSend}
+            canStop={canStop}
+            touch={touch}
+            palette={palette}
+            reportOpen={shownReport !== null}
+            suffixPromptId={suffixPromptId}
+            boxRef={box}
+            caretRef={caret}
+            commandRef={command}
+            attachments={attachments}
+            harnesses={harnesses}
+            canSwitchAgent={canSwitchAgent}
+            agentChoice={agent.choice}
+            delivery={delivery}
+            onValueChange={setValue}
+            onTrack={track}
+            onDismissPalette={dismiss}
+            onDismissReport={dismissReport}
+            onSuffixPromptChange={(value) => setSuffixSelection({ taskId, value })}
+            onAgentChange={agent.setChoice}
+            onSend={send}
+            onStop={stop}
+          />
+        </div>
       </div>
 
       {task && (

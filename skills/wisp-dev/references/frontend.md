@@ -326,6 +326,29 @@ result — not a raw stream pane stacked on a chat pane. Five rules:
    the bubble says: a still-queued or cancelled message keeps its own
    queued-for-the-next-turn wording no matter what the log anchored.
 
+### One reading column
+
+The transcript and the composer share ONE centred column, `--reading-measure`
+(680px, its own 18px side padding included, `index.css`). A wider centre pane
+grows the margins either side, never the line: unbounded, a line ran to ~130
+characters at 1512px and a prompt bubble sat ~1000px from the prose it
+answered. Below the measure (the phone, a narrow window, a dragged divider) the
+column is simply the pane, so nothing changes there.
+
+- **The scroller spans the pane; its CONTENT keeps to the measure.** A wheel
+  over a margin still scrolls the transcript, the scrollbar stays at the
+  pane's edge, and rule 1's one scroller is untouched.
+- **The composer keeps to the same measure,** and its `@container` sits inside
+  it, so the control bar answers the column's width, not the pane's.
+- **What anchors to the conversation anchors to the column.** The jump-to-latest
+  float sits at the column's bottom-right corner; the palette and the reports
+  already share the composer's width. The find bar is pane chrome and stays at
+  the pane's top-right, clear of the words it searches.
+- **Wide content scrolls inside the column, never the page:** a code fence and a
+  table carry their own `overflow-x-auto`, and a mermaid diagram fits to the
+  column's width with its own pan and zoom.
+- Reference the width as `max-w-(--reading-measure)`; never repeat `680px`.
+
 There is no `Turn N` rule between turns. The right-aligned prompt bubble is the
 boundary, and the gap carries the rhythm: 30px above a bubble, 16px inside a
 turn.
@@ -872,7 +895,7 @@ pixels**, so a media query would never fire for it. `@container`, in two steps:
 |---|---|
 | any | attach · suffix · send, and a running note on its own line |
 | `@lg` 512px | + harness · model · effort, truncating before it wraps |
-| `@2xl` 672px | + the note or the `↵` hint inline; the stacked note goes |
+| `@xl` 576px | + the `↵` hint. Not wider: the reading column (§5) caps the bar at 644px |
 
 On `touch` the bar is one row of thumb targets instead: the model chip, the
 effort glyph, the paperclip, the suffix glyph and the send.
