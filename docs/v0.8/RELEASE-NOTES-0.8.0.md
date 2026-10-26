@@ -54,6 +54,9 @@ card in place of the always-open right column.
   "Live updates delayed" or "disconnected" in the meantime. The same PR fixes
   ten smaller layout, focus and accessibility details from the redesign's
   reviews.
+- **One column for the sidebar's dots** (#439). Every task's state dot sits
+  in the same column whether or not a task has subtasks; the expand chevron
+  has a reserved slot on every row.
 
 ### Auto-review and subtasks
 
@@ -75,6 +78,10 @@ card in place of the always-open right column.
   usage is now the sum of its model calls, not the last call alone, so token
   totals for codex tasks are comparable with other harnesses. Turns stored
   before 0.8.0 keep their old figure.
+- **Codex usage that arrives early is still counted** (#437). When codex
+  sends a turn's first usage in the same burst as its "turn started" reply,
+  Wisp now sorts those updates by the turn they name instead of treating them
+  as the previous turn's.
 
 ## Install or upgrade
 
