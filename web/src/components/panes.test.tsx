@@ -258,3 +258,106 @@ describe("the dock's divider", () => {
     }
   })
 })
+
+describe("the sidebar's divider", () => {
+  // As much of a browser's layout as the library reads: the shell's children
+  // sit side by side in a 1600px row, a panel as wide as its flex-grow share,
+  // a divider one pixel; an undisplayed element has no box, so it reads 0.
+  // jsdom has no Tailwind, so `hidden` is declared here.
+  const WIDTH = 1600
+  function laidOut() {
+    const style = document.createElement("style")
+    style.textContent = ".hidden { display: none }"
+    document.head.append(style)
+    const boxWidth = (el: HTMLElement) => {
+      if (getComputedStyle(el).display === "none") return 0
+      if (el.hasAttribute("data-panel")) {
+        const share = el.style.flexGrow === "" ? 100 / 3 : Number(el.style.flexGrow)
+        return Math.round((share / 100) * WIDTH)
+      }
+      return el.getAttribute("role") === "separator" ? 1 : WIDTH
+    }
+    const boxLeft = (el: HTMLElement) => {
+      if (getComputedStyle(el).display === "none") return 0
+      const siblings = [...(el.parentElement?.children ?? [])]
+      return siblings.slice(0, siblings.indexOf(el)).reduce((sum, sibling) => sum + boxWidth(sibling as HTMLElement), 0)
+    }
+    const spies = [
+      vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+        return boxWidth(this)
+      }),
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(800),
+      vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
+        return boxLeft(this)
+      }),
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+        const x = boxLeft(this)
+        const width = boxWidth(this)
+        return { x, y: 0, left: x, top: 0, right: x + width, bottom: 800, width, height: 800, toJSON: () => ({}) } as DOMRect
+      }),
+    ]
+    return () => {
+      spies.forEach((spy) => spy.mockRestore())
+      style.remove()
+    }
+  }
+
+  const sidebarWidth = () => (Number(document.getElementById("sidebar")!.style.flexGrow) / 100) * WIDTH
+  const divider = () => document.getElementById("sidebar")!.nextElementSibling as HTMLElement
+  // the tool panel closed, as every task opens
+  const shell = () => <PaneShell sidebar={<div />} centre={<div />} panel={<div>tools</div>} panelOpen={false} />
+
+  async function withShell(run: (errors: unknown[]) => Promise<void>) {
+    // a saved sidebar with room to move both ways
+    localStorage.setItem("react-resizable-panels:wisp-ui-main-v2", JSON.stringify({ sidebar: 18.75, centre: 81.25, tool: 0 }))
+    const restore = laidOut()
+    const errors: unknown[] = []
+    const onError = (event: ErrorEvent) => errors.push(event.error)
+    window.addEventListener("error", onError)
+    try {
+      await run(errors)
+    } finally {
+      window.removeEventListener("error", onError)
+      restore()
+      localStorage.removeItem("react-resizable-panels:wisp-ui-main-v2")
+    }
+  }
+
+  it("resizes the sidebar from the keyboard, and the width survives a reload", async () => {
+    await withShell(async (errors) => {
+      const view = render(shell())
+      await act(async () => {})
+      const before = sidebarWidth()
+      divider().focus()
+      await act(async () => void fireEvent.keyDown(divider(), { key: "ArrowRight" }))
+      expect(sidebarWidth()).toBeGreaterThan(before)
+      await act(async () => void fireEvent.keyDown(divider(), { key: "ArrowLeft" }))
+      expect(sidebarWidth()).toBeCloseTo(before)
+      await act(async () => void fireEvent.keyDown(divider(), { key: "End" }))
+      expect(sidebarWidth()).toBeCloseTo(380)
+      await act(async () => void fireEvent.keyDown(divider(), { key: "Home" }))
+      expect(sidebarWidth()).toBeCloseTo(220)
+      expect(errors).toEqual([])
+
+      // the library saves a beat after the last change
+      await act(() => new Promise((resolve) => setTimeout(resolve, 150)))
+      view.unmount()
+      render(shell())
+      await act(async () => {})
+      expect(sidebarWidth()).toBeCloseTo(220)
+    })
+  })
+
+  it("follows a pointer dragging it", async () => {
+    await withShell(async () => {
+      render(shell())
+      await act(async () => {})
+      const before = sidebarWidth()
+      const at = divider().getBoundingClientRect().x
+      fireEvent.pointerDown(divider(), { pointerType: "mouse", button: 0, buttons: 1, clientX: at, clientY: 400 })
+      await act(async () => void fireEvent.pointerMove(document, { pointerType: "mouse", buttons: 1, clientX: at + 60, clientY: 400 }))
+      await act(async () => void fireEvent.pointerUp(document, { pointerType: "mouse", button: 0, clientX: at + 60, clientY: 400 }))
+      expect(sidebarWidth()).toBeCloseTo(before + 60, 0)
+    })
+  })
+})

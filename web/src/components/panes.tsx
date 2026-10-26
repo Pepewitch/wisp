@@ -21,6 +21,12 @@ import { cn } from "@/lib/utils"
  * `disabled` handle is one whose neighbour is closed: it is not drawn, and
  * it cannot drag a closed panel open.
  *
+ * Not drawn means zero size and invisible, never `display: none`: the library
+ * orders a group's children by where they sit (`offsetLeft`), and an
+ * undisplayed handle sits at 0, first. Its disabled flag then carried over to
+ * the next divider along, the sidebar's, which was left with no panels to
+ * move: "Matching panels not found" on every key, and drags that did nothing.
+ *
  * Keyed on `disabled`, so enabling one MOUNTS it anew: the library maps each
  * divider to its panels once, when it registers, and leaves a disabled one
  * out. A divider merely flipped to enabled kept that stale map, and keyboard
@@ -40,7 +46,7 @@ function Handle({ className, disabled = false }: { className?: string; disabled?
         "aria-[orientation=horizontal]:after:h-2 aria-[orientation=horizontal]:after:w-full",
         "aria-[orientation=horizontal]:after:translate-x-0 aria-[orientation=horizontal]:after:-translate-y-1/2",
         "focus-visible:outline-none data-[dragging]:bg-accent-dim",
-        disabled && "hidden",
+        disabled && "invisible w-0 aria-[orientation=horizontal]:h-0",
         className,
       )}
     >
