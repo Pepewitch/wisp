@@ -20,10 +20,16 @@ import { cn } from "@/lib/utils"
  * Panes carry no border toward a handle — the handle IS the divider. A
  * `disabled` handle is one whose neighbour is closed: it is not drawn, and
  * it cannot drag a closed panel open.
+ *
+ * Keyed on `disabled`, so enabling one MOUNTS it anew: the library maps each
+ * divider to its panels once, when it registers, and leaves a disabled one
+ * out. A divider merely flipped to enabled kept that stale map, and keyboard
+ * resizing then threw "Matching panels not found".
  */
 function Handle({ className, disabled = false }: { className?: string; disabled?: boolean }) {
   return (
     <Resizable.Separator
+      key={disabled ? "disabled" : "enabled"}
       disabled={disabled}
       className={cn(
         "group/handle relative flex shrink-0 items-center justify-center bg-border",

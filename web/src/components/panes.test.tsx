@@ -2,7 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react"
 import { useEffect, useState } from "react"
 import { describe, expect, it, vi } from "vitest"
 
-import { ToolPanel } from "./panes"
+import { Shell as PaneShell, ToolPanel } from "./panes"
 
 const mounts = vi.fn()
 const unmounts = vi.fn()
@@ -87,11 +87,13 @@ describe("the dock's divider", () => {
     return () => [rect, height, width].forEach((spy) => spy.mockRestore())
   }
 
-  function Harness() {
-    const [state, setState] = useState<{ tool: string | null; terminal: boolean }>({ tool: "changes", terminal: true })
+  function Harness({ initial = { tool: "changes", terminal: true } }: { initial?: { tool: string | null; terminal: boolean } }) {
+    const [state, setState] = useState<{ tool: string | null; terminal: boolean }>(initial)
     return (
       <>
         <button onClick={() => setState((s) => ({ ...s, tool: "workflows" }))}>pick Workflows</button>
+        <button onClick={() => setState((s) => ({ ...s, tool: "changes" }))}>open Changes</button>
+        <button onClick={() => setState((s) => ({ ...s, terminal: true }))}>dock the Terminal</button>
         <output data-testid="state">{JSON.stringify(state)}</output>
         <ToolPanel
           tool={<div>{state.tool}</div>}
@@ -125,6 +127,64 @@ describe("the dock's divider", () => {
       await act(async () => {})
       expect(growOf("tool")).toBeGreaterThan(0)
       expect(screen.getByText("workflows")).toBeVisible()
+    } finally {
+      restore()
+    }
+  })
+
+  // The divider is disabled while the dock is not docked, and the library
+  // registers a divider once: enabling it later must still make it work.
+  // The ordinary sequence: start closed, open Changes, dock the Terminal.
+  it("a divider enabled by docking resizes from the keyboard", async () => {
+    const restore = sized()
+    const errors: unknown[] = []
+    const onError = (event: ErrorEvent) => errors.push(event.error)
+    window.addEventListener("error", onError)
+    try {
+      render(<Harness initial={{ tool: null, terminal: false }} />)
+      await act(async () => {})
+      fireEvent.click(screen.getByText("open Changes"))
+      await act(async () => {})
+      fireEvent.click(screen.getByText("dock the Terminal"))
+      await act(async () => {})
+      const divider = screen.getByRole("separator")
+      divider.focus()
+
+      // the arrows move it (the tool opens at its minimum, so down first)
+      const before = growOf("tool")
+      await act(async () => void fireEvent.keyDown(divider, { key: "ArrowDown" }))
+      expect(growOf("tool")).toBeGreaterThan(before)
+      await act(async () => void fireEvent.keyDown(divider, { key: "ArrowUp" }))
+      expect(growOf("tool")).toBeCloseTo(before)
+      expect(JSON.parse(screen.getByTestId("state").textContent!)).toEqual({ tool: "changes", terminal: true })
+
+      await act(async () => void fireEvent.keyDown(screen.getByRole("separator"), { key: "Home" }))
+      expect(JSON.parse(screen.getByTestId("state").textContent!)).toEqual({ tool: null, terminal: true })
+      fireEvent.click(screen.getByText("pick Workflows"))
+      await act(async () => {})
+      expect(growOf("tool")).toBeGreaterThan(0)
+      expect(errors).toEqual([])
+    } finally {
+      window.removeEventListener("error", onError)
+      restore()
+    }
+  })
+
+  it("the panel's own divider, enabled by opening the panel, shuts it from the keyboard", async () => {
+    const restore = sized()
+    const shut = vi.fn()
+    const shell = (open: boolean) => (
+      <PaneShell sidebar={<div />} centre={<div />} panel={<div>tools</div>} panelOpen={open} onPanelDraggedShut={shut} />
+    )
+    try {
+      const view = render(shell(false))
+      await act(async () => {})
+      view.rerender(shell(true))
+      await act(async () => {})
+      const divider = screen.getAllByRole("separator").find((s) => s.nextElementSibling?.id === "tool")!
+      divider.focus()
+      await act(async () => void fireEvent.keyDown(divider, { key: "End" }))
+      expect(shut).toHaveBeenCalledOnce()
     } finally {
       restore()
     }
