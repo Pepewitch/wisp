@@ -268,6 +268,25 @@ describe("GET /api/events (SSE stream of every WispEvent)", () => {
     }
   });
 
+  /**
+   * Bun ends a streamed response's head only with the body's first bytes. A
+   * quiet events stream used to keep a browser's fetch pending until the first
+   * event or the 15 s heartbeat, so a phone showed "Live updates disconnected"
+   * (or "delayed") on every load and reconnect. Only a real socket shows it.
+   */
+  test("a subscriber's response arrives at once, before any event", async () => {
+    const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => call("/api/events") });
+    const abort = new AbortController();
+    try {
+      const opened = fetch(`http://127.0.0.1:${server.port}/api/events`, { signal: abort.signal }).then((res) => res.status);
+      const quiet = Bun.sleep(2_000).then(() => "no response yet");
+      expect(await Promise.race([opened, quiet])).toBe(200);
+    } finally {
+      abort.abort();
+      await server.stop(true);
+    }
+  });
+
   test("concurrent subscribers are capped at 32 (503 beyond)", async () => {
     const readers: ReadableStreamDefaultReader<Uint8Array>[] = [];
     try {

@@ -59,12 +59,15 @@
 }
 /* Installed iOS apps report viewport height without the bottom safe area even
    with viewport-fit=cover. Extend only the app shell into that omitted area;
-   its composer still pads its controls above the home indicator. */
+   its composer still pads its controls above the home indicator. The drawers
+   reach into it the same way; the task sheet's body already pads its rows
+   above the indicator (task-sheet.tsx), so only its edge moves. */
 @media (display-mode: standalone) {
   .mobile-browser-shell {
     --mobile-viewport-extension: env(safe-area-inset-bottom, 0px);
   }
-  .mobile-task-drawer {
+  .mobile-task-drawer,
+  .wisp-sheet {
     bottom: calc(-1 * env(safe-area-inset-bottom, 0px));
   }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import * as Resizable from "react-resizable-panels"
-import { useDefaultLayout, usePanelRef, type Layout } from "react-resizable-panels"
+import { useDefaultLayout, usePanelRef, type Layout, type PanelImperativeHandle } from "react-resizable-panels"
 
 import {
   DOCK_LAYOUT_ID,
@@ -102,8 +102,12 @@ export function Shell({
     onLayoutChanged(layout, meta)
     if (!meta.isUserInteraction) return
     if ((layout.tool ?? 0) > 0) {
-      const px = panelRef.current?.getSize().inPixels
-      if (px && px >= PANEL_MIN_WIDTH) writePanelWidth(px)
+      // The library measures the panel's pixels in the DOM, and it reports a
+      // keypress before React has laid that press out: read them a frame later.
+      requestAnimationFrame(() => {
+        const px = panelRef.current?.getSize().inPixels
+        if (px && px >= PANEL_MIN_WIDTH) writePanelWidth(px)
+      })
     } else if (panelOpen) {
       shut.current?.()
     }
@@ -213,6 +217,10 @@ export function ToolPanel({
   const toolRef = usePanelRef()
   const terminalRef = usePanelRef()
   const docked = toolOpen && terminalOpen
+  // The docked split each half reopens to. The library's own expand() returns
+  // a half to its size only after an imperative collapse; one the divider
+  // closed (a drag, Home or End) would come back at its minimum.
+  const split = useRef<Layout | undefined>(defaultLayout)
 
   const [mountedFor, setMountedFor] = useState<string | null>(null)
   if (terminalOpen && mountedFor !== terminalKey) setMountedFor(terminalKey)
@@ -221,9 +229,15 @@ export function ToolPanel({
     const toolPanel = toolRef.current
     const terminalPanel = terminalRef.current
     if (!toolPanel || !terminalPanel || (!toolOpen && !terminalOpen)) return
+    const reopen = (panel: PanelImperativeHandle, id: "tool" | "terminal") => {
+      if (!panel.isCollapsed()) return
+      const size = toolOpen && terminalOpen ? split.current?.[id] : undefined
+      if (size) panel.resize(`${size}%`)
+      else panel.expand()
+    }
     // expand first, so a collapse never leaves the group with nothing to fill it
-    if (toolOpen) toolPanel.expand()
-    if (terminalOpen) terminalPanel.expand()
+    if (toolOpen) reopen(toolPanel, "tool")
+    if (terminalOpen) reopen(terminalPanel, "terminal")
     if (!terminalOpen) terminalPanel.collapse()
     if (!toolOpen) toolPanel.collapse()
   }, [toolOpen, terminalOpen, toolRef, terminalRef])
@@ -256,7 +270,10 @@ export function ToolPanel({
         const toolShut = (layout.tool ?? 0) === 0
         const terminalShut = (layout.terminal ?? 0) === 0
         // only the docked split is worth remembering; a collapsed half is a mode, not a size
-        if (!toolShut && !terminalShut) onLayoutChanged(layout, meta)
+        if (!toolShut && !terminalShut) {
+          onLayoutChanged(layout, meta)
+          split.current = layout
+        }
         // A person who drags (or Home/End-keys) the divider to an end has
         // closed that half, so the top bar and the next pick must agree: a
         // tool still counted open while it has no height would leave the

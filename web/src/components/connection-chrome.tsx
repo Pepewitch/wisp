@@ -200,6 +200,7 @@ export function ConnectionTab({
     <span
       ref={chip}
       data-testid="connection-tab-chip"
+      data-selected={active ? "" : undefined}
       className={cn(
         "flex min-w-0 shrink-0 items-center rounded-md pr-0.5",
         active && "bg-accent"
@@ -258,8 +259,9 @@ export function ConnectionTab({
 /**
  * The direct tabs' strip. Past the top bar's capped left end it scrolls,
  * rather than pushing the task's title out of the bar (§5h); the selected
- * chip scrolls itself into view. One component, so the gallery specimen lays
- * out exactly as the app does.
+ * chip scrolls itself into view when it is selected, and again whenever the
+ * strip narrows (a smaller window, a wider sidebar) and could hide it. One
+ * component, so the gallery specimen lays out exactly as the app does.
  */
 export function ConnectionTabList({
   children,
@@ -268,8 +270,19 @@ export function ConnectionTabList({
   children: ReactNode
   onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void
 }) {
+  const strip = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const element = strip.current
+    if (!element) return
+    const observer = new ResizeObserver(() => {
+      element.querySelector("[data-selected]")?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
   return (
     <div
+      ref={strip}
       role="tablist"
       aria-label="Daemon connections"
       className="scroll-slim flex min-w-0 items-center gap-0.5 overflow-x-auto"

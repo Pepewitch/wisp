@@ -9,7 +9,8 @@ import { useToolPanelControls } from "@/hooks/useToolPanel"
 import { failureReason } from "@/lib/api"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { ToolName } from "@/lib/tools"
-import type { ApiTask, ConversationDetail, PullRequestStatus, Turn } from "@/lib/types"
+import { questionWaiting } from "@/lib/state"
+import type { ApiTask, PullRequestStatus, Turn } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 
 /**
@@ -57,8 +58,7 @@ export function useTaskSummary(task: ApiTask, pullRequest: PullRequestStatus | u
     pullRequest,
     runningSince: turns?.find((turn) => turn.status === "running")?.started_at ?? null,
     settledAt: latest?.ended_at ?? null,
-    // the conversation detail carries it; the list row alone does not
-    questionWaiting: Boolean((task as Partial<ConversationDetail>).pending_question_id),
+    questionWaiting: questionWaiting(task),
     autopilot: features?.taskAutopilot === true ? {
       switches: {
         status: task.autopilot ?? null,

@@ -132,6 +132,25 @@ describe("the dock's divider", () => {
     }
   })
 
+  it("a tool the divider closed reopens at its docked height, not its minimum", async () => {
+    const restore = sized()
+    try {
+      render(<Harness />)
+      await act(async () => {})
+      const docked = growOf("tool")
+      const divider = screen.getByRole("separator")
+      divider.focus()
+      await act(async () => void fireEvent.keyDown(divider, { key: "Home" }))
+      expect(growOf("tool")).toBe(0)
+
+      fireEvent.click(screen.getByText("pick Workflows"))
+      await act(async () => {})
+      expect(growOf("tool")).toBeCloseTo(docked)
+    } finally {
+      restore()
+    }
+  })
+
   // The divider is disabled while the dock is not docked, and the library
   // registers a divider once: enabling it later must still make it work.
   // The ordinary sequence: start closed, open Changes, dock the Terminal.
@@ -187,6 +206,40 @@ describe("the dock's divider", () => {
       expect(shut).toHaveBeenCalledOnce()
     } finally {
       restore()
+    }
+  })
+
+  it("remembers the width a keypress left the panel at, not the one before it", async () => {
+    // a window wide enough for the sidebar, the centre and the panel; the
+    // panel's pixels follow its laid-out share, the way a browser's do
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      () => ({ x: 0, y: 0, top: 0, left: 0, right: 1600, bottom: 800, width: 1600, height: 800, toJSON: () => ({}) }) as DOMRect,
+    )
+    const width = vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      const share = this.style.flexGrow === "" ? 100 / 3 : Number(this.style.flexGrow)
+      return Math.round((share / 100) * 1600)
+    })
+    const height = vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(800)
+    // the library orders panels by where they sit before it sizes them
+    const left = vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
+      return [...(this.parentElement?.children ?? [])].indexOf(this)
+    })
+    const shell = (open: boolean) => <PaneShell sidebar={<div />} centre={<div />} panel={<div>tools</div>} panelOpen={open} />
+    try {
+      localStorage.removeItem("wisp_tool_panel_width")
+      const view = render(shell(false))
+      await act(async () => {})
+      view.rerender(shell(true))
+      await act(async () => {})
+      const divider = screen.getAllByRole("separator").find((s) => s.nextElementSibling?.id === "tool")!
+      divider.focus()
+      await act(async () => void fireEvent.keyDown(divider, { key: "ArrowLeft" }))
+      await act(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+      const now = document.getElementById("tool")!.offsetWidth
+      expect(Number(localStorage.getItem("wisp_tool_panel_width"))).toBe(now)
+    } finally {
+      ;[rect, width, height, left].forEach((spy) => spy.mockRestore())
+      localStorage.removeItem("wisp_tool_panel_width")
     }
   })
 

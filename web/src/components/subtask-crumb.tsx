@@ -5,9 +5,9 @@ import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 
 /**
- * The phone header's one meta item for a subtask: "↳ <kind> subtask of
- * <parent>". The parent's name opens the parent; an orphan says its parent was
- * deleted. The pointer shell's form is `ParentCrumb`, in the top bar.
+ * The phone task sheet's line for a subtask: "↳ <kind> subtask of <parent>".
+ * The parent's name opens the parent; an orphan says its parent was deleted.
+ * The pointer shell's form is `ParentCrumb`, in the top bar.
  */
 export function SubtaskCrumb({ task }: { task: ApiTask }) {
   if (!task.subtask_kind) return null
@@ -15,8 +15,7 @@ export function SubtaskCrumb({ task }: { task: ApiTask }) {
     <span data-subtask-crumb className="flex min-w-0 items-center gap-1.5 text-[11.5px] text-muted-foreground">
       <span aria-hidden className="shrink-0 text-faint">↳</span>
       <span className="shrink-0">{task.subtask_kind} subtask of</span>
-      {/* a finger needs more than a line of text: the hit area grows, the line does not */}
-      <ParentLink task={task} className="-my-2 py-2 text-fg-secondary" />
+      <ParentLink task={task} touch className="text-fg-secondary" />
     </span>
   )
 }
@@ -40,7 +39,8 @@ export function ParentCrumb({ task, dragRegion = false }: { task: ApiTask; dragR
   )
 }
 
-function ParentLink({ task, className }: { task: ApiTask; className?: string }) {
+/** `touch` gives the name a 44px hit target, the floor for a thumb (frontend §6b). */
+function ParentLink({ task, touch = false, className }: { task: ApiTask; touch?: boolean; className?: string }) {
   const { connectionId } = useDaemonRuntime()
   const parent = task.parent_task_id
   const parentTitle = useTaskTitle(parent ?? null)
@@ -52,12 +52,13 @@ function ParentLink({ task, className }: { task: ApiTask; className?: string }) 
       onClick={() => uiIntentsFor(connectionId).focusTask(parent)}
       title={`Open ${parentTitle ?? parent}`}
       className={cn(
-        "min-w-0 truncate underline-offset-2 hover:text-foreground hover:underline",
+        "min-w-0 underline-offset-2 hover:text-foreground hover:underline",
         "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+        touch ? "flex min-h-11 items-center" : "truncate",
         className,
       )}
     >
-      {parentTitle ?? parent}
+      {touch ? <span className="truncate">{parentTitle ?? parent}</span> : parentTitle ?? parent}
     </button>
   )
 }

@@ -286,6 +286,15 @@ describe("the composer control bar answers its own width", () => {
     expect(bar.parentElement!.className.split(/\s+/)).toContain("max-w-(--reading-measure)")
   })
 
+  it("on touch, pads its column like the transcript's (18px) once the pane is as wide as the measure", () => {
+    const { container } = mount(<SteerBox task={task("done")} touch />)
+
+    const column = container.querySelector('[class~="@container"]')!.parentElement!
+    expect(column.className.split(/\s+/)).toEqual(expect.arrayContaining(["px-3", "@min-[680px]/composer-pane:px-4.5"]))
+    // the query answers the pane the footer spans, not the window
+    expect(column.parentElement!.className.split(/\s+/)).toContain("@container/composer-pane")
+  })
+
   it("yields harness and model at the first step, where the task header still says them", () => {
     mount(<SteerBox task={task("done")} />)
 

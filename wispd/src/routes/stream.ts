@@ -43,6 +43,15 @@ let activeLogStreams = 0;
 
 const HEARTBEAT_FRAME = new TextEncoder().encode(": hb\n\n");
 
+/**
+ * Bun holds a streamed response's head (the blank line that ends it) until
+ * the body's first bytes, so a client sees the stream open only then. The
+ * events stream has nothing to say until something happens, so it says this
+ * at once: without it a browser waits for the first event or heartbeat, up to
+ * 15 s, and shows live updates as down the whole time.
+ */
+const OPENED_FRAME = new TextEncoder().encode(": open\n\n");
+
 /** End a stream from the daemon's side; a client that already left has nothing to close. */
 function closeQuietly(controller: ReadableStreamDefaultController<Uint8Array>): void {
   try {
@@ -85,6 +94,7 @@ export function eventStream(): Response {
   };
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
+      controller.enqueue(OPENED_FRAME);
       unsubscribe = subscribe((evt) => {
         if (closed) return;
         try {

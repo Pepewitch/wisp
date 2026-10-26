@@ -84,7 +84,10 @@ daemon refusal into a generic proxy failure.
 project, harnesses, settings, and harness-limits notifications.
 It is an invalidation stream, not a durable snapshot. Every initial connection
 and every reconnect therefore performs a baseline refetch before treating the
-cache as current.
+cache as current. It opens with a comment frame (`: open`) at once: the
+daemon's server completes a streamed response's head only with its first body
+bytes, and without that frame a client would see the stream open only at the
+first event or heartbeat, up to 15 s later.
 
 `GET /api/tasks/:id/log/stream` is a selected-task transcript stream. It emits
 named `backlog`, `append`, `turn-end`, and `state` frames and includes heartbeat

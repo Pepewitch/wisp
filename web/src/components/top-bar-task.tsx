@@ -39,7 +39,7 @@ export function TopBarTask({
 }) {
   const drag = dragRegion ? "" : undefined
   if (!task) return <span data-tauri-drag-region={drag} className="h-full min-w-0 flex-1" />
-  const word = stateWord(task)
+  const facts = titleMenuFacts(task, stateWord(task))
   return (
     <div data-tauri-drag-region={drag} className="flex h-full min-w-0 flex-1 items-center gap-2">
       <ParentCrumb task={task} dragRegion={dragRegion} />
@@ -58,7 +58,9 @@ export function TopBarTask({
               </>
             ),
             className: "-ml-1.5 min-w-0 shrink gap-2 px-1.5 text-[13px] font-semibold tracking-[-0.005em] text-foreground data-[popup-open]:bg-hover",
-            header: <TitleMenuFacts task={task} word={word} />,
+            header: <TitleMenuFacts lines={facts} />,
+            // the lines are a column on screen, but one run of words to a screen reader
+            headerLabel: facts.map((line) => line.text).join(", "),
             after: <CopyRows task={task} />,
           }}
         />
@@ -105,21 +107,25 @@ export function TopBarLeft({ desktop, children }: { desktop: boolean; children: 
   )
 }
 
-/** The facts the old header's meta line carried, on demand. Selectable, so a branch can be copied by hand too. */
-function TitleMenuFacts({ task, word }: { task: ApiTask; word: string }) {
+/** The facts the old header's meta line carried, on demand: id and branch, who works on it, and a subtask's kind and base. */
+function titleMenuFacts(task: ApiTask, word: string): { text: string; mono?: boolean }[] {
   const base = task.subtask_kind ? baseWords(task) : null
+  return [
+    { text: [task.id, task.branch].filter(Boolean).join(" · "), mono: true },
+    { text: [word, task.harness, task.model, task.effort && `${task.effort} effort`].filter(Boolean).join(" · ") },
+    ...(task.subtask_kind ? [{ text: `${task.subtask_kind} subtask${base ? ` · from ${base}` : ""}` }] : []),
+  ]
+}
+
+/** The facts, one line each. Selectable, so a branch can be copied by hand too. */
+function TitleMenuFacts({ lines }: { lines: { text: string; mono?: boolean }[] }) {
   return (
     <div className="flex max-w-[360px] flex-col gap-0.5 text-[11px] leading-normal text-muted-foreground select-text">
-      {/* one text node per line: these lines are the menu group's accessible name */}
-      <span className="truncate font-mono text-fg-secondary">{[task.id, task.branch].filter(Boolean).join(" · ")}</span>
-      <span className="truncate">
-        {[word, task.harness, task.model, task.effort && `${task.effort} effort`].filter(Boolean).join(" · ")}
-      </span>
-      {task.subtask_kind && (
-        <span className="truncate">
-          {task.subtask_kind} subtask{base && ` · from ${base}`}
+      {lines.map((line) => (
+        <span key={line.text} className={cn("truncate", line.mono && "font-mono text-fg-secondary")}>
+          {line.text}
         </span>
-      )}
+      ))}
     </div>
   )
 }

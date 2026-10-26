@@ -144,10 +144,15 @@ function useCaretRestore(boxRef: RefObject<HTMLTextAreaElement | null>, caretRef
   })
 }
 
-/** The footer pads top and bottom across the pane; the column pads its own sides. */
+/**
+ * The footer pads top and bottom across the pane; the column pads its own
+ * sides. A phone's composer takes 6px more each side than the transcript's
+ * 18px, for the typing, but a touch pane wide enough to centre the column
+ * pads like the transcript, so the two share their edges (the measure, 680px).
+ */
 const COMPOSER_PADDING = {
   pointer: { footer: "pt-2.5 pb-3.5", column: "px-4.5" },
-  touch: { footer: "pt-2 pb-2.5", column: "px-3" },
+  touch: { footer: "@container/composer-pane pt-2 pb-2.5", column: "px-3 @min-[680px]/composer-pane:px-4.5" },
 } as const
 
 export function SteerBox({

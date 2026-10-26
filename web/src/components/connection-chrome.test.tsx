@@ -764,6 +764,32 @@ describe("the tab strip in the top bar's capped left end", () => {
       Element.prototype.scrollIntoView = original
     }
   })
+
+  it("brings the selected chip back when the strip narrows", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    const resized: (() => void)[] = []
+    vi.stubGlobal("ResizeObserver", class {
+      constructor(callback: () => void) {
+        resized.push(callback)
+      }
+      observe() {}
+      disconnect() {}
+    })
+    const scrolled: Element[] = []
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this) }
+    try {
+      renderChrome(bootstrap([LOCAL, REMOTE]), bridge())
+      fireEvent.click(screen.getByRole("tab", { name: "Remote one" }))
+      scrolled.length = 0
+      // the window or the sidebar took the strip's width
+      for (const callback of resized) callback()
+      expect(scrolled).toContain(screen.getByRole("tab", { name: "Remote one" }).parentElement)
+      expect(scrolled).not.toContain(screen.getByRole("tab", { name: "Local" }).parentElement)
+    } finally {
+      Element.prototype.scrollIntoView = original
+    }
+  })
 })
 
 describe("the active tab's manage menu", () => {

@@ -26,6 +26,7 @@ export function Menu({
   className,
   trigger,
   header,
+  headerLabel,
   open,
   onOpenChange,
 }: {
@@ -61,6 +62,8 @@ export function Menu({
   trigger?: ReactNode
   /** Facts above the items, as the label of the group holding them: read, never focused. */
   header?: ReactNode
+  /** The header as one spoken name, when its lines would otherwise run together. */
+  headerLabel?: string
   /** Controls the menu when a caller must coordinate it with another overlay. */
   open?: boolean
   onOpenChange?: (open: boolean) => void
@@ -112,7 +115,7 @@ export function Menu({
               // are the label of a group that holds the verbs, so a screen
               // reader names the menu's subject before its first item
               <Base.Group>
-                <Base.GroupLabel className="px-2 pt-1.5 pb-2">{header}</Base.GroupLabel>
+                <Base.GroupLabel aria-label={headerLabel} className="px-2 pt-1.5 pb-2">{header}</Base.GroupLabel>
                 <div role="separator" className="mb-1 h-px bg-border" />
                 {children}
               </Base.Group>
