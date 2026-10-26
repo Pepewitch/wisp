@@ -108,6 +108,11 @@ function errorText(error: unknown): string {
   return error instanceof Error && error.message.trim() ? error.message.trim() : String(error);
 }
 
+/** Claude Code's user directory: `CLAUDE_CONFIG_DIR` when set, as Claude Code itself reads it, else `~/.claude`. */
+function claudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+}
+
 export const SKILL_STRATEGIES: Record<string, SkillStrategy> = {
   /**
    * claude (SP2): names for free from the session's init event (Wisp already
@@ -121,7 +126,7 @@ export const SKILL_STRATEGIES: Record<string, SkillStrategy> = {
     discover(_def, ctx, _io) {
       const byName = new Map<string, SkillEntry>();
       for (const name of ctx.initSkills ?? []) byName.set(name, { name, description: null });
-      for (const s of scanSkillDirs([join(homedir(), ".claude", "skills"), ctx.cwd ? join(ctx.cwd, ".claude", "skills") : null])) {
+      for (const s of scanSkillDirs([join(claudeConfigDir(), "skills"), ctx.cwd ? join(ctx.cwd, ".claude", "skills") : null])) {
         byName.set(s.name, s); // disk carries the descriptions (SP2: the init event is names-only)
       }
       return Promise.resolve({

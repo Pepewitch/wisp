@@ -38,6 +38,9 @@ import { LAUNCH_POLICY_ENV } from "../src/launch-policy";
 // WISP_KEEP_TEST_TMP=1 keeps it for a post-mortem.
 const RUN_ROOT = mkdtempSync(join(tmpdir(), "wisp-run-"));
 process.env.TMPDIR = RUN_ROOT;
+// The operator's own Claude Code skills (~/.claude/skills) must not leak into
+// skill discovery tests: point Claude's user directory at an empty one here.
+process.env.CLAUDE_CONFIG_DIR = join(RUN_ROOT, "claude-config");
 if (tmpdir() !== RUN_ROOT) {
   throw new Error(`[wisp tests] tmpdir() did not follow TMPDIR to ${RUN_ROOT}; fixtures would land outside the run root`);
 }
