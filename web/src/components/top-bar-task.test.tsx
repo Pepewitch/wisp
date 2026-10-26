@@ -1,5 +1,5 @@
 import { QueryClient } from "@tanstack/react-query"
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -134,6 +134,18 @@ describe("the title menu", () => {
     expect(menu).toHaveTextContent("Running · claude · claude-opus-5 · high effort")
   })
 
+  it("makes its facts the label of the group that holds the verbs, as role=menu allows", async () => {
+    daemon()
+    mount(<TopBarTask task={TASK} dragRegion={false} />)
+    fireEvent.click(titleButton())
+    const menu = await screen.findByRole("menu")
+    const group = within(menu).getByRole("group")
+    expect(group).toHaveAccessibleName(/^tk9zdy · wisp\/tk9zdy-paginate.*high effort$/)
+    expect(within(group).getByRole("menuitem", { name: /Rename/ })).toBeInTheDocument()
+    // nothing but the group sits directly in the menu
+    expect([...menu.children].map((el) => el.getAttribute("role"))).toEqual(["group"])
+  })
+
   it("names a subtask's kind and base in its header", async () => {
     daemon()
     mount(<TopBarTask task={CHILD} dragRegion={false} />, [PARENT, CHILD])
@@ -196,6 +208,10 @@ describe("the window drag region on Desktop", () => {
       expect(button.closest("[data-tauri-drag-region]")).not.toBe(button)
     }
     expect(screen.getByText("Local").closest("[data-tauri-drag-region]")).not.toBeNull()
+    // the crumb's gap and its `›` drag too; the parent's name is a control and does not
+    const crumb = container.querySelector("[data-subtask-crumb]")!
+    expect(crumb).toHaveAttribute("data-tauri-drag-region", "")
+    expect(screen.getByText("›")).toHaveAttribute("data-tauri-drag-region", "")
     expect(screen.getByText("84.0k context")).toHaveAttribute("data-tauri-drag-region", "")
   })
 

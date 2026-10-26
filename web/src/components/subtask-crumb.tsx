@@ -28,12 +28,14 @@ export function SubtaskCrumb({ task }: { task: ApiTask }) {
  * readable.
  * Its kind and base are in the title menu.
  */
-export function ParentCrumb({ task }: { task: ApiTask }) {
+export function ParentCrumb({ task, dragRegion = false }: { task: ApiTask; dragRegion?: boolean }) {
   if (!task.subtask_kind) return null
+  // the gap and the `›` drag the Desktop window like the rest of the bar's quiet parts (§5h)
+  const drag = dragRegion ? "" : undefined
   return (
-    <span data-subtask-crumb className="flex max-w-56 min-w-12 shrink-[3] items-center gap-1.5 text-[13px] text-muted-foreground">
+    <span data-subtask-crumb data-tauri-drag-region={drag} className="flex max-w-56 min-w-12 shrink-[3] items-center gap-1.5 text-[13px] text-muted-foreground">
       <ParentLink task={task} className="text-muted-foreground" />
-      <span aria-hidden className="shrink-0 text-faint">›</span>
+      <span aria-hidden data-tauri-drag-region={drag} className="shrink-0 text-faint">›</span>
     </span>
   )
 }
@@ -42,7 +44,8 @@ function ParentLink({ task, className }: { task: ApiTask; className?: string }) 
   const { connectionId } = useDaemonRuntime()
   const parent = task.parent_task_id
   const parentTitle = useTaskTitle(parent ?? null)
-  if (!parent) return <span className="shrink-0">a deleted task</span>
+  // words, not a control: a press on them falls through to the crumb (and its drag region)
+  if (!parent) return <span className="pointer-events-none shrink-0">a deleted task</span>
   return (
     <button
       type="button"

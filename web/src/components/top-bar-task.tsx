@@ -8,7 +8,9 @@ import { writeClipboardText } from "@/lib/clipboard"
 import { formatTokens } from "@/lib/format"
 import { pausedOnNetwork, stateWord } from "@/lib/state"
 import { baseWords } from "@/lib/subtask-words"
+import { cn } from "@/lib/utils"
 import type { ApiTask, PullRequestStatus } from "@/lib/types"
+import type { ReactNode } from "react"
 
 /**
  * The top bar's task: which task this is, and the verbs that act on it. It
@@ -41,7 +43,7 @@ export function TopBarTask({
   const word = stateWord(task)
   return (
     <div data-tauri-drag-region={drag} className="flex h-full min-w-0 flex-1 items-center gap-2">
-      <ParentCrumb task={task} />
+      <ParentCrumb task={task} dragRegion={dragRegion} />
       <h1 className="flex min-w-0 shrink items-center">
         <TaskActions
           task={task}
@@ -102,20 +104,36 @@ export function TopBarTask({
   )
 }
 
+/**
+ * The bar's left end answers WHICH DAEMON: the mark in the browser, the
+ * connection tabs on Desktop (whose traffic lights own the first 80px). It is
+ * at least the sidebar's width (`--sidebar-width`), so the task's title starts
+ * over the column it names, and at most 40% of the bar, so a Desktop with
+ * four long connection names cannot push the title out: the tab strip
+ * scrolls inside it (`ConnectionTabList`). Where the sidebar is wider
+ * than 40%, the sidebar's width wins.
+ */
+export function TopBarLeft({ desktop, children }: { desktop: boolean; children: ReactNode }) {
+  return (
+    <div
+      data-tauri-drag-region={desktop ? "" : undefined}
+      className={cn(
+        "flex h-full max-w-[40%] min-w-(--sidebar-width) shrink-0 items-center gap-2.5 border-r border-border pr-3",
+        desktop ? "pl-20" : "pl-3",
+      )}
+    >
+      {children}
+    </div>
+  )
+}
+
 /** The facts the old header's meta line carried, on demand. Selectable, so a branch can be copied by hand too. */
 function TitleMenuFacts({ task, word }: { task: ApiTask; word: string }) {
   const base = task.subtask_kind ? baseWords(task) : null
   return (
     <div className="flex max-w-[360px] flex-col gap-0.5 text-[11px] leading-normal text-muted-foreground select-text">
-      <span className="truncate font-mono text-fg-secondary">
-        {task.id}
-        {task.branch && (
-          <>
-            <span className="text-faint"> · </span>
-            {task.branch}
-          </>
-        )}
-      </span>
+      {/* one text node per line: these lines are the menu group's accessible name */}
+      <span className="truncate font-mono text-fg-secondary">{[task.id, task.branch].filter(Boolean).join(" · ")}</span>
       <span className="truncate">
         {[word, task.harness, task.model, task.effort && `${task.effort} effort`].filter(Boolean).join(" · ")}
       </span>

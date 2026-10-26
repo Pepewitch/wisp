@@ -108,6 +108,15 @@ describe("the task detail", () => {
     expect(screen.queryByText(/yyyy/)).toBeNull()
   })
 
+  it("gives a finished cleanup no band, and an unfinished one its panel", () => {
+    const cleanup = { state: "complete", step: "Remove workspace", error: null, retryAt: null, revision: 1, uncertain: false, confirmStopped: false } as const
+    const done = withClient(<TaskNotices task={{ ...TASK, archived: true, cleanup }} worktreeReason={null} />)
+    expect(done.container).toBeEmptyDOMElement()
+    done.unmount()
+    withClient(<TaskNotices task={{ ...TASK, archived: true, cleanup: { ...cleanup, state: "needs-attention" } }} worktreeReason={null} />)
+    expect(screen.getByRole("region", { name: "Archive cleanup" })).toBeInTheDocument()
+  })
+
   it("renders nothing at all when the worktree is fine and nothing needs a decision", () => {
     const { container } = withClient(<TaskNotices task={TASK} worktreeReason={null} />)
     expect(container).toBeEmptyDOMElement()

@@ -19,11 +19,13 @@ export function TaskNotices({
   /** the daemon's one sentence when git can no longer read the worktree (D1) */
   worktreeReason?: string | null
 }) {
-  if (!task || (!task.cleanup && !worktreeReason)) return null
+  // a finished cleanup asks nothing of anyone, so it is no reason for a band
+  const cleanup = task?.cleanup && task.cleanup.state !== "complete"
+  if (!task || (!cleanup && !worktreeReason)) return null
   return (
     <div className="shrink-0 border-b border-border">
       <div className="mx-auto w-full max-w-(--reading-measure) px-4.5 pt-1.5 pb-3">
-        {task.cleanup && <CleanupPanel task={task} />}
+        {cleanup && <CleanupPanel task={task} />}
 
         {/* ONE muted line, the same register the archived-task placeholders use.
             Capped here as well as at the daemon: nothing about a git failure gets

@@ -31,7 +31,7 @@ import { Button } from "@/components/primitives"
 import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
 import { TaskNotices } from "@/components/task-notices"
-import { TopBarTask } from "@/components/top-bar-task"
+import { TopBarLeft, TopBarTask } from "@/components/top-bar-task"
 import { headerTask } from "@/lib/header-task"
 import { buildTaskSurfaces, type TaskSurfaces } from "@/components/task-surfaces"
 import {
@@ -532,14 +532,7 @@ function AppShell({
         data-tauri-drag-region={drag}
         className="flex h-9 shrink-0 items-center border-b border-border bg-surface pr-3"
       >
-        {/* The left end answers WHICH DAEMON: the mark in the browser, the
-            connection tabs on Desktop (whose traffic lights own the first 80px).
-            It is at least the sidebar's width, so the task's title starts where
-            the centre column does, over the conversation it names (§5h). */}
-        <div
-          data-tauri-drag-region={drag}
-          className={`flex h-full min-w-(--sidebar-width) shrink-0 items-center gap-2.5 border-r border-border pr-3 ${desktop ? "pl-20" : "pl-3"}`}
-        >
+        <TopBarLeft desktop={desktop}>
           {/* The mark is the browser's only left-end identity: no window chrome,
               no tabs. Desktop drops it — the traffic lights own that corner and
               the connection tabs already say which daemon is on screen. */}
@@ -549,7 +542,7 @@ function AppShell({
             </span>
           )}
           {desktop && <DesktopConnectionChrome />}
-        </div>
+        </TopBarLeft>
         {/* The middle answers WHICH TASK: its title opens its menu. */}
         <div data-tauri-drag-region={drag} className="flex h-full min-w-0 flex-1 items-center gap-2.5 pl-4.5">
           {firstRun === null && <TopBarTask task={task} pullRequest={pullRequest} dragRegion={desktop} />}

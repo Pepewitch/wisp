@@ -750,6 +750,22 @@ describe("desktop connection chrome", () => {
  * The "…" that manages a connection belongs to the connection, so it is drawn
  * inside that connection's tab rather than past the row of them.
  */
+describe("the tab strip in the top bar's capped left end", () => {
+  it("scrolls the selected chip into view, and only that one", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    const scrolled: Element[] = []
+    const original = Element.prototype.scrollIntoView
+    Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this) }
+    try {
+      renderChrome(bootstrap([LOCAL, REMOTE]), bridge())
+      expect(screen.getByRole("tablist", { name: "Daemon connections" })).toHaveClass("overflow-x-auto")
+      expect(scrolled).toEqual([screen.getByRole("tab", { name: "Local" }).parentElement])
+    } finally {
+      Element.prototype.scrollIntoView = original
+    }
+  })
+})
+
 describe("the active tab's manage menu", () => {
   it("keeps the manage menu inside the tab it manages", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))

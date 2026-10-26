@@ -47,7 +47,7 @@ import { cn } from "@/lib/utils"
 
 const DIRECT_CONNECTION_LIMIT = 4
 /** The trailing control inside a tab chip: shorter than the 26px standalone glyph. */
-const TAB_ACTION_SIZE = "size-5 shrink-0 rounded-[5px]"
+export const TAB_ACTION_SIZE = "size-5 shrink-0 rounded-[5px]"
 const ADD_CONNECTION_ACTION = "__add_connection__"
 
 function errorMessage(error: unknown): string {
@@ -177,6 +177,12 @@ export function ConnectionTab({
       connection.id,
       connection.ready && reachability === "online"
     )
+  // the strip scrolls inside the top bar's capped left end: the selected
+  // chip brings itself into view (a jsdom element has no scrollIntoView)
+  const chip = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (active) chip.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
+  }, [active])
   const issue = connectionIssue(connection, reachability)
   const unavailable = issue !== null
   const live = connection.ready && reachability === "online" && streamStatus === "live"
@@ -192,6 +198,7 @@ export function ConnectionTab({
   )
   return (
     <span
+      ref={chip}
       data-testid="connection-tab-chip"
       className={cn(
         "flex min-w-0 shrink-0 items-center rounded-md pr-0.5",
@@ -248,67 +255,27 @@ export function ConnectionTab({
   )
 }
 
-/** The gallery's static rendering of the production tab and action components. */
-export function ConnectionChromeSpecimen() {
-  const connections: readonly DesktopConnectionMetadata[] = [
-    {
-      id: "local",
-      kind: "local",
-      name: "Local",
-      url: null,
-      instanceId: "wisp-instance-local",
-      ready: true,
-    },
-    {
-      id: "remote-alpha",
-      kind: "remote",
-      name: "Build host",
-      url: "https://build.example.test",
-      instanceId: "wisp-instance-build",
-      ready: true,
-    },
-    {
-      id: "remote-beta",
-      kind: "remote",
-      name: "Lab",
-      url: "https://lab.example.test",
-      instanceId: "wisp-instance-lab",
-      ready: true,
-    },
-  ]
+/**
+ * The direct tabs' strip. Past the top bar's capped left end it scrolls,
+ * rather than pushing the task's title out of the bar (§5h); the selected
+ * chip scrolls itself into view. One component, so the gallery specimen lays
+ * out exactly as the app does.
+ */
+export function ConnectionTabList({
+  children,
+  onKeyDown,
+}: {
+  children: ReactNode
+  onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void
+}) {
   return (
-    <div className="flex h-9 items-center gap-1 rounded-lg border border-border bg-surface px-2">
-      <div
-        role="tablist"
-        aria-label="Daemon connections"
-        className="flex items-center gap-0.5"
-      >
-        {connections.map((connection, index) => (
-          <ConnectionTab
-            key={connection.id}
-            connection={connection}
-            active={index === 0}
-            reachability={index === 2 ? "offline" : "online"}
-            onSelect={() => undefined}
-            onReconnect={() => undefined}
-            actions={
-              index === 0 ? (
-                <Button
-                  size="sm"
-                  icon
-                  aria-label="Manage Local"
-                  className={TAB_ACTION_SIZE}
-                >
-                  <More />
-                </Button>
-              ) : undefined
-            }
-          />
-        ))}
-      </div>
-      <Button size="sm" icon aria-label="Add remote connection">
-        <Plus />
-      </Button>
+    <div
+      role="tablist"
+      aria-label="Daemon connections"
+      className="scroll-slim flex min-w-0 items-center gap-0.5 overflow-x-auto"
+      onKeyDown={onKeyDown}
+    >
+      {children}
     </div>
   )
 }
@@ -391,12 +358,7 @@ function DesktopConnections() {
   return (
     <>
       <div className="flex min-w-0 items-center gap-1">
-        <div
-          role="tablist"
-          aria-label="Daemon connections"
-          className="flex min-w-0 items-center gap-0.5"
-          onKeyDown={activateByKeyboard}
-        >
+        <ConnectionTabList onKeyDown={activateByKeyboard}>
           {split.direct.map((entry) => {
             const active = entry.metadata.id === desktop.active.metadata.id
             return (
@@ -424,7 +386,7 @@ function DesktopConnections() {
               />
             )
           })}
-        </div>
+        </ConnectionTabList>
 
         {split.overflow.length > 0 && (
           <Menu label="More connections" icon={<More />} iconOnly>

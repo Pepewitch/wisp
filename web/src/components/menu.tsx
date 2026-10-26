@@ -59,7 +59,7 @@ export function Menu({
    * comes from that content, so `label` is unused.
    */
   trigger?: ReactNode
-  /** Facts above the items: read, never focused, so arrow keys skip them. */
+  /** Facts above the items, as the label of the group holding them: read, never focused. */
   header?: ReactNode
   /** Controls the menu when a caller must coordinate it with another overlay. */
   open?: boolean
@@ -107,13 +107,18 @@ export function Menu({
               "rounded-lg p-1 outline-none",
             )}
           >
-            {header && (
-              <>
-                <div className="px-2 pt-1.5 pb-2">{header}</div>
+            {header ? (
+              // role=menu may hold only items, groups and separators: the facts
+              // are the label of a group that holds the verbs, so a screen
+              // reader names the menu's subject before its first item
+              <Base.Group>
+                <Base.GroupLabel className="px-2 pt-1.5 pb-2">{header}</Base.GroupLabel>
                 <div role="separator" className="mb-1 h-px bg-border" />
-              </>
+                {children}
+              </Base.Group>
+            ) : (
+              children
             )}
-            {children}
           </Base.Popup>
         </Base.Positioner>
       </Base.Portal>

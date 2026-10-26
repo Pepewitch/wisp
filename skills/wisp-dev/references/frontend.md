@@ -1087,7 +1087,13 @@ left to right. The **left end** is *which daemon am I on*: the mark in the
 browser, the connection tabs on Desktop (after the traffic lights' 80px). It
 is at least the sidebar's width (`--sidebar-width`, written by the sidebar
 panel's `onResize` straight onto the bar's style, so a divider drag never
-re-renders the app), with a hairline that continues the sidebar's divider.
+re-renders the app), with a hairline that continues the sidebar's divider. It
+is at most 40% of the bar (`TopBarLeft`; the sidebar's width wins where it is
+wider), so connection tabs can never starve the task's title: past the cap the
+strip scrolls (`ConnectionTabList`), and the selected chip scrolls itself into
+view. (A chip cannot usefully shrink instead: a truncating name still counts
+its full text toward the chip's minimum width.) The gallery shows a 900px
+Desktop bar with four long connection names.
 
 The **middle** is *which task* (`top-bar-task.tsx`), and it is why there is no
 task header above the conversation. `● Title ⌄` is one control: the state dot,
@@ -1105,13 +1111,16 @@ The dot's hover names background work, as everywhere (`StateDot`).
 
 What is left of the old header is `task-notices.tsx`: the archive-cleanup panel
 and the worktree reason, in the reading column above the transcript, and only
-when there is something to decide.
+when there is something to decide: a cleanup that is `complete` gets no band.
+The title menu's facts are the `GroupLabel` of a base-ui `Menu.Group` holding
+the verbs, because `role=menu` may hold only items, groups and separators.
 
 **On Desktop the whole bar is the window's drag region.** Tauri starts a drag
 only when the element under the pointer carries `data-tauri-drag-region`
 ITSELF (a bare attribute does not reach children) and never on a button, link
 or other control. So every non-interactive box in the bar carries the
-attribute (the three sections, the empty stretch, the quiet words), glyphs
+attribute (the three sections, the empty stretch, the quiet words, a
+subtask crumb's gap and its `›`), glyphs
 inside them are `pointer-events-none`, and no control carries it. The empty
 stretch between the title and the right cluster is the big drag target.
 
