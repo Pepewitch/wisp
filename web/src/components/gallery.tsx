@@ -474,7 +474,7 @@ function InteractionSpecimens() {
               <Eyebrow>The row, with archive forced visible</Eyebrow>
               <div className="mt-2.5 rounded-lg border border-border bg-sidebar p-1.5">
                 <div className="relative">
-                  <div className="flex h-[26px] w-full items-center gap-2.5 rounded-md bg-hover pr-2 pl-2.5">
+                  <div className="flex h-[26px] w-full items-center gap-2.5 rounded-md bg-hover pr-2 pl-[26px]">
                     <StateDot state="done" />
                     <span className="min-w-0 flex-1 truncate text-[12.5px] text-foreground/90">
                       {TASKS[2]!.title}
