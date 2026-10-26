@@ -1,10 +1,15 @@
-import { Gear, ZoomIn } from "@/components/icons"
-import { UpdateCenter } from "@/components/update-control"
+import { Gear, WispMark, ZoomIn } from "@/components/icons"
+import { ConnectionTabsSpecimen } from "@/components/connection-gallery-specimen"
+import { TopBarLeft, TopBarTask } from "@/components/top-bar-task"
+import { UpdateCenter, WispUpdateControl } from "@/components/update-control"
 import { UsageRing } from "@/components/usage-limits-control"
 import { Button, Eyebrow, Rule } from "@/components/primitives"
-import { UPDATE_SPECIMEN } from "@/components/gallery-fixtures"
+import { PR_SPECIMEN, UPDATE_SPECIMEN } from "@/components/gallery-fixtures"
+import type { DesktopConnectionMetadata } from "@/lib/desktop-bridge"
 import type { DesktopUpdaterContextValue } from "@/lib/desktop-updater"
-import type { UpdateStatus } from "@/lib/types"
+import { TASKS } from "@/lib/fixtures"
+import type { ApiTask, PullRequestStatus, UpdateStatus } from "@/lib/types"
+import type { CSSProperties } from "react"
 
 const DESKTOP: DesktopUpdaterContextValue = {
   status: {
@@ -163,6 +168,87 @@ export function HeaderClusterSpecimen() {
         carries what the dot cannot say. The gear stays last, because the gear is the corner (§5g). On touch the
         trigger is the same glyph at the drawer footer's own 32px, so it and the gear beside it are one pair rather
         than a label squeezed to <span className="text-faint">Updat…</span> next to an icon.
+      </p>
+    </section>
+  )
+}
+
+const BAR_PR: PullRequestStatus = { kind: "found", provider: "github", pullRequest: PR_SPECIMEN }
+const BAR_TASK = { ...TASKS[0]!, context_tokens: 84_000 }
+const BAR_READINGS: { label: string; task: ApiTask; pullRequest?: PullRequestStatus }[] = [
+  { label: "Running, with a PR", task: BAR_TASK, pullRequest: BAR_PR },
+  { label: "Idle", task: TASKS[2]! },
+  {
+    label: "A subtask · Parent › Child",
+    task: { ...TASKS[3]!, title: "Measure the list query on 50k rows", parent_task_id: TASKS[0]!.id, subtask_kind: "explore" },
+  },
+  { label: "Local and archived", task: { ...TASKS[2]!, mode: "local", archived: true } },
+]
+
+const SIDEBAR_180 = { "--sidebar-width": "180px" } as CSSProperties
+const LONG_CONNECTIONS: DesktopConnectionMetadata[] = [
+  "Local",
+  "Staging build host in the west region",
+  "Research workstation under the stairs",
+  "Release qualification runner",
+].map((name, index) => ({
+  id: `specimen-${index}`,
+  kind: index === 0 ? "local" : "remote",
+  name,
+  url: index === 0 ? null : `https://host-${index}.example.test`,
+  instanceId: `wisp-instance-${index}`,
+  ready: true,
+}))
+
+/**
+ * The top bar's middle: which task this is (§5h). The real component on
+ * fixture tasks; its title opens the real title menu (the gallery has no
+ * daemon, so the autopilot rows stay out of it).
+ */
+export function TopBarTaskSpecimen() {
+  return (
+    <section className="mt-9">
+      <div className="mb-4 flex items-center gap-3">
+        <Eyebrow>The top bar carries the task — title, state and its menu</Eyebrow>
+        <Rule />
+      </div>
+      <div className="space-y-3">
+        {BAR_READINGS.map((reading) => (
+          <div key={reading.label}>
+            <Eyebrow>{reading.label}</Eyebrow>
+            <div style={SIDEBAR_180} className="mt-2 flex h-9 items-center rounded-lg border border-border bg-surface pr-3">
+              <TopBarLeft desktop={false}>
+                <WispMark className="size-[17px]" />
+              </TopBarLeft>
+              <div className="flex h-full min-w-0 flex-1 items-center pl-4.5">
+                <TopBarTask task={reading.task} pullRequest={reading.pullRequest} dragRegion={false} />
+              </div>
+              <WispUpdateControl status={DAEMON_IDLE} updating={false} error={null} onUpdate={() => undefined} />
+            </div>
+          </div>
+        ))}
+        <div>
+          <Eyebrow>Desktop at 900px · four long connection names</Eyebrow>
+          {/* the real left end and tab strip: capped at 40% of the bar, the strip scrolls */}
+          <div style={SIDEBAR_180} className="mt-2 flex h-9 w-[900px] max-w-full items-center rounded-lg border border-border bg-surface pr-3">
+            <TopBarLeft desktop>
+              <ConnectionTabsSpecimen connections={LONG_CONNECTIONS} />
+            </TopBarLeft>
+            <div className="flex h-full min-w-0 flex-1 items-center pl-4.5">
+              <TopBarTask task={BAR_READINGS[2]!.task} dragRegion={false} />
+            </div>
+            <WispUpdateControl status={DAEMON_IDLE} updating={false} error={null} onUpdate={() => undefined} />
+          </div>
+        </div>
+      </div>
+      <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
+        The task&apos;s title used to lead a two-line header above the conversation, under an id, a branch and a
+        model that are rarely needed. It sits in the top bar now, where the left end is the sidebar&apos;s width so
+        the title starts over the column it names. The dot, the title and the chevron are one control: the menu
+        holds the id, the branch and harness · model · effort, then the task&apos;s verbs. A subtask leads with its
+        parent, which gives way first when the bar is narrow. The PR link and the context reading ride here until
+        the summary card takes them. In the browser, the Updates control is a glyph whose popover names the daemon&apos;s
+        version; the label is gone.
       </p>
     </section>
   )

@@ -38,6 +38,7 @@ import { UsageLimitsSpecimen } from "@/components/usage-limits-specimen"
 import { WorkflowsPaneSpecimen } from "@/components/workflows-gallery-specimen"
 import {
   HeaderClusterSpecimen,
+  TopBarTaskSpecimen,
   UpdateGallerySpecimen,
 } from "@/components/update-gallery-specimen"
 import { backgroundLabel, NETWORK_PAUSED_LABEL, STATE_LABEL } from "@/lib/state"
@@ -261,7 +262,7 @@ function FoundationSpecimens() {
               onUpdate={() => {}}
             />
             <span className="text-[11.5px] text-muted-foreground">
-              The quiet version text becomes an outlined action only when a managed update is available.
+              The browser's Updates glyph becomes an outlined action only when a managed update is available.
             </span>
           </div>
       </Section>
@@ -274,7 +275,7 @@ function FoundationSpecimens() {
           </div>
       </Section>
 
-      <ConnectionGallerySpecimen /> <UpdateGallerySpecimen /> <HeaderClusterSpecimen /> <UsageLimitsSpecimen /> <ProseCodeSpecimen />
+      <ConnectionGallerySpecimen /> <UpdateGallerySpecimen /> <HeaderClusterSpecimen /> <TopBarTaskSpecimen /> <UsageLimitsSpecimen /> <ProseCodeSpecimen />
 
       <Section title="States — hue on the dot, and the words stay gray">
           <div className="grid grid-cols-2 gap-x-10 gap-y-2.5">

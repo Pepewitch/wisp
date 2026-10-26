@@ -24,6 +24,8 @@ export function Menu({
   touch = false,
   "aria-label": ariaLabel,
   className,
+  trigger,
+  header,
   open,
   onOpenChange,
 }: {
@@ -50,6 +52,15 @@ export function Menu({
    */
   "aria-label"?: string
   className?: string
+  /**
+   * Replaces the trigger's icon, label and chevron with the caller's own
+   * content (the top bar's task title). The trigger keeps its focus ring,
+   * hover and keyboard handling; `className` sizes it. Its accessible name
+   * comes from that content, so `label` is unused.
+   */
+  trigger?: ReactNode
+  /** Facts above the items, as the label of the group holding them: read, never focused. */
+  header?: ReactNode
   /** Controls the menu when a caller must coordinate it with another overlay. */
   open?: boolean
   onOpenChange?: (open: boolean) => void
@@ -75,8 +86,8 @@ export function Menu({
           className,
         )}
       >
-        {icon}
-        {!iconOnly && (
+        {trigger ?? icon}
+        {!trigger && !iconOnly && (
           <>
             <span className="truncate">{label}</span>
             {/* wrapped, so the trigger's own `[&>svg]` sizing lands on the
@@ -96,7 +107,18 @@ export function Menu({
               "rounded-lg p-1 outline-none",
             )}
           >
-            {children}
+            {header ? (
+              // role=menu may hold only items, groups and separators: the facts
+              // are the label of a group that holds the verbs, so a screen
+              // reader names the menu's subject before its first item
+              <Base.Group>
+                <Base.GroupLabel className="px-2 pt-1.5 pb-2">{header}</Base.GroupLabel>
+                <div role="separator" className="mb-1 h-px bg-border" />
+                {children}
+              </Base.Group>
+            ) : (
+              children
+            )}
           </Base.Popup>
         </Base.Positioner>
       </Base.Portal>

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { describe, expect, it, vi } from "vitest"
 
@@ -13,7 +13,8 @@ vi.mock("@/lib/api", async (importOriginal) => ({
 }))
 
 import { ChangesPane } from "./changes-pane"
-import { TaskHeader } from "./task-header"
+import { TaskNotices } from "./task-notices"
+import { TopBarTask } from "./top-bar-task"
 import { TaskRow } from "./task-row"
 
 /**
@@ -83,34 +84,42 @@ describe("the sidebar row's git-marks slot", () => {
 })
 
 describe("the task detail", () => {
-  it("keeps the task's selected effort visible after its model in the header", () => {
-    const { container } = withClient(<TaskHeader task={{ ...TASK, effort: "high" }} />)
-    expect(container.textContent).toMatch(/droid.*kimi-k3.*high effort/)
+  it("keeps the task's selected effort after its model, in the title menu", async () => {
+    withClient(<TopBarTask task={{ ...TASK, effort: "high" }} dragRegion={false} />)
+    fireEvent.click(screen.getByRole("button", { name: /The reported broken worktree/ }))
+    expect((await screen.findByRole("menu")).textContent).toMatch(/droid · kimi-k3 · high effort/)
   })
 
   it("does not render an interrupt control while the task is running", () => {
-    withClient(<TaskHeader task={{ ...TASK, state: "running" }} />)
+    withClient(<TopBarTask task={{ ...TASK, state: "running" }} dragRegion={false} />)
     expect(screen.queryByRole("button", { name: "Stop turn" })).toBeNull()
   })
 
-  // the header hangs TaskActions off itself, and archive is a useMutation hook
   it("carries the reason as one muted line", () => {
-    const { container } = withClient(<TaskHeader task={TASK} worktreeReason={REASON} />)
+    const { container } = withClient(<TaskNotices task={TASK} worktreeReason={REASON} />)
     const note = screen.getByText(REASON)
     expect(note.className).toContain("text-muted-foreground")
     expect(container.textContent).not.toContain("Push")
   })
 
   it("caps what it renders no matter what the daemon sent", () => {
-    withClient(<TaskHeader task={TASK} worktreeReason={`first line\n${"y".repeat(400)}`} />)
+    withClient(<TaskNotices task={TASK} worktreeReason={`first line\n${"y".repeat(400)}`} />)
     expect(screen.getByText("first line")).toBeInTheDocument()
     expect(screen.queryByText(/yyyy/)).toBeNull()
   })
 
-  it("says nothing at all when the worktree is fine", () => {
-    const { container } = withClient(<TaskHeader task={TASK} worktreeReason={null} />)
-    expect(container.textContent).not.toContain("no longer tracks")
-    expect(container.textContent).not.toContain("Push")
+  it("gives a finished cleanup no band, and an unfinished one its panel", () => {
+    const cleanup = { state: "complete", step: "Remove workspace", error: null, retryAt: null, revision: 1, uncertain: false, confirmStopped: false } as const
+    const done = withClient(<TaskNotices task={{ ...TASK, archived: true, cleanup }} worktreeReason={null} />)
+    expect(done.container).toBeEmptyDOMElement()
+    done.unmount()
+    withClient(<TaskNotices task={{ ...TASK, archived: true, cleanup: { ...cleanup, state: "needs-attention" } }} worktreeReason={null} />)
+    expect(screen.getByRole("region", { name: "Archive cleanup" })).toBeInTheDocument()
+  })
+
+  it("renders nothing at all when the worktree is fine and nothing needs a decision", () => {
+    const { container } = withClient(<TaskNotices task={TASK} worktreeReason={null} />)
+    expect(container).toBeEmptyDOMElement()
   })
 })
 

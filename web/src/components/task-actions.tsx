@@ -1,5 +1,5 @@
 import { TaskRetentionDialog } from "./task-retention-dialog"
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 
 import type { AutopilotUpdate } from "../../../shared/autopilot"
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
@@ -18,7 +18,8 @@ import { uiIntentsFor } from "@/lib/ui-intents"
 /**
  * The task verbs that are not worth a permanent button: find, rename, a new
  * subtask and archive — and the auto-merge, auto-fix and auto-review switches, as
- * shortcuts.
+ * shortcuts. On the pointer shell the task's title in the top bar is the
+ * trigger (`top-bar-task.tsx` passes `title`); the phone keeps the `⋯`.
  * What those switches are doing (the reason, the round waiting to send, the
  * pause to resume) lives in the Autopilot tab, which has the room for it.
  * Stop/steer lives in the composer; Push stays in the header because it has a
@@ -28,7 +29,14 @@ import { uiIntentsFor } from "@/lib/ui-intents"
  * Archive goes through the shared flow (hooks/useArchiveFlow.ts) so the refusal
  * reads the same here, on a sidebar row's hover control and behind `/archive`.
  */
-export function TaskActions({ task }: { task: ApiTask }) {
+export function TaskActions({
+  task,
+  title,
+}: {
+  task: ApiTask
+  /** the top bar's title menu: its trigger, the facts above the verbs, and rows after them */
+  title?: { trigger: ReactNode; className: string; header: ReactNode; after: ReactNode }
+}) {
   const runtime = useDaemonRuntime()
   const [menuOpen, setMenuOpen] = useState(false)
   const [retentionOpen, setRetentionOpen] = useState(false)
@@ -43,8 +51,11 @@ export function TaskActions({ task }: { task: ApiTask }) {
       <Menu
         label="More actions"
         icon={<More />}
-        iconOnly
-        align="end"
+        iconOnly={!title}
+        trigger={title?.trigger}
+        className={title?.className}
+        header={title?.header}
+        align={title ? "start" : "end"}
         open={menuOpen}
         onOpenChange={setMenuOpen}
       >
@@ -97,6 +108,7 @@ export function TaskActions({ task }: { task: ApiTask }) {
           </MenuItem>
         )}
         <AutoMergeItems task={task} />
+        {title?.after}
       </Menu>
 
       {retentionOpen && (
