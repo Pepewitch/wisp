@@ -66,7 +66,10 @@ const COMMAND_USAGE = {
   ${COMMAND} verify checkout <dir> | draft save <dir> what a recipe task runs to edit and propose the recipe
   ${COMMAND} verify setup|improve|fix [project] [--area <name>] [--note "…"] [--harness <h>] [--model <m>]
                                                     start a task that sets up or fixes the recipe (kept in Wisp, never the repo)
-  ${COMMAND} verify activate [project]               make the newest draft the active recipe`,
+  ${COMMAND} verify activate [project]               make the newest draft the active recipe
+  ${COMMAND} verify fallback a|b <harness>|none [--model <m>] [--effort <e>] [--project <path>]
+                                                    who reviews in reviewer A's or B's place, once per round, when its task
+                                                    fails on the network, the provider or setup (none: the round needs you)`,
   audit: `  ${COMMAND} audit <task> [--limit <1-500>] [--json]  who did what to the task, newest first (default: the newest 100):
                                                     web, desktop, cli, agent:<task> (an agent running in that task),
                                                     autopilot, workflow:<id>, system, or api (an unnamed client)`,

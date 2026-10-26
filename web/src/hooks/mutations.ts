@@ -436,6 +436,13 @@ export interface SaveProjectBody {
    * daemon that advertises `features.reviewPanel`.
    */
   verifySecond?: ProjectVerifySecond;
+  /**
+   * Each reviewer's fallback agent, or null for none. Each its own patch key,
+   * sent only when it changed and only to a daemon that advertises
+   * `features.reviewFallback`.
+   */
+  verifyFallback?: ProjectVerifyAgent | null;
+  verifySecondFallback?: ProjectVerifyAgent | null;
 }
 
 /**

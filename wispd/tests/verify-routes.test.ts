@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { VerificationStatus } from "../../shared/api/auto-review";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -102,6 +103,24 @@ describe("the second reviewer and the rubric", () => {
     // a wrong field inside the agent is the caller's mistake too, not a 500
     expect((await save({ verifySecond: { harness: 7 } })).status).toBe(400);
     expect((await save({ verifySecond: { harness: "codex", colour: "red" } })).status).toBe(400);
+  });
+
+  test("each reviewer's fallback is its own patch: set, kept by other saves, cleared by null, and in the status", async () => {
+    const cfg = loadConfig();
+    const repo = mkdtempSync(join(tmpdir(), "wisp-verify-route-"));
+    const save = (body: Record<string, unknown>) => addProjectRoute(new Request("http://wisp/api/projects", {
+      method: "POST", body: JSON.stringify({ path: repo, ...body }), headers: { "content-type": "application/json" },
+    }), cfg);
+    const first = await (await save({ verifyFallback: { harness: "claude", model: "opus-5", effort: "high" }, verifySecondFallback: { harness: "codex" } })).json();
+    expect(first).toMatchObject({ verifyFallback: { harness: "claude", model: "opus-5", effort: "high" }, verifySecondFallback: { harness: "codex" } });
+    // a save of anything else (an older client's) keeps both
+    expect(await (await save({ verify: { harness: "droid" }, verifySecond: "off" })).json())
+      .toMatchObject({ verifyFallback: { harness: "claude" }, verifySecondFallback: { harness: "codex" } });
+    const status = await (await call(cfg, "GET", "/api/projects/verification", undefined, `?path=${encodeURIComponent(repo)}`)).json() as VerificationStatus;
+    expect(status.fallbacks).toEqual({ primary: { harness: "claude", model: "opus-5", effort: "high" }, second: { harness: "codex", model: null, effort: null } });
+    expect(await (await save({ verifyFallback: null })).json()).toMatchObject({ verifyFallback: null, verifySecondFallback: { harness: "codex" } });
+    expect((await save({ verifySecondFallback: "off" })).status).toBe(400);
+    expect((await save({ verifyFallback: { harness: "codex", colour: "red" } })).status).toBe(400);
   });
 
   test("the rubric route carries the project's own review rules", async () => {

@@ -31,6 +31,46 @@ models agreeing that nothing blocks is the bar; pick a different agent for B
 in Project settings → Verification to get a real second opinion. **Off** makes
 every round single-reviewer.
 
+### A fallback reviewer
+
+Each reviewer can have a **fallback agent**: Project settings → Verification →
+*Fallback for A* / *Fallback for B*, or from the CLI:
+
+```sh
+wisp verify fallback a claude --model opus-5 --effort high   # who stands in for reviewer A
+wisp verify fallback b codex                                  # and for reviewer B
+wisp verify fallback a none                                   # no fallback (the default)
+```
+
+They are saved in `config.json` as `repos[].verifyFallback` and
+`repos[].verifySecondFallback` (`{ harness, model?, effort? }`). With none set,
+nothing changes.
+
+When a reviewer's task fails for an **infrastructure** reason, its fallback
+reviews the same round and head in a fresh task, instead of the round ending
+for a person. The reasons are the ones Wisp already records on the failed task:
+
+| Cause | What Wisp saw |
+| --- | --- |
+| network | the turn ended on the network (Wisp's network classifier, the same one that lets autopilot resume a dropped turn) |
+| provider | the turn ended on a transient provider fault the harness declares (overloaded, service unavailable) |
+| setup | the task failed before its first turn: the worktree, the setup script, or setup's time limit |
+
+Nothing else falls back. A verdict stands. A reviewer that ends without a
+verdict, keeps asking, or gives a malformed one, a usage limit, and the tier's
+time limit (up to 120 minutes) all end the review as before. Each reviewer
+falls back **at most once per round**: if the fallback fails too, the round
+needs you. The fallback starts its own time limit.
+
+The substitution is on record. The round's history says
+`Round 1: reviewer A (droid) failed on the network (…) — falling back to claude opus-5`.
+The reviewer's row in the Autopilot tab is marked *fallback*, and its title
+names the failed agent and why. `wisp review show` prints
+`A claude opus-5 (fallback for droid: network): pass`, and `--round <n>` adds
+the failed task's words and id. `--json` carries the same on the review as
+`fallback: { cause, detail, from, taskId, at }`, while `agent` is the one that
+actually reviewed. The failed task is archived; its transcript stays readable.
+
 **Depth, measured by Wisp.** Before a round starts, Wisp measures the diff (it
 fetches the PR's head and base first) and picks a tier. Reviewers are told the
 tier, and never to ask anyone how deep to go:
@@ -119,7 +159,8 @@ The round's outcome, in this order:
 2. **A could not follow the recipe** → the PR is held. See
    [A broken recipe](#a-broken-recipe).
 3. **A reviewer gave no verdict** → the task needs you; **Resume** re-runs only
-   that reviewer.
+   that reviewer. A reviewer whose task failed on the network, its provider or
+   setup is first replaced by its [fallback](#a-fallback-reviewer), when one is set.
 4. **An inconclusive change** → rejected.
 5. **Every reviewer passed** → passed. Auto-merge merges once its own gate
    allows; with auto-review alone, the task is done for this head.
@@ -260,11 +301,13 @@ wisp verify improve --note "also check dark mode"
 wisp verify fix --area web             # a task that repairs one area a reviewer could not follow
 wisp verify activate                   # make the newest draft the active recipe
 wisp verify show [file]                # list the recipe's files, or print one
+wisp verify fallback a|b <harness>|none  # who stands in for a reviewer after an infrastructure failure
 ```
 
 In the app, a project's **Verification** button in the sidebar opens its
 settings at the Verification section. There you can start a recipe task, choose
-the reviewer agents and their effort, read the areas, and activate a draft. A
+the reviewer agents, their fallbacks and their effort, read the areas, and
+activate a draft. A
 recipe task runs on the reviewer agent; while that is left on each task's own
 agent, you pick the recipe task's agent there for that task alone. The button's dot says
 when a draft is waiting, a recipe task is working, or a reviewer reported a

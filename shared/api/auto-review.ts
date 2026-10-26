@@ -70,6 +70,28 @@ export interface AutoReviewSignals {
   docsOnly: boolean
 }
 
+/** Why a reviewer's fallback ran: its first agent's task failed on the network, on the provider, or in setup before its turn. */
+export type AutoReviewFallbackCause = "network" | "provider" | "setup"
+
+/** How Wisp says each cause, after the failed agent's name. */
+export const FALLBACK_CAUSE_WORDS: Record<AutoReviewFallbackCause, string> = {
+  network: "failed on the network",
+  provider: "failed on its provider",
+  setup: "failed in setup, before its turn",
+}
+
+/** The agent that stood in for a reviewer, once in its round: `agent` is the fallback, this is whom it replaced and why. */
+export interface AutoReviewFallback {
+  cause: AutoReviewFallbackCause
+  /** the failed task's own words, as Wisp recorded them */
+  detail: string
+  /** the agent that failed */
+  from: { harness: string; model: string | null; effort: string | null }
+  /** its task (archived), whose transcript says what happened */
+  taskId: string | null
+  at: string
+}
+
 /** One reviewer's part of a round. */
 export interface AutoReviewReview {
   id: string
@@ -89,6 +111,8 @@ export interface AutoReviewReview {
   carried: boolean
   /** areas whose required screenshot the verifying reviewer waived, and why (Wisp recorded a reason it could not capture) */
   waivers?: { area: string; reason: string }[]
+  /** set when this reviewer is its role's fallback (absent from a daemon without `features.reviewFallback`) */
+  fallback?: AutoReviewFallback | null
   reviewerTaskId: string | null
   createdAt: string
   finishedAt: string | null
@@ -188,6 +212,14 @@ export interface VerificationStatus {
    * for the same agent as the reviewer; absent from a daemon without the panel
    */
   second?: { harness: string; model: string | null; effort: string | null } | "off" | null
+  /**
+   * who stands in for each reviewer after an infrastructure failure; null for
+   * none. Absent from a daemon without `features.reviewFallback`
+   */
+  fallbacks?: {
+    primary: { harness: string; model: string | null; effort: string | null } | null
+    second: { harness: string; model: string | null; effort: string | null } | null
+  }
   /** reviewer feedback about a recipe gap with no area to pin it on, since the last activation */
   attention: string | null
 }

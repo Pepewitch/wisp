@@ -97,6 +97,8 @@ interface RepoRow {
   baseBranch: string;
   verify?: unknown;
   verifySecond?: unknown;
+  verifyFallback?: unknown;
+  verifySecondFallback?: unknown;
   verification?: unknown;
   configured: boolean;
 }
@@ -956,7 +958,7 @@ describe("daemon API contracts", () => {
       archiveScript: "",
       copyFiles: [],
       baseBranch: "",
-      verify: null, verifySecond: null, verification: NO_VERIFICATION, configured: true,
+      verify: null, verifySecond: null, verifyFallback: null, verifySecondFallback: null, verification: NO_VERIFICATION, configured: true,
     });
     expect(repoRows.repos.find((row) => row.path === missing)).toEqual({
       path: missing,
@@ -966,7 +968,7 @@ describe("daemon API contracts", () => {
       archiveScript: "",
       copyFiles: [],
       baseBranch: "",
-      verify: null, verifySecond: null, verification: NO_VERIFICATION, configured: true,
+      verify: null, verifySecond: null, verifyFallback: null, verifySecondFallback: null, verification: NO_VERIFICATION, configured: true,
     });
     expect(repoRows.repos.find((row) => row.path === repo.path)).toEqual({
       path: repo.path,
@@ -976,7 +978,7 @@ describe("daemon API contracts", () => {
       archiveScript: "",
       copyFiles: [],
       baseBranch: "",
-      verify: null, verifySecond: null, verification: NO_VERIFICATION, configured: false,
+      verify: null, verifySecond: null, verifyFallback: null, verifySecondFallback: null, verification: NO_VERIFICATION, configured: false,
     });
   });
 

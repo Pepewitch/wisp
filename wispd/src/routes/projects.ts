@@ -188,6 +188,8 @@ export function reposRoute(cfg: WispConfig): Promise<Response> {
           baseBranch: config?.baseBranch ?? "",
           verify: config?.verify ?? null,
           verifySecond: config?.verifySecond ?? null,
+          verifyFallback: config?.verifyFallback ?? null,
+          verifySecondFallback: config?.verifySecondFallback ?? null,
           verification: await verificationSummary(resolved),
           configured: config !== undefined || (entry !== undefined && typeof entry === "string"),
         };
@@ -208,6 +210,10 @@ interface ProjectUpdateBody {
   verify?: unknown;
   /** the second reviewer: { harness, model?, effort? }, "off", or null to clear (same agent as the first) */
   verifySecond?: unknown;
+  /** who reviews in reviewer A's place after an infrastructure failure: { harness, model?, effort? }, or null to clear (none) */
+  verifyFallback?: unknown;
+  /** the same for reviewer B */
+  verifySecondFallback?: unknown;
 }
 
 function projectUpdateError(body: ProjectUpdateBody): Response | null {
@@ -228,7 +234,8 @@ function projectUpdateError(body: ProjectUpdateBody): Response | null {
   }
   const second = body.verifySecond === "off" ? null : agentFieldError(body.verifySecond, "verifySecond", `an agent object, "off" or null`);
   const verify = agentFieldError(body.verify, "verify", "an object or null");
-  return second ?? verify;
+  const fallbacks = (["verifyFallback", "verifySecondFallback"] as const).map((key) => agentFieldError(body[key], key, "an object or null"));
+  return second ?? verify ?? fallbacks.find((invalid) => invalid !== null) ?? null;
 }
 
 /** A verification agent in a project save: omitted or null, or an object of string harness, model and effort. */
@@ -259,11 +266,23 @@ function mergeProjectEntry(resolved: string, before: RepoEntry | undefined, body
   // the settings modal's Reset sends — back to Wisp resolving origin/HEAD.
   const base = (body.baseBranch as string | undefined) ?? existing?.baseBranch;
   if (base !== undefined && base.trim() !== "") merged.baseBranch = base.trim();
-  const verify = mergedVerifyAgent(existing, body);
-  if (verify) merged.verify = verify;
-  const second = mergedSecondAgent(existing, body);
-  if (second) merged.verifySecond = second;
+  Object.assign(merged, mergedReviewers(existing, body));
   return Object.keys(merged).length === 1 ? resolved : merged;
+}
+
+/** Who reviews after a save: each reviewer agent and each fallback is its own patch key, absent when unset. */
+function mergedReviewers(existing: RepoConfig | undefined, body: ProjectUpdateBody): Partial<RepoConfig> {
+  const out: Partial<RepoConfig> = {};
+  const verify = mergedVerifyAgent(existing, body);
+  if (verify) out.verify = verify;
+  const second = mergedSecondAgent(existing, body);
+  if (second) out.verifySecond = second;
+  for (const key of ["verifyFallback", "verifySecondFallback"] as const) {
+    // omitted keeps it, null or a blank harness clears it
+    const fallback = body[key] === undefined ? existing?.[key] : validateVerifyAgent(body[key] ?? undefined, key);
+    if (fallback) out[key] = fallback;
+  }
+  return out;
 }
 
 /** The second reviewer after a save: its own key and patch, so a save of `verify` (an older client's) never touches it. */
@@ -317,6 +336,8 @@ export function addProjectRoute(req: Request, cfg: WispConfig): Promise<Response
         baseBranch: saved?.baseBranch ?? "",
         verify: saved?.verify ?? null,
         verifySecond: saved?.verifySecond ?? null,
+        verifyFallback: saved?.verifyFallback ?? null,
+        verifySecondFallback: saved?.verifySecondFallback ?? null,
       },
       before === undefined ? 201 : 200,
     );

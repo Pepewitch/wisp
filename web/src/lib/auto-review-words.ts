@@ -1,13 +1,14 @@
-import type {
-  AutoReviewEvidence,
-  AutoReviewFinding,
-  AutoReviewReview,
-  AutoReviewRole,
-  AutoReviewRound,
-  AutoReviewRoundState,
-  AutoReviewSignals,
-  AutoReviewTier,
-  VerificationStatus,
+import {
+  FALLBACK_CAUSE_WORDS,
+  type AutoReviewEvidence,
+  type AutoReviewFinding,
+  type AutoReviewReview,
+  type AutoReviewRole,
+  type AutoReviewRound,
+  type AutoReviewRoundState,
+  type AutoReviewSignals,
+  type AutoReviewTier,
+  type VerificationStatus,
 } from "../../../shared/api/auto-review"
 import type { VerificationSummary } from "./types"
 
@@ -106,6 +107,18 @@ export const TIER_WORD: Record<AutoReviewTier, string> = {
 /** `claude · opus-5`, or the harness alone when it runs its own default model. */
 export function reviewAgentWords(agent: AutoReviewReview["agent"]): string {
   return agent.model ? `${agent.harness} · ${agent.model}` : agent.harness
+}
+
+/**
+ * Why the agent on a review's row stood in for another, for its `fallback`
+ * mark's title: `Fallback for droid · kimi-k3, whose task failed on the
+ * network: getaddrinfo ENOTFOUND`. Null for a review on its first agent.
+ */
+export function reviewFallbackWords(review: AutoReviewReview): string | null {
+  const fallback = review.fallback
+  if (!fallback) return null
+  const from = reviewAgentWords({ harness: fallback.from.harness, model: fallback.from.model })
+  return `Fallback for ${from}, whose task ${FALLBACK_CAUSE_WORDS[fallback.cause]}${fallback.detail ? `: ${fallback.detail}` : ""}`
 }
 
 /**

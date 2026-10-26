@@ -6,7 +6,7 @@
  */
 import { randomBytes } from "node:crypto"
 import type {
-  AutoReviewEvidence, AutoReviewFinding, AutoReviewReview, AutoReviewRole, AutoReviewRoundState, AutoReviewSignals, AutoReviewTier,
+  AutoReviewEvidence, AutoReviewFallback, AutoReviewFinding, AutoReviewReview, AutoReviewRole, AutoReviewRoundState, AutoReviewSignals, AutoReviewTier,
 } from "../../../shared/api/auto-review"
 import { capturesOfReview } from "../capture/store"
 import { db } from "../store-database"
@@ -15,6 +15,7 @@ import { REVIEW_TOKEN_ENV } from "../turn-input"
 import type { Task } from "../types"
 import { getRound, type RoundRow } from "./rounds"
 import { recordPrEvent } from "../subtask-reports"
+import type { InfrastructureFailure } from "./fallback"
 
 export type ReviewState = AutoReviewRoundState | "pending"
 
@@ -42,6 +43,8 @@ export interface ReviewRow {
   carried_from: string | null
   /** the verifying reviewer's waivers of a required screenshot (protocol 3) */
   waivers_json?: string | null
+  /** set once its role's fallback agent took the review over (verify/fallback.ts): an AutoReviewFallback */
+  fallback_json?: string | null
   nudged: number
   launched_at: string | null
   created_at: string
@@ -85,9 +88,9 @@ export function createPanelRound(input: {
       const carried = input.carried?.find((review) => review.role === agent.role && review.state === "pass")
       if (carried) {
         db.run(`INSERT INTO round_reviews(id, round_id, role, protocol, reviewer_task_id, harness, model, effort, token, state, cause, summary,
-          rationale, findings_json, reviewed_json, recipe_feedback, recipe_area, evidence_json, escalated, waivers_json, carried_from, launched_at, created_at, finished_at)
+          rationale, findings_json, reviewed_json, recipe_feedback, recipe_area, evidence_json, escalated, waivers_json, fallback_json, carried_from, launched_at, created_at, finished_at)
           SELECT ?, ?, role, protocol, reviewer_task_id, harness, model, effort, ?, state, cause, summary, rationale, findings_json, reviewed_json,
-          recipe_feedback, recipe_area, evidence_json, escalated, waivers_json, COALESCE(carried_from, id), launched_at, ?, finished_at FROM round_reviews WHERE id = ?`, [randomId("v", 12), id, newToken(), at, carried.id])
+          recipe_feedback, recipe_area, evidence_json, escalated, waivers_json, fallback_json, COALESCE(carried_from, id), launched_at, ?, finished_at FROM round_reviews WHERE id = ?`, [randomId("v", 12), id, newToken(), at, carried.id])
         continue
       }
       // protocol 3: the panel's verdict shape plus captures and waivers
@@ -107,6 +110,31 @@ export function addSecondReview(roundId: string, agent: Omit<PanelAgent, "role">
     db.run(`INSERT INTO round_reviews(id, round_id, role, protocol, harness, model, effort, token, state, created_at)
       VALUES (?, ?, 'second', 3, ?, ?, ?, ?, 'pending', ?)`, [id, roundId, agent.harness, agent.model, agent.effort, newToken(), now.toISOString()])
     db.run("UPDATE auto_review_rounds SET roles = ?, tier = 'standard' WHERE id = ?", [JSON.stringify(["primary", "second"]), roundId])
+    return getReview(id)
+  })()
+}
+
+/**
+ * Hand a running review to its role's fallback agent, once: the same row (so
+ * the panel and the outcome table are unchanged), now pending on the new
+ * agent with a fresh token, and a record of whom it replaced and why. The
+ * failed task is no longer the review's, so it cannot submit for it. Null
+ * when the review is not running or has fallen back already.
+ */
+export function substituteReview(id: string, agent: Omit<PanelAgent, "role">, failure: InfrastructureFailure, now = new Date()): ReviewRow | null {
+  return db.transaction(() => {
+    const review = getReview(id)
+    if (!review || review.state !== "running" || review.fallback_json) return null
+    const fallback: AutoReviewFallback = {
+      cause: failure.cause, detail: failure.detail, from: { harness: review.harness, model: review.model, effort: review.effort },
+      taskId: review.reviewer_task_id, at: now.toISOString(),
+    }
+    db.run(`UPDATE round_reviews SET harness = ?, model = ?, effort = ?, token = ?, state = 'pending', reviewer_task_id = NULL, nudged = 0,
+      launched_at = NULL, fallback_json = ? WHERE id = ?`, [agent.harness, agent.model, agent.effort, newToken(), JSON.stringify(fallback), id])
+    // a client from before the panel finds reviewer A on the round: the fallback's task, once it starts
+    if (review.reviewer_task_id) {
+      db.run("UPDATE auto_review_rounds SET reviewer_task_id = NULL WHERE id = ? AND reviewer_task_id = ?", [review.round_id, review.reviewer_task_id])
+    }
     return getReview(id)
   })()
 }
@@ -263,7 +291,7 @@ export function settleRound(roundId: string, now = new Date()): RoundRow | null 
     const findings = reviews.flatMap(findingsOf).sort((a, b) => (a.severity === b.severity ? 0 : a.severity === "blocking" ? -1 : 1))
     const primary = reviews.find((review) => review.role === "primary")
     const recipe = primary?.state === "recipe" ? primary : null
-    const summary = reviews.map((review) => `${review.role === "primary" ? "A" : "B"}: ${review.state}${review.summary ? ` — ${review.summary}` : ""}`).join(" · ")
+    const summary = reviews.map((review) => `${review.role === "primary" ? "A" : "B"}${review.fallback_json ? " (fallback)" : ""}: ${review.state}${review.summary ? ` — ${review.summary}` : ""}`).join(" · ")
     db.run(`UPDATE auto_review_rounds SET state = ?, cause = ?, summary = ?, findings_json = ?, recipe_feedback = ?, recipe_area = ?,
       evidence_json = ?, reviewer_task_id = COALESCE(reviewer_task_id, ?), finished_at = ? WHERE id = ? AND state = 'running'`, [
       state, state === "inconclusive" ? "change" : null, summary.slice(0, 1200), JSON.stringify(findings.slice(0, 40)),
@@ -304,6 +332,8 @@ export function reviewView(review: ReviewRow, roundOpen: boolean): AutoReviewRev
     findings: withhold ? [] : findingsOf(review), reviewed: withhold ? [] : parsed<string[]>(review.reviewed_json, []),
     evidence: withhold ? [] : withCaptures(review), escalated: withhold ? null : review.escalated, carried: review.carried_from !== null,
     waivers: withhold ? [] : parsed<{ area: string; reason: string }[]>(review.waivers_json ?? null, []),
+    // who stood in, and why, is no verdict: shown while the round runs
+    fallback: parsed<AutoReviewFallback | null>(review.fallback_json ?? null, null),
     reviewerTaskId: review.reviewer_task_id, createdAt: review.created_at, finishedAt: review.finished_at,
   }
 }

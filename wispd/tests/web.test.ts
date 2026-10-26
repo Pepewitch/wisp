@@ -507,6 +507,8 @@ describe("S1 create-modal and project APIs", () => {
         baseBranch: string;
         verify?: unknown;
         verifySecond?: unknown;
+        verifyFallback?: unknown;
+        verifySecondFallback?: unknown;
         verification?: unknown;
         configured: boolean;
       }[];
@@ -523,6 +525,8 @@ describe("S1 create-modal and project APIs", () => {
       baseBranch: "",
       verify: null,
       verifySecond: null,
+      verifyFallback: null,
+      verifySecondFallback: null,
       verification: { state: "none", areas: 0, draft: false, attention: false, busy: false },
       configured: true,
     });

@@ -24,6 +24,7 @@ import {
   evidenceTitle,
   requiredWords,
   reviewAgentWords,
+  reviewFallbackWords,
   reviewSettled,
   reviewTitle,
   reviewVerdict,
@@ -244,6 +245,11 @@ function ReviewRow({
           {review.agent.harness}
           {review.agent.model && <span className="font-mono text-[10.5px]"> · {review.agent.model}</span>}
         </span>
+        {review.fallback && (
+          <span data-fallback={review.fallback.cause} title={reviewFallbackWords(review) ?? undefined} className="shrink-0 text-[10.5px] text-faint">
+            fallback
+          </span>
+        )}
         <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", REVIEW_DOT[review.state])} />
         <span title={reviewTitle(review)} className={cn("min-w-0 flex-1 truncate text-[11.5px]", quiet ? "text-faint" : "text-muted-foreground")}>
           {reviewVerdict(review)}

@@ -38,6 +38,10 @@ export function validateRepos(raw: unknown): (string | RepoConfig)[] {
     if (verify) out.verify = verify;
     const second = entry.verifySecond === "off" ? "off" : validateVerifyAgent(entry.verifySecond, `${label}.verifySecond`);
     if (second) out.verifySecond = second;
+    const fallback = validateVerifyAgent(entry.verifyFallback, `${label}.verifyFallback`);
+    if (fallback) out.verifyFallback = fallback;
+    const secondFallback = validateVerifyAgent(entry.verifySecondFallback, `${label}.verifySecondFallback`);
+    if (secondFallback) out.verifySecondFallback = secondFallback;
     if (validateCapturePublic(entry.capturePublic, label) === false) out.capturePublic = false;
     return out;
   });

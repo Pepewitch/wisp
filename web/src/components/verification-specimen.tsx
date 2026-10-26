@@ -49,16 +49,19 @@ const ACTIVE: VerificationStatus = {
   attention: null,
 }
 
-function Specimen({ status, initial, initialSecond, busy = false, message = null }: {
+function Specimen({ status, initial, initialSecond, initialFallbacks, busy = false, message = null }: {
   status: VerificationStatus
   initial: ProjectVerifyAgent | null
   /** the second reviewer, on a daemon with the review panel; undefined draws an older daemon's section */
   initialSecond?: ProjectVerifySecond
+  /** each reviewer's fallback, on a daemon with fallbacks; undefined draws a daemon without them */
+  initialFallbacks?: { primary: ProjectVerifyAgent | null; second: ProjectVerifyAgent | null }
   busy?: boolean
   message?: VerificationFieldsModel["message"]
 }) {
   const [agent, setAgent] = useState(initial)
   const [second, setSecond] = useState<ProjectVerifySecond>(initialSecond ?? null)
+  const [fallbacks, setFallbacks] = useState(initialFallbacks ?? { primary: null, second: null })
   const [recipeAgent, setRecipeAgent] = useState<ProjectVerifyAgent>({ harness: "claude", model: "opus-5" })
   const [note, setNote] = useState("")
   const model: VerificationFieldsModel = {
@@ -66,6 +69,9 @@ function Specimen({ status, initial, initialSecond, busy = false, message = null
     recipeAgent, onRecipeAgentChange: setRecipeAgent, note, onNoteChange: setNote,
     starting: null, activating: false, busy, message, onStart: () => {}, onActivate: () => {}, onOpenTask: () => {},
     ...(initialSecond !== undefined ? { second, onSecondChange: setSecond } : {}),
+    ...(initialFallbacks !== undefined
+      ? { fallbacks, onFallbackChange: (role: "primary" | "second", agent: ProjectVerifyAgent | null) => setFallbacks((prev) => ({ ...prev, [role]: agent })) }
+      : {}),
   }
   return <ProjectSettingsSpecimen project={{ ...REPOS[0]!, verify: initial }} verification={model} />
 }
@@ -89,6 +95,7 @@ export function VerificationSpecimen() {
           status={ACTIVE}
           initial={{ harness: "claude", model: "opus-5", effort: "high" }}
           initialSecond={{ harness: "codex", model: "gpt-5.6-luna" }}
+          initialFallbacks={{ primary: { harness: "codex", model: "gpt-5.6-luna", effort: "high" }, second: null }}
           busy
           message={{ tone: "error", text: "Task tvr3ip is already working on this project's verification recipe" }}
         />
@@ -97,7 +104,9 @@ export function VerificationSpecimen() {
           reviewer reported the recipe failing (with Fix beside it). Activate draft is an outline button — Save stays
           the dialog&apos;s one primary. A refusal from the daemon shows inline, in red. On a daemon with the review
           panel the Second reviewer sits under the Reviewer agent: a different agent here is a real second opinion.
-          Each named reviewer has an effort beside its model: the harness&apos;s levels, or its default.
+          Each named reviewer has an effort beside its model: the harness&apos;s levels, or its default. On a daemon
+          with fallbacks, Fallback for A and Fallback for B name who stands in, once per round, when a reviewer&apos;s
+          task fails on the network, its provider or setup; None leaves that round to you.
         </p>
       </div>
       <div data-frame="verification-second-off">

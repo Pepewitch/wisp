@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -452,6 +452,60 @@ describe("project settings verification", () => {
       fireEvent.click(await screen.findByRole("menuitemradio", { name: "Same agent as the reviewer" }))
       await waitFor(() => expect(screen.getByRole("button", { name: "Second reviewer" })).toHaveTextContent("Same agent as the reviewer"))
       expect(await saved(calls)).toMatchObject({ verifySecond: null })
+    })
+  })
+
+  describe("each reviewer's fallback", () => {
+    const FALLBACK = { autoReview: true, reviewPanel: true, reviewFallback: true }
+    const saved = async (calls: Call[]) => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }))
+      await waitFor(() => expect(calls.some((call) => call.path === "/api/projects" && call.method === "POST")).toBe(true))
+      return calls.find((call) => call.path === "/api/projects")!.body
+    }
+
+    it("is absent without features.reviewFallback, and Save never sends a fallback", async () => {
+      const calls = stubVerification(STATUS_NONE, { autoReview: true, reviewPanel: true })
+      mount(<ProjectSettingsSpecimen project={REVIEWABLE} />)
+      expect(await screen.findByRole("button", { name: "Second reviewer" })).toBeInTheDocument()
+      expect(screen.queryByRole("button", { name: "Fallback for A" })).toBeNull()
+      const body = await saved(calls)
+      expect(body).not.toHaveProperty("verifyFallback")
+      expect(body).not.toHaveProperty("verifySecondFallback")
+    })
+
+    it("shows the daemon's choices, and Save leaves them alone until a person picks one", async () => {
+      const fallbacks = { primary: { harness: "claude", model: "sonnet-5", effort: null }, second: null }
+      const calls = stubVerification({ ...STATUS_NONE, fallbacks }, FALLBACK)
+      mount(<ProjectSettingsSpecimen project={REVIEWABLE} />)
+      await waitFor(() => expect(screen.getByRole("button", { name: "Fallback for A" })).toHaveTextContent("claude · sonnet-5"))
+      expect(screen.getByRole("button", { name: "Fallback for B" })).toHaveTextContent("None — the round needs you")
+      const body = await saved(calls)
+      expect(body).not.toHaveProperty("verifyFallback")
+      expect(body).not.toHaveProperty("verifySecondFallback")
+    })
+
+    it("saves a chosen fallback for B, and None for A as null", async () => {
+      const fallbacks = { primary: { harness: "claude", model: "sonnet-5", effort: null }, second: null }
+      const calls = stubVerification({ ...STATUS_NONE, fallbacks }, FALLBACK)
+      mount(<ProjectSettingsSpecimen project={REVIEWABLE} />)
+      await waitFor(() => expect(screen.getByRole("button", { name: "Fallback for A" })).toHaveTextContent("claude · sonnet-5"))
+      await pick("Fallback for A", "None — the round needs you")
+      await waitFor(() => expect(screen.getByRole("button", { name: "Fallback for A" })).toHaveTextContent("None — the round needs you"))
+      // a scripted pick leaves A's menu mounted: pick from the one B opened
+      fireEvent.click(screen.getByRole("button", { name: "Fallback for B" }))
+      const menus = await screen.findAllByRole("menu")
+      fireEvent.click(within(menus.at(-1)!).getByRole("menuitemradio", { name: /sonnet-5/ }))
+      await pick("Fallback for B effort", "max")
+      await waitFor(() => expect(screen.getByRole("button", { name: "Fallback for B effort" })).toHaveTextContent("max effort"))
+      expect(await saved(calls)).toMatchObject({ verifyFallback: null, verifySecondFallback: { harness: "claude", model: "sonnet-5", effort: "max" } })
+    })
+
+    it("has no fallback for B while the second reviewer is off", async () => {
+      stubVerification({ ...STATUS_NONE, second: "off" }, FALLBACK)
+      mount(<ProjectSettingsSpecimen project={{ ...REVIEWABLE, verifySecond: "off" }} />)
+      expect(await screen.findByRole("button", { name: "Fallback for A" })).toBeInTheDocument()
+      await waitFor(() => expect(screen.getByRole("button", { name: "Second reviewer" })).toHaveTextContent("Off — one reviewer"))
+      expect(screen.queryByRole("button", { name: "Fallback for B" })).toBeNull()
     })
   })
 

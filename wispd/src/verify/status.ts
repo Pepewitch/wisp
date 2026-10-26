@@ -65,14 +65,17 @@ export async function verificationStatus(repoPath: string, cfg: WispConfig): Pro
   const config = repoConfigFor(cfg, repoPath)
   const reviewer = config?.verify
   const second = config?.verifySecond
+  const shown = (agent: { harness: string; model?: string; effort?: string } | undefined) =>
+    agent ? { harness: agent.harness, model: agent.model ?? null, effort: agent.effort ?? null } : null
   return {
     state: recipe ? "active" : "none",
     version, activatedAt,
     areas: (recipe?.areas ?? []).map((area) => ({ ...area, attention: byArea.get(area.name) ?? null })),
     draft: draft ? { taskId: draft.taskId, savedAt: draft.savedAt, areas: draft.areas } : null,
     task: currentVerifyTask(repoPath),
-    reviewer: reviewer ? { harness: reviewer.harness, model: reviewer.model ?? null, effort: reviewer.effort ?? null } : null,
-    second: second === "off" ? "off" : second ? { harness: second.harness, model: second.model ?? null, effort: second.effort ?? null } : null,
+    reviewer: shown(reviewer),
+    second: second === "off" ? "off" : shown(second),
+    fallbacks: { primary: shown(config?.verifyFallback), second: shown(config?.verifySecondFallback) },
     attention: loose?.feedback ?? null,
   }
 }

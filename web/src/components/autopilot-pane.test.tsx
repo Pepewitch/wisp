@@ -358,6 +358,23 @@ describe("auto-review's panel in the Autopilot tab", () => {
     expect(within(rounds[2]!).getByRole("button", { name: "Open the reviewer task for round 1" })).toBeInTheDocument()
   })
 
+  it("a reviewer that stood in for another says so, and its title says for whom and why", async () => {
+    const fallback = {
+      cause: "network" as const, detail: "getaddrinfo ENOTFOUND api.example.test", from: { harness: "droid", model: "kimi-k3", effort: null },
+      taskId: "revfailed", at: "2026-10-26T10:00:00Z",
+    }
+    stub({ ...ALL, autoReview: true, reviewPanel: true, reviewFallback: true }, [], [
+      round("4", 1, "running", { tier: "light", reviews: [review("4a", "primary", "running", { fallback })] }),
+    ])
+    mount(<AutopilotPane task={withStatus(reviewing)} />)
+    await screen.findByRole("heading", { name: "Reviews" })
+    const row = document.querySelector("[data-reviewer='A']") as HTMLElement
+    expect(row).toHaveTextContent("Aclaude · opus-5fallback")
+    expect(row.querySelector("[data-fallback='network']")).toHaveAttribute(
+      "title", "Fallback for droid · kimi-k3, whose task failed on the network: getaddrinfo ENOTFOUND api.example.test",
+    )
+  })
+
   it("without features.reviewPanel, the same rounds keep the phase-1 look", async () => {
     stub({ ...ALL, autoReview: true }, [], PANEL_ROUNDS)
     mount(<AutopilotPane task={withStatus(reviewing)} />)

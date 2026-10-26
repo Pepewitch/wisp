@@ -27,6 +27,7 @@ import { OUTBOX_DEAD_LETTER } from "./migration-outbox-dead-letter";
 import { TASK_AUDIT } from "./migration-task-audit";
 import { TURN_OUTPUTS } from "./migration-turn-outputs";
 import { AUTO_REVIEW, CAPTURES, REVIEW_PANEL } from "./migration-auto-review";
+import { REVIEW_FALLBACK } from "./migration-review-fallback";
 import { TURN_ORIGIN } from "./migration-turn-origin";
 import { TASK_WORKFLOWS } from "./migration-task-workflows";
 import { SUBTASKS } from "./migration-subtasks";
@@ -657,6 +658,7 @@ CREATE INDEX IF NOT EXISTS idx_task_answer_observations_task ON task_answer_obse
   TURN_OUTPUTS,
   AUTO_REVIEW, REVIEW_PANEL, CAPTURES,
   SUBTASKS,
+  REVIEW_FALLBACK,
 ];
 
 /** The newest schema this build knows how to run. */

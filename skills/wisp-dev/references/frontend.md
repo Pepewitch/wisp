@@ -617,7 +617,11 @@ and the modal says so once at the top rather than four times.
   agent as the reviewer* = null, *Off — one reviewer* = `"off"`, or a model
   from the same list; saved with Save as `verifySecond`, sent only once a
   person picked one and never to a daemon without the panel),
-  and a note with **Set up verification** / **Improve** and a per-area **Fix**.
+  **Fallback for A** and **Fallback for B** (only with
+  `features.reviewFallback`; B's only while the second reviewer is not Off:
+  *None — the round needs you* = null, or a model from the same list; saved as
+  `verifyFallback` and `verifySecondFallback`, each sent only once a person
+  picked one), and a note with **Set up verification** / **Improve** and a per-area **Fix**.
   A named reviewer on an effort-capable harness has an effort menu beside its
   model: *Harness default*, which saves no `effort`, and the harness's levels
   (`effortOptions`, as the composer offers them); the current effort stays
@@ -1310,7 +1314,9 @@ reviewer under it, A then B: the letter, the agent (`harness · model`), a
 dot and its words (`Waiting for a slot`, `Kept` for a pass carried from an
 earlier round on the head, `escalated: <reason>` when a light round's A
 asked for B), and Open for that reviewer's task, which replaces the
-round's own. The row's `title` holds the findings, blocking first; there
+round's own. A reviewer that stood in for a failed one carries a faint
+`fallback` mark after its agent, whose `title` names the agent it replaced
+and why (`reviewFallbackWords`). The row's `title` holds the findings, blocking first; there
 is no red text, because a rejection's dot already carries it. A round from
 before the panel (`legacy`) keeps its one line and a faint `before the
 panel`. Without the flag every round is drawn exactly as phase 1.

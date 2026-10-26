@@ -183,7 +183,7 @@ export async function launchReview(start: ReviewerStart, input: {
   const label = review.role === "primary" ? "A" : "B"
   const created = await start.launch({
     repoPath: author.repo_path,
-    prompt: `Auto-review ${label} · PR #${pr.number} · round ${round.round}${round.counted === 1 ? "" : " (re-run)"} · ${pr.head.slice(0, 7)}`,
+    prompt: `Auto-review ${label}${review.fallback_json ? " (fallback)" : ""} · PR #${pr.number} · round ${round.round}${round.counted === 1 ? "" : " (re-run)"} · ${pr.head.slice(0, 7)}`,
     firstTurnPrompt: prompt,
     harness: review.harness, model: review.model ?? undefined, effort: review.effort ?? undefined,
     fast: false, mode: "worktree", actor: "autopilot", verifyRole: "reviewer",
@@ -388,7 +388,9 @@ export function submitVerdict(reviewerTaskId: string, body: AutoReviewVerdictBod
   const evidence = reviewerEvidence(reviewerTaskId).map((image) => ({ ...image, reviewerTaskId }))
   const waivers = (body.waivers ?? []).map((waiver) => ({ area: waiver.area, reason: waiver.reason.trim() }))
   if (state === "pass" && review.role === "primary" && review.protocol >= 3) {
-    const short = evidenceShortfall({ required: parsedList(getRound(review.round_id)?.required_json), captures: capturesOfReview(review.id), waivers, images: evidence.length })
+    // a fallback's pass stands on its own captures, never on the failed reviewer's
+    const captures = capturesOfReview(review.id).filter((capture) => capture.task_id === reviewerTaskId)
+    const short = evidenceShortfall({ required: parsedList(getRound(review.round_id)?.required_json), captures, waivers, images: evidence.length })
     if (short) throw new VerdictError(`Not a pass yet: ${short}`, 400)
   }
   const ok = finishReview(review.id, {

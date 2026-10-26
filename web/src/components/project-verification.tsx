@@ -8,6 +8,7 @@ import { Button } from "@/components/primitives"
 import { useActivateVerification, useStartVerificationTask } from "@/hooks/mutations"
 import { useHarnesses, useProjectVerification } from "@/hooks/queries"
 import { useHiddenModels } from "@/hooks/useHiddenModels"
+import type { ReviewerFallbacks } from "@/hooks/useVerificationField"
 import { failureReason } from "@/lib/api"
 import { recipeTaskWords, verificationStateLine } from "@/lib/auto-review-words"
 import { readCreateTaskDraft } from "@/lib/drafts"
@@ -52,6 +53,14 @@ export interface VerificationFieldsModel {
   second?: ProjectVerifySecond
   onSecondChange?: (second: ProjectVerifySecond) => void
   /**
+   * Who reviews in reviewer A's or B's place, once per round, when its task
+   * fails on the network, the provider or setup: an agent, or null for none.
+   * Saved with Save. Drawn only with `onFallbackChange`, i.e. on a daemon
+   * with `features.reviewFallback`.
+   */
+  fallbacks?: { primary: ProjectVerifyAgent | null; second: ProjectVerifyAgent | null }
+  onFallbackChange?: (role: keyof ReviewerFallbacks, agent: ProjectVerifyAgent | null) => void
+  /**
    * What a recipe task runs on while the reviewer is each task's own agent:
    * a recipe task belongs to the project, so it has no task's agent to
    * borrow. Picked here for those tasks only, never saved; null when there
@@ -85,12 +94,15 @@ export function VerificationSection({
   agent,
   onAgentChange,
   second = null,
+  fallbacks = null,
 }: {
   project: RepoInfo
   agent: ProjectVerifyAgent | null
   onAgentChange: (agent: ProjectVerifyAgent | null) => void
   /** the second reviewer, on a daemon with the review panel: undefined until a person picks one */
   second?: { value: ProjectVerifySecond | undefined; onChange: (second: ProjectVerifySecond) => void } | null
+  /** each reviewer's fallback, on a daemon with fallbacks: each undefined until a person picks one */
+  fallbacks?: { value: ReviewerFallbacks; onChange: (role: keyof ReviewerFallbacks, agent: ProjectVerifyAgent | null) => void } | null
 }) {
   const { connectionId } = useDaemonRuntime()
   const status = useProjectVerification(project.path, true)
@@ -158,6 +170,14 @@ export function VerificationSection({
         : status.data?.second !== undefined
           ? secondFromStatus(status.data.second)
           : project.verifySecond ?? null
+  // the same for each fallback: the pick, else the status's, else the repo entry's
+  const fallbackShown = (role: keyof ReviewerFallbacks): ProjectVerifyAgent | null => {
+    const picked = fallbacks?.value[role]
+    if (picked !== undefined) return picked
+    const served = status.data?.fallbacks?.[role]
+    if (served !== undefined) return served && agentFromStatus(served)
+    return (role === "primary" ? project.verifyFallback : project.verifySecondFallback) ?? null
+  }
 
   return (
     <VerificationFields
@@ -169,6 +189,9 @@ export function VerificationSection({
       agent={agent}
       onAgentChange={onAgentChange}
       {...(second ? { second: secondShown, onSecondChange: second.onChange } : {})}
+      {...(fallbacks
+        ? { fallbacks: { primary: fallbackShown("primary"), second: fallbackShown("second") }, onFallbackChange: fallbacks.onChange }
+        : {})}
       recipeAgent={recipeAgent}
       onRecipeAgentChange={setRecipePick}
       note={note}
@@ -199,10 +222,15 @@ function newTaskAgent(connectionId: string, repoPath: string, harnesses: Harness
   return { harness: choice.harness, model: choice.model, ...(effort ? { effort } : {}) }
 }
 
-/** The status's second reviewer (nulls for "its default") as the form holds one. */
+/** A status's agent (nulls for "its default") as the form holds one. */
+function agentFromStatus(agent: { harness: string; model: string | null; effort: string | null }): ProjectVerifyAgent {
+  return { harness: agent.harness, ...(agent.model ? { model: agent.model } : {}), ...(agent.effort ? { effort: agent.effort } : {}) }
+}
+
+/** The status's second reviewer as the form holds one. */
 function secondFromStatus(second: VerificationStatus["second"]): ProjectVerifySecond {
   if (!second || second === "off") return second ?? null
-  return { harness: second.harness, ...(second.model ? { model: second.model } : {}), ...(second.effort ? { effort: second.effort } : {}) }
+  return agentFromStatus(second)
 }
 
 const AREA_DOT = { attention: "bg-destructive", proven: "bg-state-done", unproven: "bg-border-strong" } as const
@@ -318,44 +346,7 @@ export function VerificationFields(model: VerificationFieldsModel) {
         </div>
       )}
 
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center gap-3">
-          <span className="w-[96px] shrink-0 text-[12px] text-fg-secondary">Reviewer agent</span>
-          <AgentPicker
-            harnesses={model.harnesses}
-            hidden={model.hidden}
-            agent={agent}
-            fixed={REVIEWER_FIXED}
-            aria-label="Reviewer agent"
-            onChange={(next) => model.onAgentChange(next === "off" ? null : next)}
-          />
-        </div>
-        <p className="pl-[108px] text-[11px] leading-relaxed text-faint">
-          {model.onSecondChange
-            ? "Reviewer A runs the app and reviews each PR head under auto-review; it also runs the recipe tasks below. Saved with Save."
-            : "Reviews each PR head under auto-review, and runs the recipe tasks below. Saved with Save."}
-        </p>
-      </div>
-
-      {model.onSecondChange && (
-        <div className="flex flex-col gap-1">
-          <div className="flex items-center gap-3">
-            <span className="w-[96px] shrink-0 text-[12px] text-fg-secondary">Second reviewer</span>
-            <AgentPicker
-              harnesses={model.harnesses}
-              hidden={model.hidden}
-              agent={model.second ?? null}
-              fixed={SECOND_FIXED}
-              aria-label="Second reviewer"
-              onChange={model.onSecondChange}
-            />
-          </div>
-          <p className="pl-[108px] text-[11px] leading-relaxed text-faint">
-            Reviewer B reads the code only, beside A on standard and deep rounds. A different agent gives a real
-            second opinion; Off makes every round single-reviewer. Saved with Save.
-          </p>
-        </div>
-      )}
+      <ReviewerRows model={model} />
 
       {!agent && (
         <div className="flex flex-col gap-1">
@@ -394,6 +385,87 @@ export function VerificationFields(model: VerificationFieldsModel) {
         {status.state === "none" ? startButton("setup", "Set up verification") : startButton("improve", "Improve")}
         <ActionNote message={message} blocked={blocked} onOpenTask={onOpenTask} />
       </div>
+    </div>
+  )
+}
+
+/** Who reviews: reviewer A, its fallback, and on a panel daemon reviewer B and its fallback. */
+function ReviewerRows({ model }: { model: VerificationFieldsModel }) {
+  const { agent } = model
+  return (
+    <>
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-3">
+          <span className="w-[96px] shrink-0 text-[12px] text-fg-secondary">Reviewer agent</span>
+          <AgentPicker
+            harnesses={model.harnesses}
+            hidden={model.hidden}
+            agent={agent}
+            fixed={REVIEWER_FIXED}
+            aria-label="Reviewer agent"
+            onChange={(next) => model.onAgentChange(next === "off" ? null : next)}
+          />
+        </div>
+        <p className="pl-[108px] text-[11px] leading-relaxed text-faint">
+          {model.onSecondChange
+            ? "Reviewer A runs the app and reviews each PR head under auto-review; it also runs the recipe tasks below. Saved with Save."
+            : "Reviews each PR head under auto-review, and runs the recipe tasks below. Saved with Save."}
+        </p>
+      </div>
+
+      {model.onFallbackChange && (
+        <FallbackRow model={model} role="primary" label="Fallback for A" />
+      )}
+
+      {model.onSecondChange && (
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center gap-3">
+            <span className="w-[96px] shrink-0 text-[12px] text-fg-secondary">Second reviewer</span>
+            <AgentPicker
+              harnesses={model.harnesses}
+              hidden={model.hidden}
+              agent={model.second ?? null}
+              fixed={SECOND_FIXED}
+              aria-label="Second reviewer"
+              onChange={model.onSecondChange}
+            />
+          </div>
+          <p className="pl-[108px] text-[11px] leading-relaxed text-faint">
+            Reviewer B reads the code only, beside A on standard and deep rounds. A different agent gives a real
+            second opinion; Off makes every round single-reviewer. Saved with Save.
+          </p>
+        </div>
+      )}
+
+      {model.onFallbackChange && model.onSecondChange && model.second !== "off" && (
+        <FallbackRow model={model} role="second" label="Fallback for B" />
+      )}
+    </>
+  )
+}
+
+/**
+ * One reviewer's fallback: None, or an agent that reviews in its place once
+ * per round when its task fails on the network, the provider or setup.
+ */
+function FallbackRow({ model, role, label }: { model: VerificationFieldsModel; role: keyof ReviewerFallbacks; label: string }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-3">
+        <span className="w-[96px] shrink-0 text-[12px] text-fg-secondary">{label}</span>
+        <AgentPicker
+          harnesses={model.harnesses}
+          hidden={model.hidden}
+          agent={model.fallbacks?.[role] ?? null}
+          fixed={FALLBACK_FIXED}
+          aria-label={label}
+          onChange={(next) => model.onFallbackChange?.(role, next === "off" ? null : next)}
+        />
+      </div>
+      <p className="pl-[108px] text-[11px] leading-relaxed text-faint">
+        {role === "primary" ? "Reviewer A" : "Reviewer B"}&apos;s stand-in, once per round, when its task fails on the
+        network, its provider or setup. A verdict or the time limit never falls back. Saved with Save.
+      </p>
     </div>
   )
 }
@@ -440,6 +512,8 @@ const SECOND_FIXED: FixedChoice[] = [
   { key: "@@same", value: null, label: "Same agent as the reviewer" },
   { key: "@@off", value: "off", label: "Off — one reviewer" },
 ]
+
+const FALLBACK_FIXED: FixedChoice[] = [{ key: "@@none", value: null, label: "None — the round needs you" }]
 
 const DEFAULT_EFFORT = "@@default"
 

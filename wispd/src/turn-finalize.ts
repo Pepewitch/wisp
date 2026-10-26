@@ -7,6 +7,7 @@ import {
   isTransientError,
   NETWORK_PREFIX,
   parseOutput,
+  TRANSIENT_PREFIX,
   type AdapterDef,
   type ParsedTurn,
 } from "./adapters";
@@ -173,7 +174,7 @@ async function finalizeFailedTurn(facts: FailedTurnFacts): Promise<void> {
   // A dropped network outranks a provider fault: it is the one autopilot resumes on its own.
   const networkPrefix = !limitPrefix && endedOnNetwork(facts, detail) ? NETWORK_PREFIX : "";
   const transientPrefix =
-    !limitPrefix && !networkPrefix && !facts.killReason && detail !== null && isTransientError(facts.def, detail) ? "transient: " : "";
+    !limitPrefix && !networkPrefix && !facts.killReason && detail !== null && isTransientError(facts.def, detail) ? TRANSIENT_PREFIX : "";
   const why = facts.killReason
     ? `turn killed: ${facts.killReason}`
     : facts.reportedFailure && facts.exitedCleanly
