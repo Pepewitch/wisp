@@ -155,11 +155,29 @@ export function clearMatches(): void {
   highlights.delete(FIND_HIGHLIGHT_CURRENT)
 }
 
+/**
+ * Sent from a match's element, bubbling, just before it is scrolled to: a
+ * container that clips its text (a collapsed system block) opens itself and,
+ * once the open block has committed, reveals that element again
+ * (`revealElement`), so the scroll measures the open block.
+ */
+export const FIND_REVEAL_EVENT = "wisp:find-reveal"
+
 /** Bring a match into the reading column. Centred: a match at the very edge reads as absent. */
 export function revealMatch(range: Range | undefined): void {
   const node = range?.startContainer
   const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element | null)
-  element?.scrollIntoView?.({ block: "center", inline: "nearest" })
+  if (!element) return
+  element.dispatchEvent(new Event(FIND_REVEAL_EVENT, { bubbles: true }))
+  revealElement(element)
+}
+
+/**
+ * Centred vertically, and the nearest edge sideways: a match in a table or a
+ * code fence that scrolls on its own is brought into its box as well.
+ */
+export function revealElement(element: Element): void {
+  element.scrollIntoView?.({ block: "center", inline: "nearest" })
 }
 
 /** `1/12`, or nothing to say yet. A zero count is the bar's own empty state. */

@@ -257,7 +257,9 @@ export function reserveWorkflowWake(row: WorkflowRow, result: WorkflowDecision, 
     const id = randomId("m", 12);
     // who wrote it, for delivery's framing: a schedule-steer carries the person's words
     const origin = row.type === "schedule-steer" ? "scheduled" : row.type === "heartbeat" ? "workflow" : "plugin";
-    createTaskMessage({ id, taskId: task.id, text: prompt, attachmentHash: "", origin }, false);
+    // a schedule-steer's words are the person's: no source, so they keep the person's bubble
+    const source = origin === "scheduled" ? undefined : { by: "workflow" as const, kind: row.type };
+    createTaskMessage({ id, taskId: task.id, text: prompt, attachmentHash: "", origin, source }, false);
     db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [row.id, id]);
     db.run(`INSERT INTO workflow_wakes(workflow_id, event_key, message_id, prior_checkpoint_json) VALUES (?, ?, ?, ?)
       ON CONFLICT(workflow_id, event_key) DO UPDATE SET message_id = excluded.message_id, prior_checkpoint_json = excluded.prior_checkpoint_json`,

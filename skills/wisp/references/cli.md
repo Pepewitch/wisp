@@ -214,7 +214,10 @@ wisp log <task> [turn] [-f|--follow] [--raw] [--diagnostic]
 
 `show`: state + state_detail, harness/model/effort, session id, worktree,
 branch, every turn (status, actual model, usage tokens, prompt excerpt, result
-excerpt, attached files), diffstat of the worktree. For a subtask it prints
+excerpt, attached files), diffstat of the worktree. A prompt excerpt is headed
+`you:` for the person's words, or by who wrote it when the person did not:
+`Wisp · auto-fix · PR #12 · round 2 of 5:`, `Wisp · workflow · heartbeat:`,
+`Claude Code · background update:`. For a subtask it prints
 `parent:` (kind, where its base came from) and, for a parent, a `subtasks:`
 list (id, state, kind, title). `result`: the full prompt
 and the agent's full answer for one turn (default: latest turn with a result)

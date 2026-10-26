@@ -51,6 +51,11 @@ Heartbeat turns allow pushing and merging by default without asking two extra
 questions in the form. Explicit permission values already stored on an
 existing heartbeat remain in effect.
 
+In the conversation, a heartbeat's wake is not shown as your message: it is a
+quiet block labelled **Wisp · workflow · heartbeat**, and so is any plugin
+workflow's wake, under its own type. A long one opens on its first lines with
+**Show all**.
+
 ### Schedule Steer
 
 ```sh
@@ -64,7 +69,8 @@ wall time with a time zone, or a delay from now. If the task has a live turn
 that accepts steering, the message is steered into it. Otherwise it starts the
 next turn, or waits in the queue as an ordinary message you can still edit or
 cancel. A host that slept through the instant sends it late, on recovery,
-rather than dropping it.
+rather than dropping it. The words are yours, so the conversation shows
+them as your message.
 
 ### Removed: PR CI watch and PR review watch
 

@@ -230,6 +230,8 @@ describe("daemon API contracts, batch 2", () => {
       "requested_fast",
       "requested_model",
       "result",
+      // who wrote the input when the person did not (TurnSource); null for theirs
+      "source",
       "started_at",
       "status",
       "task_id",

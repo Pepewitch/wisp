@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { canPaintMatches, findRanges, matchPosition, snippetParts } from "./find"
+import { canPaintMatches, findRanges, matchPosition, revealMatch, snippetParts } from "./find"
 
 /**
  * The haystack is the DOM on purpose (see lib/find.ts), so these tests build
@@ -93,5 +93,19 @@ describe("snippetParts", () => {
 
   it("keeps a short lead exactly as the daemon sent it", () => {
     expect(snippetParts("wrote vacuum", 6, 6).before).toBe("wrote ")
+  })
+})
+
+describe("revealMatch", () => {
+  it("reveals a match sideways as well: a table cell clipped by its own horizontal scroller", () => {
+    // a 400px-wide table box inside the conversation, the matching cell 900px to its right
+    const root = transcript('<div style="overflow-x: auto; width: 400px"><table><tr><td>left</td><td>far right cell holds reducer</td></tr></table></div>')
+    const [match] = findRanges(root, "reducer")
+    const cell = root.querySelectorAll("td")[1]!
+    const scroll = vi.fn()
+    cell.scrollIntoView = scroll
+    revealMatch(match)
+    // the browser's own reveal scrolls every scrolling ancestor, the table's box included
+    expect(scroll).toHaveBeenCalledWith({ block: "center", inline: "nearest" })
   })
 })

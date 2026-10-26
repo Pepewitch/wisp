@@ -576,6 +576,7 @@ export class AutopilotRuntime {
     const id = reserveRound(row, {
       key, prompt: roundMessage({ ...content, pr, round, file: evidence.file, autoMerge: ctx.autoMerge, signature }),
       reason: `Sent ${content.summary} (round ${round} of ${MAX_ROUNDS})`, checkpoint: next, turnCount: task.turn_count,
+      source: { by: "autopilot", kind: "auto-fix", pr: pr.number, round, rounds: MAX_ROUNDS },
     }, this.now())
     // A user message queued first still goes first; this round then waits,
     // and the next look withdraws it and plans again.

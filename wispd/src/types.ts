@@ -20,6 +20,7 @@ export { SUBTASK_KINDS, TASK_MODES, TASK_STATES } from "../../shared/api/task";
 export type {
   ApiTask,
   ApiTaskListItem,
+  AutopilotSourceKind,
   ApiTaskMessage,
   ApiTurn,
   BackgroundGroup,
@@ -45,6 +46,7 @@ export type {
   TurnInput,
   TurnInputMode,
   TurnOrigin,
+  TurnSource,
   TurnStatus,
 } from "../../shared/api/task";
 
@@ -307,6 +309,13 @@ export interface TaskMessage {
    * `workflow_id` stays the API's (clearable) link.
    */
   origin?: import("./turn-input").MessageOrigin;
+  /**
+   * What wrote it when the person did not, as JSON TurnSource (migration 28),
+   * fixed at creation: the transcript's label for the turn it starts. NULL for
+   * the person's words, a scheduled steer, and a row older than the column.
+   * Internal — served as the turn's `source`.
+   */
+  source_json?: string | null;
   /** Admission order among the task's messages; internal. */
   source_seq?: number | null;
   /** Who sent it, as the task audit names actors (migration 26); NULL for a row older than the column. Internal. */

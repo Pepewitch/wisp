@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { autopilotHistory, autopilotRow, autopilotStatus, autopilotTurnNotes, checkpointOf, resumeAutopilot, setAutopilot } from "../src/autopilot/store";
 import type { NewTaskInput } from "../src/domain/task-create";
 import { autoReviewRoute } from "../src/routes/auto-review";
-import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
+import { createTask, db, freeSlot, getTask, messagesFor, newTaskId, setTaskFields, transition } from "../src/store";
 import { activateDraft, saveDraft } from "../src/verify/recipe";
 import { RETIRE_GRACE_MS, submitVerdict } from "../src/verify/reviewer";
 import { getRound, roundOfReviewer, roundsOf, type RoundRow } from "../src/verify/rounds";
@@ -143,6 +143,8 @@ describe("auto-review", () => {
     await until(() => existsSync(file), "the author's round turn");
     const prompt = readFileSync(file, "utf8");
     expect(prompt).toContain(`[Wisp auto-review · PR #7 · round 1 of 3 · head ${HEAD.slice(0, 7)}]`);
+    const bounced = messagesFor(task.id).find((message) => message.origin === "workflow")!;
+    expect(JSON.parse(bounced.source_json!)).toEqual({ by: "autopilot", kind: "auto-review", pr: 7, round: 1, rounds: 3 });
     const feedback = prompt.match(/Read (\S+REVIEW-FEEDBACK\.md)/)![1]!;
     expect(feedback.startsWith(dir)).toBe(false);
     expect(readFileSync(feedback, "utf8")).toContain("White on white");

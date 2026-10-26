@@ -50,7 +50,7 @@ test("TTL evicts entire archived turns, preserves metadata/prose and declares le
   expect(existsSync(old.log)).toBe(false); expect(existsSync(old.err)).toBe(false);
   expect(existsSync(recent.log)).toBe(true); expect(existsSync(recent.err)).toBe(true);
   const turn = turnForTask(old.id, 1)!;
-  expect(apiTurn(turn).capture_state).toBe("evicted");
+  expect(apiTurn(turn, undefined, null).capture_state).toBe("evicted");
   expect(turn.capture_mode).toBeNull(); expect(turn.result).toBe("Retained result");
   expect(turn.capture_detail).toContain("Retention age expired");
   expect(getTurnText(old.turnId)?.text).toBe("searchable elderberry");

@@ -414,7 +414,11 @@ export async function nudgeReviewer(review: ReviewRow, adapters: Record<string, 
   if (asked && await answerQuestion(review.reviewer_task_id)) return true
   // no live question channel (or it refused): a message, which the next turn reads
   const id = randomId("m", 12)
-  createTaskMessage({ id, taskId: review.reviewer_task_id, text: verdictNudge(asked), attachmentHash: "", origin: "workflow" }, false)
+  const round = getRound(review.round_id)
+  createTaskMessage({
+    id, taskId: review.reviewer_task_id, text: verdictNudge(asked), attachmentHash: "", origin: "workflow",
+    source: { by: "autopilot", kind: "review-nudge", pr: round?.pr ?? null, round: round?.round ?? null, rounds: null },
+  }, false)
   emit({ type: "message", taskId: review.reviewer_task_id, messageId: id })
   startNextQueuedMessage(review.reviewer_task_id, adapters, cfg, id)
   return true

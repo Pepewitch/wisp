@@ -297,7 +297,10 @@ address's last new wrong token. The web UI is served at `/`.
 - `POST /api/session` — verify a token (mints nothing)
 - `GET /api/tasks?archived=1` · `POST /api/tasks` (`{repoPath, prompt,
   harness, model?, effort?, mode?, attachments?, suffixPromptId?}`)
-- `GET /api/tasks/:id/conversation` — SQLite-only task history. Protocol-1
+- `GET /api/tasks/:id/conversation` — SQLite-only task history. Each turn's
+  `source` says who wrote its input when the person did not (`autopilot` with
+  its kind, PR and round; `workflow` with its type; `harness` for a harness's
+  own notice), and is null for the person's words. Protocol-1
   clients fall back to the legacy Git-aware `GET /api/tasks/:id` when an older
   daemon does not provide this additive route
 - `POST /api/tasks/:id/send` (`{message, attachments?, suffixPromptId?,

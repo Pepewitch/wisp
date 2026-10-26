@@ -5,10 +5,11 @@ import { subscribe } from "../src/events";
 import { type PrSnapshot } from "../src/autopilot/github";
 import { SEND_DELAY_MS } from "../src/autopilot/runtime";
 import { autopilotHistory, autopilotRow, autopilotStatus, checkpointOf, reserveRound, resumeAutopilot, sendPendingFix, setAutopilot, skipPendingFix, withdrawQueuedRound, writeAutopilotCheckpoint } from "../src/autopilot/store";
+import { conversationDetail } from "../src/routes/task-conversation";
 import { taskMessageRoute } from "../src/routes/task-messages";
 import { db, getTask, setTaskFields } from "../src/store";
 import { pauseTaskWorkflows } from "../src/workflows/store";
-import { HEAD, START, forgetTasks, doneTask, snapshot, fakeGitHub, runtime, seed, pass, until, capture, queue } from "./autopilot-harness";
+import { FIX_SOURCE, HEAD, START, forgetTasks, doneTask, snapshot, fakeGitHub, runtime, seed, pass, until, capture, queue } from "./autopilot-harness";
 
 afterEach(forgetTasks);
 
@@ -42,6 +43,9 @@ describe("auto-fix", () => {
     expect(prompt.startsWith("<wisp>\n")).toBe(true);
     expect(prompt.split("\n")).toContain(`[Wisp auto-fix · PR #7 · round 1 of 5 · head ${HEAD.slice(0, 7)}]`);
     expect(prompt.trimEnd().endsWith("</wisp>")).toBe(true);
+    // its turn is served labelled by the facts stored with the round, not by its text
+    await until(() => getTask(task.id)?.state === "done", "the round to settle");
+    expect(conversationDetail(getTask(task.id)!, adapters).turns.at(-1)?.source).toEqual({ by: "autopilot", kind: "auto-fix", pr: 7, round: 1, rounds: 5 });
     // the standing note travels with every turn while auto-fix is on: how to sign GitHub posts
     expect(prompt).toContain(`End every comment, review or reply you post on GitHub with: — capture via Wisp <!-- wisp:task=${task.id} -->`);
     const evidence = readFileSync(prompt.match(/Read (\S+PR-FEEDBACK\.md)/)![1]!, "utf8");
@@ -166,7 +170,7 @@ describe("auto-fix", () => {
     // it was done before a round came due: the round coming back does not make it done again
     writeAutopilotCheckpoint(autopilotRow(task.id)!, { done: true }, new Date());
     const row = autopilotRow(task.id)!;
-    expect(reserveRound(row, { key: "ci:x:test", prompt: "fix it", reason: "Sent test failing (round 1 of 3)", checkpoint: { ...checkpointOf(row), rounds: 1 }, turnCount: 0 }, new Date())).not.toBeNull();
+    expect(reserveRound(row, { key: "ci:x:test", prompt: "fix it", reason: "Sent test failing (round 1 of 3)", checkpoint: { ...checkpointOf(row), rounds: 1 }, turnCount: 0, source: FIX_SOURCE }, new Date())).not.toBeNull();
     expect(checkpointOf(autopilotRow(task.id)!).rounds).toBe(1);
     expect(withdrawQueuedRound(autopilotRow(task.id)!)).toBe(true);
     expect(checkpointOf(autopilotRow(task.id)!).rounds).toBeUndefined();
@@ -177,12 +181,12 @@ describe("auto-fix", () => {
     const task = doneTask();
     setAutopilot(task.id, { autoFix: true });
     const round = (row = autopilotRow(task.id)!) =>
-      reserveRound(row, { key: "ci:x:test", prompt: "fix it", reason: "Sent", checkpoint: { ...checkpointOf(row), rounds: 1 }, turnCount: 0 }, new Date());
+      reserveRound(row, { key: "ci:x:test", prompt: "fix it", reason: "Sent", checkpoint: { ...checkpointOf(row), rounds: 1 }, turnCount: 0, source: FIX_SOURCE }, new Date());
     queue(task.id, "the owner's own message");
     expect(round()).toBeNull();
     db.run("DELETE FROM task_messages WHERE task_id = ?", [task.id]);
     // a turn since the look began makes its evidence stale
-    expect(reserveRound(autopilotRow(task.id)!, { key: "ci:x:test", prompt: "fix it", reason: "Sent", checkpoint: {}, turnCount: 7 }, new Date())).toBeNull();
+    expect(reserveRound(autopilotRow(task.id)!, { key: "ci:x:test", prompt: "fix it", reason: "Sent", checkpoint: {}, turnCount: 7, source: FIX_SOURCE }, new Date())).toBeNull();
     // the round came from a countdown, which the cancel below restores
     writeAutopilotCheckpoint(autopilotRow(task.id)!, { pending: { key: "ci:x:test", summary: "test failing", sendsAt: new Date().toISOString() } }, new Date());
     const id = round()!;
@@ -273,7 +277,7 @@ describe("auto-fix", () => {
     setAutopilot(task.id, { autoFix: true });
     writeAutopilotCheckpoint(autopilotRow(task.id)!, { pending: { key: "ci:x:test", summary: "test failing", sendsAt: new Date().toISOString() } }, new Date());
     const row = autopilotRow(task.id)!;
-    const id = reserveRound(row, { key: "ci:x:test", prompt: "fix it", reason: "Sent", checkpoint: checkpointOf(row), turnCount: 0 }, new Date())!;
+    const id = reserveRound(row, { key: "ci:x:test", prompt: "fix it", reason: "Sent", checkpoint: checkpointOf(row), turnCount: 0, source: FIX_SOURCE }, new Date())!;
     const path = `/api/tasks/${task.id}/messages/${id}`;
     const response = await taskMessageRoute(new Request(`http://localhost${path}`, { method: "DELETE" }), path, "DELETE");
     expect(response?.status).toBe(200);

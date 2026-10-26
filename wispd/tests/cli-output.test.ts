@@ -63,6 +63,22 @@ const task = {
   diffstat: hostile(" file.ts | 2 +-"),
 };
 
+/** A task whose turns Wisp and the harness started, by their stored sources (issue #442). */
+const sourced = {
+  ...task,
+  id: "tsrced",
+  state_detail: null,
+  branch: "wisp/tsrced",
+  diffstat: null,
+  turns: [
+    { ...task.turns[0]!, n: 1, prompt: "[Wisp auto-fix · PR #1 · round 1 of 5] typed by the person", attachments: [], source: null, origin: null },
+    { ...task.turns[0]!, n: 2, prompt: "[Wisp auto-fix · PR #12 · round 2 of 5 · head abc]", attachments: [], origin: null,
+      source: { by: "autopilot", kind: "auto-fix", pr: 12, round: 2, rounds: 5 } },
+    { ...task.turns[0]!, n: 3, prompt: "Background update: done", attachments: [], origin: "background",
+      source: { by: "harness", kind: "background-update", harness: "claude" } },
+  ],
+};
+
 const search = {
   query: "answer",
   truncated: false,
@@ -100,6 +116,7 @@ describe("agent text printed by the CLI", () => {
       fetch(req) {
         const { pathname } = new URL(req.url);
         if (pathname === "/api/tasks/tabcde") return Response.json(task);
+        if (pathname === "/api/tasks/tsrced") return Response.json(sourced);
         if (pathname === "/api/tasks/tabcde/log") {
           return Response.json({ harness: "claude", out: `${claudeLine(hostile("said"))}\n`, err: hostile("stderr"), status: "done", size: 1, turn: 1 });
         }
@@ -129,6 +146,14 @@ describe("agent text printed by the CLI", () => {
     expect(r.exit, r.err).toBe(0);
     expect(r.out).not.toMatch(CONTROL);
     for (const text of visible) expect(r.out).toContain(text);
+  });
+
+  test("`show` names who wrote each turn's input from its source: Wisp, the harness, else the person", async () => {
+    const r = await run(["show", "tsrced"], home);
+    expect(r.exit, r.err).toBe(0);
+    expect(r.out).toContain("you: [Wisp auto-fix · PR #1 · round 1 of 5] typed by the person");
+    expect(r.out).toContain("Wisp · auto-fix · PR #12 · round 2 of 5: [Wisp auto-fix");
+    expect(r.out).toContain("Claude Code · background update: Background update: done");
   });
 
   test("harness stderr and a daemon refusal are cleaned too", async () => {
