@@ -10,7 +10,7 @@ import { useTaskSummary, type SummaryModel } from "@/hooks/useTaskSummary"
 import { useMinuteTick, useTick } from "@/hooks/useTick"
 import { repositoryUrl } from "@/lib/autopilot-history"
 import { AUTOPILOT_RAIL_TONE, autopilotReason, autopilotTint } from "@/lib/autopilot-words"
-import { externalLinkProps } from "@/lib/external-links"
+import { externalLinkProps, type ExternalLinkProps } from "@/lib/external-links"
 import { formatTokens } from "@/lib/format"
 import { PULL_REQUEST_ICON_TONE, pullRequestIconTone } from "@/lib/pull-request-tone"
 import { pullRequestWords } from "@/lib/pull-request-words"
@@ -110,12 +110,18 @@ const FOCUS = "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:out
  * the motion tokens (index.css, `.wisp-unfold`). Which rows are open is
  * remembered per row, for every task.
  */
-function Row({ row, label, value, title, children }: {
+function Row({ row, label, value, title, link, children }: {
   row: SummaryRow
   label: string
   value: ReactNode
   /** the value's hover, when it is truncated */
   title?: string
+  /**
+   * Where the value itself goes in one click, without opening the row. The
+   * label and chevron still open it: the row splits into two targets, as a
+   * link cannot sit inside the row's button.
+   */
+  link?: ExternalLinkProps | null
   /** what the row opens to; none, and it does not open */
   children?: ReactNode
 }) {
@@ -124,25 +130,54 @@ function Row({ row, label, value, title, children }: {
   const touch = useContext(Touch)
   const open = fixed ? fixed.includes(row) : remembered.isOpen(row)
   const rowClass = touch ? ROW_TOUCH : ROW
+  const chevron = (
+    <ChevronRight
+      aria-hidden
+      className={cn(touch ? "size-3" : "size-2.5", "shrink-0 text-faint", children ? "wisp-turn group-data-panel-open:rotate-90" : "invisible")}
+    />
+  )
+  const labelWord = <span className="shrink-0 text-fg-secondary">{label}</span>
+  const valueClass = "ml-auto flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground tabular-nums"
   const line = (
     <>
-      <ChevronRight
-        aria-hidden
-        className={cn(touch ? "size-3" : "size-2.5", "shrink-0 text-faint", children ? "wisp-turn group-data-panel-open:rotate-90" : "invisible")}
-      />
-      <span className="shrink-0 text-fg-secondary">{label}</span>
-      <span title={title} className="ml-auto flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground tabular-nums">
+      {chevron}
+      {labelWord}
+      <span title={title} className={valueClass}>
         {value}
       </span>
     </>
   )
   if (!children) return <div className={rowClass}>{line}</div>
+  const panel = (
+    <CollapsibleContent className="wisp-unfold">
+      <div className={cn("flex flex-col", touch ? "gap-1 pt-1 pr-3 pb-2 pl-8 text-[13px]" : "gap-1.5 pt-1.5 pr-2 pb-2 pl-6 text-[12px]")}>{children}</div>
+    </CollapsibleContent>
+  )
+  if (link) {
+    return (
+      <Collapsible open={open} onOpenChange={(next) => !fixed && remembered.set(row, next)}>
+        <div className={cn(rowClass, "gap-0 px-0 hover:bg-hover has-data-panel-open:bg-hover")}>
+          <CollapsibleTrigger className={cn("group flex shrink-0 items-center gap-2 self-stretch rounded-lg text-left whitespace-nowrap", touch ? "gap-2.5 pl-3" : "pl-2", FOCUS)}>
+            {chevron}
+            {labelWord}
+          </CollapsibleTrigger>
+          <a
+            {...link}
+            title={title ? `${title} — open on GitHub` : "Open on GitHub"}
+            className={cn(valueClass, "group/link self-stretch overflow-hidden rounded-lg pl-2 underline-offset-2 hover:text-foreground", touch ? "pr-3" : "pr-2", FOCUS)}
+          >
+            {value}
+            <span aria-hidden className="shrink-0 text-faint opacity-0 group-hover/link:opacity-100 group-focus-visible/link:opacity-100">↗</span>
+          </a>
+        </div>
+        {panel}
+      </Collapsible>
+    )
+  }
   return (
     <Collapsible open={open} onOpenChange={(next) => !fixed && remembered.set(row, next)}>
       <CollapsibleTrigger className={cn("group hover:bg-hover data-panel-open:bg-hover", rowClass, FOCUS)}>{line}</CollapsibleTrigger>
-      <CollapsibleContent className="wisp-unfold">
-        <div className={cn("flex flex-col", touch ? "gap-1 pt-1 pr-3 pb-2 pl-8 text-[13px]" : "gap-1.5 pt-1.5 pr-2 pb-2 pl-6 text-[12px]")}>{children}</div>
-      </CollapsibleContent>
+      {panel}
     </Collapsible>
   )
 }
@@ -189,7 +224,7 @@ function LeadRow({ model, onJump, onFold }: { model: SummaryModel; onJump: () =>
   )
 }
 
-/** `#318 · Open`; open, it says CI, review and whether it can merge, and links to GitHub. */
+/** `#318 · Open`, which opens the PR on GitHub in one click; the row itself opens to CI, review and whether it can merge. */
 function PullRequestRow({ pullRequest, autopilot }: { pullRequest?: PullRequestStatus; autopilot: ApiTask["autopilot"] }) {
   const touch = useContext(Touch)
   if (!pullRequest || pullRequest.kind === "unsupported") return null
@@ -212,6 +247,7 @@ function PullRequestRow({ pullRequest, autopilot }: { pullRequest?: PullRequestS
       row="pull-request"
       label="Pull request"
       title={`PR #${found.number} · ${words.lifecycle} — ${found.title}`}
+      link={link}
       value={
         <>
           <BranchRequest aria-hidden className={cn("size-3.5 shrink-0", PULL_REQUEST_ICON_TONE[pullRequestIconTone(found)])} />
