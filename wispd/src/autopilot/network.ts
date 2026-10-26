@@ -115,6 +115,7 @@ export function networkLook(row: WorkflowRow, task: Task, checkpoint: AutopilotC
     key: plan.key, prompt: NETWORK_RESUME_MESSAGE, reason: `Resumed after the network dropped (${plan.resume} of ${NETWORK_RESUMES})`,
     checkpoint: { ...checkpoint, network: { messageId, resumes: plan.resume } }, turnCount: task.turn_count, messageId,
     ready: taskIsNetworkPaused, about: "task", by: checkpoint.by, kind: "network-resume",
+    source: { by: "autopilot", kind: "network-resume", pr: checkpoint.pr ?? null, round: null, rounds: null },
   }, deps.now)
   if (id) deps.start(id)
   return true

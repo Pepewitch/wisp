@@ -50,6 +50,7 @@ export type {
   TurnCaptureState,
   TurnDiagnosticState,
   TurnInput,
+  TurnSource,
   TurnStatus,
   TurnUsage,
   UsageSummary,
@@ -138,6 +139,7 @@ type TaskRow = FromAnyDaemon<
 export type Turn = FromAnyDaemon<
   ApiTurn,
   | "outputs"
+  | "source"
   | "origin"
   | "context_n"
   | "harness"

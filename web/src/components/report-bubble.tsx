@@ -1,29 +1,26 @@
 import { CopyButton } from "@/components/copy-button"
 import { Flowchart } from "@/components/icons"
-import { BUBBLE_ACTION, BubbleTimestamp } from "@/components/person-bubble"
+import { BUBBLE_ACTION } from "@/components/person-bubble"
+import { SystemFrame } from "@/components/system-turn"
 import { parseReportText } from "@/lib/report-text"
+
+const REPORT_LABEL = { who: "Wisp", parts: ["reports from subtasks"] }
 
 /**
  * The head of a turn a subtask report started. Wisp wrote that prompt, not
- * the person, so it never wears the person's right-aligned bubble: it sits
- * on the left, under Wisp's name, with Wisp's facts first and each child's
- * own words quoted below them, labelled as theirs.
+ * the person, so it wears the system frame (system-turn.tsx): Wisp's facts
+ * first, and each child's own words quoted below them, labelled as theirs.
  */
 export function ReportBubble({ text, at }: { text: string; at: string }) {
   const { facts, quotes } = parseReportText(text)
   return (
-    <div data-report-turn className="group/bubble relative rounded-xl rounded-bl-[4px] border border-dashed border-border px-3.5 py-2.5">
-      <div className="flex items-center gap-1.5 text-[10.5px] text-faint">
-        <Flowchart aria-hidden className="size-3.5 shrink-0" />
-        <span className="font-medium text-muted-foreground">Wisp</span>
-        <span aria-hidden>·</span>
-        <span>reports from subtasks</span>
-        <span aria-hidden>·</span>
-        <BubbleTimestamp at={at} />
-        <span className="ml-auto pointer:opacity-0 pointer:group-hover/bubble:opacity-100 pointer:group-focus-within/bubble:opacity-100">
-          <CopyButton text={text} label="Copy the reports" copiedLabel="Copied the reports" className={BUBBLE_ACTION} />
-        </span>
-      </div>
+    <SystemFrame
+      icon={Flowchart}
+      label={REPORT_LABEL}
+      at={at}
+      data={{ "data-report-turn": "" }}
+      copy={<CopyButton text={text} label="Copy the reports" copiedLabel="Copied the reports" className={BUBBLE_ACTION} />}
+    >
       <div className="mt-1.5 space-y-0.5 text-[12px] leading-relaxed text-fg-secondary">
         {facts.map((line, index) => (
           <p key={index} className="wrap-anywhere">{line}</p>
@@ -37,6 +34,6 @@ export function ReportBubble({ text, at }: { text: string; at: string }) {
           </blockquote>
         </figure>
       ))}
-    </div>
+    </SystemFrame>
   )
 }

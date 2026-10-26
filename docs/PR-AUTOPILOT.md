@@ -222,7 +222,10 @@ short message pointing at a `PR-FEEDBACK.md` file beside the task's data (never
 in the worktree). The file lists what failed and ends with the logs that
 explain it: each failing GitHub Actions job's log from the first step that
 failed to its last error (runner setup and checkout before it are cut), or a
-non-Actions check's own report. A round is about the red check
+non-Actions check's own report. In the conversation a round is not shown as
+your message: it is a quiet block labelled with its kind, PR and round
+(**Wisp · auto-fix · PR #12 · round 2 of 5**), and the same goes for
+auto-review's findings and a resume after the network dropped. A round is about the red check
 and the jobs that failed beside it in the same workflow run, so when the
 required check is an aggregator (a `test` job that needs six shards) the agent
 also reads the shard that failed, not only the aggregator's "a required part

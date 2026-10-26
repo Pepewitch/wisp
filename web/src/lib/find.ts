@@ -155,10 +155,18 @@ export function clearMatches(): void {
   highlights.delete(FIND_HIGHLIGHT_CURRENT)
 }
 
+/**
+ * Sent from a match's element, bubbling, just before it is scrolled to: a
+ * container that clips its text (a collapsed system block) opens itself,
+ * synchronously, so the match is on screen when the scroll lands.
+ */
+export const FIND_REVEAL_EVENT = "wisp:find-reveal"
+
 /** Bring a match into the reading column. Centred: a match at the very edge reads as absent. */
 export function revealMatch(range: Range | undefined): void {
   const node = range?.startContainer
   const element = node?.nodeType === Node.TEXT_NODE ? node.parentElement : (node as Element | null)
+  element?.dispatchEvent(new Event(FIND_REVEAL_EVENT, { bubbles: true }))
   element?.scrollIntoView?.({ block: "center", inline: "nearest" })
 }
 

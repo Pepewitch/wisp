@@ -9,6 +9,7 @@ import { processGroupAlive, signalProcessGroup } from "../src/process-tree";
 import { processStartTime } from "../src/procid";
 import { hasRunningTurn, interruptTurn, recoverOrphanedTurns, startTurn, submitTaskMessage } from "../src/runner";
 import { archiveTaskRows } from "../src/domain/archive";
+import { conversationDetail } from "../src/routes/task-conversation";
 import {
   createTask,
   createTurn,
@@ -534,6 +535,9 @@ describe("Claude background work outliving its turn", () => {
     // Nobody asked for the follow-up: it is marked as background work's, and
     // its finish is no news — the answer's done is the only webhook event.
     expect([first!.origin, followUp!.origin]).toEqual([null, "background"]);
+    // and it is served as the harness's own notice, so the transcript never shows it as the person's words
+    expect(conversationDetail(getTask(task.id)!, { [task.harness]: def }).turns.map((turn) => turn.source))
+      .toEqual([null, { by: "harness", kind: "background-update", harness: task.harness }]);
     expect(listTasksWithLatestTurn(false, false).find((row) => row.task.id === task.id)?.latestTurn.background).toBe(true);
     expect(outboxEvents(task.id)).toEqual(["done"]);
   });

@@ -35,8 +35,8 @@ test("publication is manifest-scoped, byte-sniffed, deduplicated, and emits an o
     expect(image.name).toBe("screenshot.jpg");
     expect(image.mediaType).toBe("image/png");
     expect(publishOutputImage(f.turnId, samplePng(), "duplicate.png", "native")).toEqual(image);
-    expect(apiTurn(getTurn(f.turnId)!).outputs).toEqual([image]);
-    expect(apiTurn(getTurn(f.turnId)!)).not.toHaveProperty("outputs_json");
+    expect(apiTurn(getTurn(f.turnId)!, undefined, null).outputs).toEqual([image]);
+    expect(apiTurn(getTurn(f.turnId)!, undefined, null)).not.toHaveProperty("outputs_json");
     expect(events).toEqual([{ type: "outputs", taskId: f.task.id, n: 1, outputs: [image] }]);
     const response = await request(f.task.id, `/${image.id}`);
     expect(response.status).toBe(200);

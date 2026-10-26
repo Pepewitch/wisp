@@ -2,7 +2,7 @@ import { cleanupSummary } from "../archive-progress";
 import { formatUsage, isCompactPrompt, type AdapterDef, type UsageSummary } from "../adapters";
 import { parseOutputManifest } from "../outputs";
 import { parseAttachmentManifest } from "../attachments";
-import { turnCaptureState, turnDiagnosticState, type ApiTask, type ApiTaskMessage, type ApiTurn, type Task, type TaskMessage, type Turn } from "../types";
+import { turnCaptureState, turnDiagnosticState, type ApiTask, type ApiTaskMessage, type ApiTurn, type Task, type TaskMessage, type Turn, type TurnSource } from "../types";
 import { logFailure } from "../failure-log";
 import { safeString } from "../text";
 import { typeName } from "../validate";
@@ -43,6 +43,7 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
     deferred,
     fast,
     origin: _origin,
+    source_json: _source,
     source_seq: _sourceSeq,
     actor: _actor,
     ...rest
@@ -54,6 +55,29 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
     fast: fast !== 0,
     attachments: parseAttachmentManifest(attachments_json),
   };
+}
+
+/** A message's stored source; null for none, or for a blob that does not parse (a label is never guessed). */
+function storedSource(json: string | null | undefined): TurnSource | null {
+  if (!json) return null;
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return parsed && typeof parsed === "object" && "by" in parsed && "kind" in parsed ? parsed as TurnSource : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Who wrote a turn's input when the person did not (TurnSource). A
+ * background call is its harness's own notice; a message's turn reads the
+ * source its message was created with, from `messages` (the response's own
+ * rows, keyed by id). A report turn has its own block (origin `report`).
+ */
+export function turnSource(turn: Turn, messages: ReadonlyMap<string, TaskMessage>): TurnSource | null {
+  if (turn.origin === "background") return { by: "harness", kind: "background-update", harness: turn.harness };
+  if (turn.origin === "report" || !turn.source_message_id) return null;
+  return storedSource(messages.get(turn.source_message_id)?.source_json);
 }
 
 /** Parse and normalize one stored usage blob without exposing its storage shape. */
@@ -76,9 +100,9 @@ export function apiTurnUsage(usageJson: string | null, def?: AdapterDef): UsageS
  * B). A client never sees either column: they are internal encodings, and a
  * client that parsed them would be coupled to them. `def` is the task's
  * adapter; undefined (a harness the daemon no longer knows) serves usage null
- * rather than guessing at a shape.
+ * rather than guessing at a shape. `source` is turnSource's answer.
  */
-export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
+export function apiTurn(t: Turn, def: AdapterDef | undefined, source: TurnSource | null): ApiTurn {
   const {
     attachments_json,
     outputs_json,
@@ -110,6 +134,7 @@ export function apiTurn(t: Turn, def?: AdapterDef): ApiTurn {
     usage: apiTurnUsage(usage_json, def),
     capture_categories: captureCategories,
     requested_fast: requested_fast !== 0,
+    source,
   };
 }
 

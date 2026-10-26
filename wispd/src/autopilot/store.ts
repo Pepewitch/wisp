@@ -10,7 +10,7 @@ import type { AutopilotBy, AutopilotHistoryEntry, AutopilotState, AutopilotStatu
 import { db } from "../store-database"
 import { emit } from "../events"
 import { createTaskMessage, getTask, randomId } from "../store"
-import type { TaskState } from "../types"
+import type { TaskState, TurnSource } from "../types"
 import { keyParts, markerOf, withDelivered } from "./feedback"
 import { taskIsIdle } from "./idle"
 import { isTaskMerging } from "./merging"
@@ -729,6 +729,8 @@ export function reserveRound(row: WorkflowRow, round: {
   messageId?: string
   /** files the message carries (attachments.ts attachmentManifest), and their fingerprint */
   attachments?: { json: string; hash: string }
+  /** the transcript's label for the turn it starts: which kind, PR and round */
+  source: TurnSource
 }, now: Date): string | null {
   const messageId = db.transaction(() => {
     const current = getWorkflow(row.id), task = getTask(row.task_id)
@@ -739,7 +741,7 @@ export function reserveRound(row: WorkflowRow, round: {
     if (!(round.ready ?? taskIsIdle)(task) || task.turn_count !== round.turnCount) return null
     const id = round.messageId ?? randomId("m", 12)
     createTaskMessage({
-      id, taskId: task.id, text: round.prompt, attachmentHash: round.attachments?.hash ?? "", attachmentsJson: round.attachments?.json, origin: "workflow",
+      id, taskId: task.id, text: round.prompt, attachmentHash: round.attachments?.hash ?? "", attachmentsJson: round.attachments?.json, origin: "workflow", source: round.source,
     }, false)
     db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [row.id, id])
     db.run(`INSERT INTO workflow_wakes(workflow_id, event_key, message_id, prior_checkpoint_json) VALUES (?, ?, ?, ?)

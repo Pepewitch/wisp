@@ -9,7 +9,7 @@
 import { db } from "./store-database";
 import { emit } from "./events";
 import { getTask, randomId, switchTaskAgentBody, type TaskAgentTarget } from "./store";
-import type { Task, TaskMessage, TaskMessageDelivery } from "./types";
+import type { Task, TaskMessage, TaskMessageDelivery, TurnSource } from "./types";
 
 const now = () => new Date().toISOString();
 
@@ -30,6 +30,8 @@ interface CreateTaskMessageInput {
   attachmentsJson?: string | null;
   /** who wrote it; fixed at creation, so delivery can frame it */
   origin?: "human" | "workflow" | "scheduled" | "plugin" | "subtask";
+  /** what wrote it when the person did not: the transcript's label for its turn */
+  source?: TurnSource;
   /** held for the next turn: never steered, and behind anything sent later without the hold */
   deferred?: boolean;
   /** who sent it, as the task audit names actors; fixed at creation, and kept by a retry */
@@ -58,8 +60,8 @@ function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessa
   db.run(
     `INSERT INTO task_messages
       (id, task_id, context_n, harness, model, effort, fast, text, status, delivery, turn_n,
-       attachment_hash, attachments_json, origin, source_seq, deferred, actor, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       attachment_hash, attachments_json, origin, source_json, source_seq, deferred, actor, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.id,
       input.taskId,
@@ -72,6 +74,7 @@ function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessa
       input.attachmentHash,
       input.attachmentsJson ?? null,
       origin,
+      input.source ? JSON.stringify(input.source) : null,
       seq,
       input.deferred ? 1 : 0,
       input.actor ?? null,

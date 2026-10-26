@@ -84,6 +84,8 @@ test("scheduled steer waits for its instant, sends once, and completes", async (
   await runtime.tick();
   expect(messagesFor(item.taskId)).toHaveLength(1);
   expect(messagesFor(item.taskId)[0]?.text).toBe("Use the staged rollout");
+  // the person's words, sent later: no source, so the transcript keeps their bubble
+  expect(messagesFor(item.taskId)[0]?.source_json).toBeNull();
   expect(getWorkflow(item.id)?.state).toBe("completed");
   expect(getWorkflow(item.id)?.reason).toBe("Scheduled steer sent");
   await new WorkflowRuntime(loadConfig(), {}, { now: () => clock, dispatch }).tick();
@@ -110,6 +112,8 @@ test("heartbeat is durable, writes its completion footer outside the worktree, a
   const runtime = new WorkflowRuntime(loadConfig(), {}, { now: () => clock, dispatch });
   await runtime.tick();
   expect(messagesFor(item.taskId)).toHaveLength(1);
+  // Wisp's wake: the transcript labels it "Wisp · workflow · heartbeat"
+  expect(JSON.parse(messagesFor(item.taskId)[0]!.source_json!)).toEqual({ by: "workflow", kind: "heartbeat" });
   expect(nextQueuedMessage(item.taskId)).toBeNull();
   const file = join(TASKS_DIR, item.taskId, "workflows", item.id, "wake-1", "HEARTBEAT.md");
   expect(existsSync(file)).toBe(true);

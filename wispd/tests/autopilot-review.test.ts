@@ -7,7 +7,7 @@ import { startNextQueuedMessage } from "../src/runner";
 import { loadConfig } from "../src/config";
 import { db, getTask, setTaskFields } from "../src/store";
 import { judgeLogPath } from "../src/autopilot/judge";
-import { HEAD, START, forgetTasks, doneTask, snapshot, fakeGitHub, runtime, seed, pass, until, capture, queue } from "./autopilot-harness";
+import { FIX_SOURCE, HEAD, START, forgetTasks, doneTask, snapshot, fakeGitHub, runtime, seed, pass, until, capture, queue } from "./autopilot-harness";
 
 afterEach(forgetTasks);
 
@@ -332,7 +332,7 @@ describe("auto-fix for review feedback", () => {
     setAutopilot(task.id, { autoFix: true });
     const row = autopilotRow(task.id)!;
     const key = `ci:${HEAD}:test|fb:thread:PRRT_1@${SOON}`;
-    const id = reserveRound(row, { key, prompt: "fix it", reason: "Sent", checkpoint: checkpointOf(row), turnCount: 0 }, new Date())!;
+    const id = reserveRound(row, { key, prompt: "fix it", reason: "Sent", checkpoint: checkpointOf(row), turnCount: 0, source: FIX_SOURCE }, new Date())!;
     const path = `/api/tasks/${task.id}/messages/${id}`;
     expect((await taskMessageRoute(new Request(`http://localhost${path}`, { method: "DELETE" }), path, "DELETE"))?.status).toBe(200);
     const checkpoint = checkpointOf(autopilotRow(task.id)!);

@@ -16,6 +16,8 @@ import { createTask, createTaskMessage, db, freeSlot, getTask, newTaskId, newTas
 import type { Task } from "../src/types";
 
 export const HEAD = "c".repeat(40);
+/** The label a test round carries; reserveRound always takes one. */
+export const FIX_SOURCE = { by: "autopilot" as const, kind: "auto-fix" as const, pr: 7, round: 1, rounds: 5 };
 export const START = Date.parse("2026-09-23T12:00:00Z");
 export const created: string[] = [];
 /** Register with `afterEach(forgetTasks)` in each file that uses these fixtures. */

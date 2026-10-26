@@ -90,6 +90,7 @@ describe("a turn that ended on the network, under autopilot", () => {
     await lookAfter(t, 60_000);
     const [message] = workflowMessages(t.task.id);
     expect(message?.text).toBe(NETWORK_RESUME_MESSAGE);
+    expect(JSON.parse(message!.source_json!)).toMatchObject({ by: "autopilot", kind: "network-resume", round: null });
     await settled(t.task.id);
     expect(getTask(t.task.id)!.state).toBe("done");
     expect(t.prompts().at(-1)).toContain(NETWORK_RESUME_MESSAGE);

@@ -46,6 +46,27 @@ export type TurnStatus = "running" | "done" | "failed" | "interrupted";
  */
 /** `background`: work the agent started woke it; `report`: a subtask report started it. Neither is news when it ends done. */
 export type TurnOrigin = "background" | "report";
+
+/** What autopilot sent: a round of CI and review feedback, auto-review's findings, a reviewer's verdict reminder, a resume after the network dropped. */
+export type AutopilotSourceKind = "auto-fix" | "auto-review" | "review-nudge" | "network-resume";
+
+/**
+ * Who wrote a turn's input when the person did not, so the transcript labels
+ * it from facts rather than from its text. Fixed when the input was created
+ * (a message's `source_json`) or when the turn was (a `background` origin);
+ * null for the person's own words, and for an input stored before sources
+ * were (it keeps the person's bubble rather than a guess).
+ *
+ *  - `autopilot`: Wisp's autopilot; `pr` and `round` of `rounds` when known.
+ *  - `workflow`: a workflow's wake; `kind` is its type (`heartbeat`, or a
+ *    plugin's). A scheduled steer is the person's words and has none.
+ *  - `harness`: the harness's own notice, such as a background command
+ *    finishing; `harness` names it, so it never reads as Wisp's.
+ */
+export type TurnSource =
+  | { by: "autopilot"; kind: AutopilotSourceKind; pr: number | null; round: number | null; rounds: number | null }
+  | { by: "workflow"; kind: string }
+  | { by: "harness"; kind: "background-update"; harness: string };
 /** Durable selection of the turn-capture semantics used when a process starts. */
 export type TurnCaptureMode = "recorder-v1";
 export type TurnCaptureState = "complete" | "degraded" | "disabled" | "legacy" | "evicted";
@@ -265,6 +286,8 @@ export interface ApiTurn {
   prompt: string;
   /** Null for a message's turn; see TurnOrigin. */
   origin: TurnOrigin | null;
+  /** Who wrote the input when the person did not; null for theirs. See TurnSource. */
+  source: TurnSource | null;
   /** Adapter-declared lifecycle; absent means an ordinary agent turn. */
   operation?: "compact";
   result: string | null;

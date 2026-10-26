@@ -22,6 +22,7 @@ import { ChevronRight } from "@/components/icons"
 import { MessageAttachments } from "@/components/message-attachments"
 import { QueuedMessage } from "@/components/queued-message"
 import { ReportBubble } from "@/components/report-bubble"
+import { SystemTurn } from "@/components/system-turn"
 import { FileViewerProvider } from "@/components/file-viewer"
 import { Prose } from "@/components/prose"
 import { QuestionnaireProvider } from "@/components/questionnaire-context"
@@ -46,6 +47,7 @@ import {
 } from "@/lib/activity"
 import { countPendingQuestions } from "@/lib/questionnaire"
 import { duration } from "@/lib/state"
+import { sourceLabel } from "@/lib/turn-source"
 import { useDaemonRuntime, useDaemonTransport } from "@/lib/runtime"
 import { scheduleConversationPaint } from "@/lib/task-switch-performance"
 import type { ConversationDetail, TaskMessage, Turn } from "@/lib/types"
@@ -387,10 +389,15 @@ const TurnBlock = memo(function TurnBlock({
   // Live frames need only their activity items. Avoid materializing the
   // accumulated parent prose until a settled turn needs duplicate detection.
   const conclusion = conclusionText(turn, running ? undefined : timeline?.text)
+  // Wisp's or the harness's input, labelled from its stored source; a source
+  // this client cannot name keeps the person's bubble, as an older turn does
+  const label = turn.source ? sourceLabel(turn.source) : null
 
   return (
     <article data-turn={turn.n} data-status={turn.status} className={first ? "" : "pt-[30px]"}>
-      {turn.origin === "report" ? <ReportBubble text={turn.prompt} at={turn.started_at} /> : <PersonBubble
+      {turn.origin === "report" ? <ReportBubble text={turn.prompt} at={turn.started_at} /> : turn.source && label ? (
+        <SystemTurn source={turn.source} label={label} text={turn.prompt} at={turn.started_at} />
+      ) : <PersonBubble
         actions={<UserMessageCopyButton text={turn.prompt} />}
         caption={
           <>

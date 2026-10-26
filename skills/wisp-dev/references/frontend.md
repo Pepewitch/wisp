@@ -461,6 +461,37 @@ Wisp's own terse vocabulary for the words (`just now`, `5 min ago`, `3h ago`,
 "2h ago". `since()` in `lib/state.ts` is that same function, so a sidebar row
 and a prompt bubble can never disagree. Never hand-roll a second one.
 
+### A turn nobody typed is not a bubble
+
+The bubble is the person's, so a turn whose input they did not write never
+wears it. `SystemFrame` in `components/system-turn.tsx` is the ONE shape for
+those: on the left, `rounded-bl-[4px]`, a dashed `border-border` outline, and
+one quiet line — an icon, who wrote it (`text-muted-foreground`), what it is,
+then the time and copy — over the text in `text-fg-secondary`. Two blocks use
+it:
+
+- `ReportBubble`, a subtask report (`turn.origin === "report"`), below.
+- `SystemTurn`, any other turn with a `turn.source` (`TurnSource`, served by
+  the daemon from what the input was created with): an autopilot round
+  (`Wisp · auto-fix · PR #12 · round 2 of 5`, auto-review's findings and
+  verdict reminder, a resume after the network dropped), a workflow's wake
+  (`Wisp · workflow · heartbeat`), and a harness's own notice, by its
+  product's name (`Claude Code · background update`) so it never reads as
+  Wisp's. `lib/turn-source.ts` makes the label.
+
+**The label is read from the source, never from the text.** A person who
+types `[Wisp auto-fix` gets their own bubble; so does a scheduled steer (the
+person's words, sent later: it has no source), a turn stored before sources
+existed, and a source this client does not know (`sourceLabel` returns null).
+Never pattern-match a prompt to decide whose it is.
+
+A long one (over 4 lines or 360 characters) opens on `line-clamp-4` with
+**Show all**. The clamp clips, it does not cut: the whole text stays in the
+DOM, so find-in-task counts it, and `revealMatch` sends `FIND_REVEAL_EVENT`
+from the match first, which opens the block synchronously (`flushSync`)
+before the scroll measures it. Copy always takes the whole text. The gallery's
+prompt-bubble section draws all three beside a person's bubble.
+
 The stream starts at byte zero. Its first read is budgeted to 1 MB so opening a
 large turn does not block the first frame; subsequent 256 KB reads continue
 progressively with one offset, no gaps and no overlap.
@@ -1559,8 +1590,8 @@ never disagree about which rows are on screen.
   with what happens to it (`familyPlan`). Taking them (`subtasks: "archive"`),
   forcing them (`"force"`) and stopping their autopilot (`stopAutopilot`) are
   three separate yeses, and each one given is kept for the next attempt.
-- **A report turn is Wisp's**, not the person's: `ReportBubble` sits on the
-  left under Wisp's name, Wisp's fact lines first, each child's words quoted
+- **A report turn is Wisp's**, not the person's: `ReportBubble` wears the
+  system frame (§5, *A turn nobody typed is not a bubble*) under Wisp's name, Wisp's fact lines first, each child's words quoted
   and labelled as theirs (`lib/report-text.ts` reads the fences back). Its end
   is no "finished" banner; the tracker treats report and background turns as
   one kind of quiet turn, and a person's turn that ended just before one is

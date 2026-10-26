@@ -9,7 +9,7 @@ import {
   turnsFor,
   turnUsageFor,
 } from "../store";
-import type { Task } from "../types";
+import type { Task, TaskMessage, Turn } from "../types";
 import type { ConversationDetail, TaskUsage } from "../../../shared/api/task";
 import {
   apiTask,
@@ -17,6 +17,7 @@ import {
   apiTurn,
   apiTurnUsage,
   err,
+  turnSource,
   integerQueryParam,
   json,
 } from "./http";
@@ -35,19 +36,26 @@ function pendingQuestionId(task: Task): string | null {
 }
 
 const MAX_CONVERSATION_PAGE_SIZE = 100;
+
+/** The turns as served, each with its source read from the response's own messages. */
+function apiTurns(turns: Turn[], messages: TaskMessage[], adapters: Record<string, AdapterDef>) {
+  const byId = new Map(messages.map((message) => [message.id, message]));
+  return turns.map((turn) => apiTurn(turn, adapters[turn.harness], turnSource(turn, byId)));
+}
 const TASK_USAGE_DETAIL_LIMIT = 50;
 
 /** The unpaginated protocol-1 compatibility payload. */
 export function conversationDetail(task: Task, adapters: Record<string, AdapterDef>): ConversationDetail {
   const turns = turnsFor(task.id);
+  const messages = messagesFor(task.id);
   const latest = turns.at(-1);
   return {
     ...apiTask(task),
     latest_turn_model: latest?.model ?? null,
     latest_turn_exit_code: latest?.exit_code ?? null,
     latest_turn_has_result: latest ? latest.result !== null : false,
-    turns: turns.map((turn) => apiTurn(turn, adapters[turn.harness])),
-    messages: messagesFor(task.id).map(apiTaskMessage),
+    turns: apiTurns(turns, messages, adapters),
+    messages: messages.map(apiTaskMessage),
     pending_question_id: pendingQuestionId(task),
   };
 }
@@ -62,13 +70,14 @@ function pagedConversationDetail(
   const latest = latestTurnForTask(task.id);
   const first = page.turns.at(0)?.n ?? null;
   const last = page.turns.at(-1)?.n ?? null;
+  const messages = messagesForTurnPage(task.id, first, last, before === null);
   return {
     ...apiTask(task),
     latest_turn_model: latest?.model ?? null,
     latest_turn_exit_code: latest?.exit_code ?? null,
     latest_turn_has_result: latest ? latest.result !== null : false,
-    turns: page.turns.map((turn) => apiTurn(turn, adapters[turn.harness])),
-    messages: messagesForTurnPage(task.id, first, last, before === null).map(apiTaskMessage),
+    turns: apiTurns(page.turns, messages, adapters),
+    messages: messages.map(apiTaskMessage),
     pending_question_id: pendingQuestionId(task),
     has_older_turns: page.hasOlder,
     older_turns_before: page.hasOlder ? first : null,

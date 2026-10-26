@@ -324,6 +324,7 @@ function bounce(look: ReviewLook, round: RoundRow): null {
     reason: `Sent auto-review findings (round ${round.round} of ${budgetOf(look.checkpoint)})`,
     checkpoint: { ...look.checkpoint, done: undefined }, turnCount: task.turn_count, messageId,
     attachments: attachments.json ? { json: attachments.json, hash: attachments.hash } : undefined,
+    source: { by: "autopilot", kind: "auto-review", pr: pr.number, round: round.round, rounds: budgetOf(look.checkpoint) },
   }, now)
   if (!id) {
     removeMessageAttachments(task.id, messageId)
