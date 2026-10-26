@@ -17,7 +17,7 @@ immutable publication; only the historical alpha.8 release predates that
 pipeline and remains ad-hoc signed.
 
 Status: usable pre-1.0 Desktop, released alongside the daemon. The shared React application selects the desktop runtime
-when launched by Tauri, shows connection tabs, and binds every daemon-owned
+when launched by Tauri, shows a connection picker, and binds every daemon-owned
 operation and client record to an immutable connection ID.
 
 Desktop support is a second runtime behind the `DaemonTransport` interface,
@@ -32,7 +32,7 @@ own zoom behavior.
 
 Desktop updates are a native capability, not a daemon route. The Update Center
 shows one global application row and one built-in **Local daemon** row with
-explicit labels, regardless of the selected connection tab. Saved remote
+explicit labels, regardless of the selected connection. Saved remote
 daemons cannot be updated through the Desktop proxy. Native code owns the app
 channel endpoint, updater key, candidate, download, installation path, and
 relaunch. The webview can only request a check and confirm the exact version it

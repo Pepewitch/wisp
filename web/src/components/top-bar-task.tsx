@@ -86,19 +86,18 @@ export function TopBarTask({
 
 /**
  * The bar's left end answers WHICH DAEMON: the mark in the browser, the
- * connection tabs on Desktop (whose traffic lights own the first 80px). It is
- * at least the sidebar's width (`--sidebar-width`), so the task's title starts
- * over the column it names, and at most 40% of the bar, so a Desktop with
- * four long connection names cannot push the title out: the tab strip
- * scrolls inside it (`ConnectionTabList`). Where the sidebar is wider
- * than 40%, the sidebar's width wins.
+ * connection picker on Desktop (whose traffic lights own the first 80px). It
+ * is exactly the sidebar's width (`--sidebar-width`) plus the sidebar's 1px
+ * divider, so its hairline lands on that divider and the task's title starts
+ * over the column it names, however many connections there are and while the
+ * sidebar is dragged. Nothing in it may widen it: the picker truncates.
  */
 export function TopBarLeft({ desktop, children }: { desktop: boolean; children: ReactNode }) {
   return (
     <div
       data-tauri-drag-region={desktop ? "" : undefined}
       className={cn(
-        "flex h-full max-w-[40%] min-w-(--sidebar-width) shrink-0 items-center gap-2.5 border-r border-border pr-3",
+        "flex h-full w-[calc(var(--sidebar-width)+1px)] min-w-0 shrink-0 items-center gap-2.5 border-r border-border pr-3",
         desktop ? "pl-20" : "pl-3",
       )}
     >

@@ -184,7 +184,7 @@ Wisp ships **dark** and **light**, and the switch is `System` / `Light` /
   an unclassed subtree still looks like the app. `System` is opt-in.
 - The preference is **client-local and global**: `lib/theme.ts`, one
   `wisp_theme` key, a tiny external store. It is deliberately NOT
-  connection-scoped — theme is not daemon state, and switching connection tabs
+  connection-scoped — theme is not daemon state, and switching connections
   must not switch the theme. `useTheme()` for what is on screen,
   `useThemePreference()` for what a person chose.
 - One key shared by two browser tabs means the store listens for `storage`
@@ -1095,16 +1095,31 @@ effort.
 
 The pointer shell's top bar is its only bar, and it answers three questions,
 left to right. The **left end** is *which daemon am I on*: the mark in the
-browser, the connection tabs on Desktop (after the traffic lights' 80px). It
-is at least the sidebar's width (`--sidebar-width`, written by the sidebar
-panel's `onResize` straight onto the bar's style, so a divider drag never
-re-renders the app), with a hairline that continues the sidebar's divider. It
-is at most 40% of the bar (`TopBarLeft`; the sidebar's width wins where it is
-wider), so connection tabs can never starve the task's title: past the cap the
-strip scrolls (`ConnectionTabList`), and the selected chip scrolls itself into
-view. (A chip cannot usefully shrink instead: a truncating name still counts
-its full text toward the chip's minimum width.) The gallery shows a 900px
-Desktop bar with four long connection names.
+browser, the connection picker on Desktop (after the traffic lights' 80px). It
+is exactly the sidebar's width plus the sidebar's 1px divider
+(`TopBarLeft`: `--sidebar-width`, written by the sidebar panel's `onResize`
+straight onto the bar's style, so a divider drag never re-renders the app), so
+its hairline lands on that divider at any sidebar width. Nothing in it may
+widen it. Connection tabs once did: each connection added a chip and pushed the
+divider past the sidebar's edge (#441).
+
+So Desktop has one **connection picker** (`connection-picker.tsx`):
+`● Name ⌄`, one base-ui `Menu` whose trigger shows the current connection's
+mark and its name, which truncates. The mark is the connection's health and
+nothing else: green while the server and live updates work, a green ring while
+updates connect, a hollow grey ring when they are delayed, a red crossed-out
+cloud when the server cannot be reached; its `title` says which. The menu lists
+every connection as a radio row with the same mark, and its problem or else its
+busiest task's state as the hint. Under them, grouped under the current
+connection's name, are its verbs: Reconnect, Rename, then Edit connection and
+Remove connection for a remote or Diagnose local Wisp for Local. A last group
+holds a Reconnect for any other connection that is down (without switching to
+it), Add connection, and Reset desktop data. ←/→, Home and End on the focused
+picker step through the connections without opening the menu, as the tabs'
+arrow keys did. The trigger and its wrapper are controls, so they carry no
+`data-tauri-drag-region`; the rest of the left end does. The touch shell keeps
+its own connection menu and `⋯` (§6b). The gallery shows the bar at the
+window's width over a stand-in sidebar, with 1, 2 and 4 connections.
 
 The **middle** is *which task* (`top-bar-task.tsx`), and it is why there is no
 task header above the conversation. `● Title ⌄` is one control: the state dot,

@@ -1,28 +1,12 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react"
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react"
 
 import {
   ConnectionDialogs,
   ConnectionErrorDialog,
   type ConnectionDialogMode,
 } from "@/components/connection-dialogs"
-
-import {
-  Local,
-  More,
-  Offline,
-  Pencil,
-  Plus,
-  Refresh,
-  Remote,
-  Trash,
-} from "@/components/icons"
+import { ConnectionGlyph, ConnectionPicker } from "@/components/connection-picker"
+import { Local, More, Pencil, Refresh, Trash } from "@/components/icons"
 import {
   Menu,
   MenuAction,
@@ -30,267 +14,16 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
 } from "@/components/menu"
-import { Button, Tab } from "@/components/primitives"
-import type { ConnectionStreamStatus } from "@/lib/conn"
-import {
-  MAX_DESKTOP_CONNECTIONS,
-  type DesktopConnectionMetadata,
-} from "@/lib/desktop-bridge"
-import {
-  type ConnectionReachability,
-} from "@/lib/connection-reachability"
+import { connectionIssue } from "@/lib/connection-reachability"
+import { MAX_DESKTOP_CONNECTIONS } from "@/lib/desktop-bridge"
 import { useDesktopConnections } from "@/lib/desktop-connections"
-import { useConnectionStreamStatus } from "@/hooks/useConnectionStreamStatus"
 import { STATE_LABEL } from "@/lib/state"
 import { uiIntentsFor } from "@/lib/ui-intents"
-import { cn } from "@/lib/utils"
 
-const DIRECT_CONNECTION_LIMIT = 4
-/** The trailing control inside a tab chip: shorter than the 26px standalone glyph. */
-export const TAB_ACTION_SIZE = "size-5 shrink-0 rounded-[5px]"
 const ADD_CONNECTION_ACTION = "__add_connection__"
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-function splitConnections<T extends { metadata: DesktopConnectionMetadata }>(
-  connections: readonly T[],
-  activeId: string
-): { direct: readonly T[]; overflow: readonly T[] } {
-  if (connections.length <= DIRECT_CONNECTION_LIMIT)
-    return { direct: connections, overflow: [] }
-  const local = connections[0]!
-  const remotes = connections.slice(1)
-  const directRemotes = remotes.slice(0, DIRECT_CONNECTION_LIMIT - 1)
-  const active = remotes.find((entry) => entry.metadata.id === activeId)
-  if (active && !directRemotes.includes(active))
-    directRemotes[directRemotes.length - 1] = active
-  const direct = [local, ...directRemotes]
-  return {
-    direct,
-    overflow: connections.filter((entry) => !direct.includes(entry)),
-  }
-}
-
-function ConnectionGlyph({
-  kind,
-}: {
-  kind: DesktopConnectionMetadata["kind"]
-}) {
-  return kind === "local" ? <Local aria-hidden /> : <Remote aria-hidden />
-}
-
-function connectionIssue(
-  connection: DesktopConnectionMetadata,
-  reachability: ConnectionReachability = "unknown"
-): string | null {
-  if (!connection.ready)
-    return (
-      connection.problem ??
-      (connection.kind === "local"
-        ? "Local Wisp needs setup"
-        : "Connection needs attention")
-    )
-  if (reachability === "offline") return "Daemon unavailable"
-  if (reachability === "unauthorized") return "Authentication required"
-  if (reachability === "identity-changed") return "Daemon identity changed"
-  if (reachability === "error") return "Daemon returned an error"
-  return null
-}
-
-function connectionStatusTitle(
-  issue: string | null,
-  reachability: ConnectionReachability,
-  streamStatus: ConnectionStreamStatus,
-  live: boolean,
-  opening: boolean
-): string {
-  if (issue) return issue
-  if (reachability === "unknown") return "Checking server…"
-  if (live) return "Live"
-  if (opening) return "Server reachable · Connecting live updates…"
-  return streamStatus === "failed"
-    ? "Server reachable · Live updates disconnected"
-    : "Server reachable · Live updates delayed"
-}
-
-/**
- * Delayed updates are a degraded connection, not a call to act, so they get a
- * hollow ring rather than the needs-input yellow the task list uses right below.
- */
-function connectionDotColor(
-  live: boolean,
-  opening: boolean,
-  updatesDown: boolean
-): string {
-  if (live || opening) return "bg-state-done"
-  return updatesDown
-    ? "border-2 border-muted-foreground bg-transparent"
-    : "bg-muted-foreground/60"
-}
-
-/**
- * One connection tab, its independent reconnect button, and — when selected —
- * its management menu, inside the same chip.
- *
- * The menu used to sit past the `+` button, two controls away from the tab it
- * acted on, so "…" beside a row of connections read as "more connections"
- * while it actually opened the ACTIVE one's settings. It belongs to the tab,
- * so it is drawn in the tab: the chip carries the selected background and the
- * tab button goes transparent inside it, which keeps one accent shape on
- * screen rather than a chip with a second button bolted to its side.
- *
- * Buttons cannot nest: reconnect and manage are SIBLINGS of the tab, and the
- * tablist's arrow keys still find `[role=tab]` alone.
- *
- * The reconnect button carries ONE status mark: the dot while the server
- * answers, or the crossed-out cloud when it does not. A red dot beside a red
- * cloud said the same failure twice, and only one of the two was clickable.
- *
- * That mark is connection health and nothing else. Inactive tabs used to add
- * their busiest task's state dot beside it, so a tab showed two dots that
- * changed when it was selected, and a yellow "updates delayed" sat beside a
- * yellow "needs input". Task state lives in the sidebar, the switcher's hints
- * and desktop notifications.
- */
-export function ConnectionTab({
-  connection,
-  active,
-  reachability = "unknown",
-  onSelect,
-  onReconnect,
-  reconnectDisabled = false,
-  actions,
-}: {
-  connection: DesktopConnectionMetadata
-  active: boolean
-  reachability?: ConnectionReachability
-  onSelect: () => void
-  onReconnect: () => void
-  reconnectDisabled?: boolean
-  /** The active tab's own menu; nothing at all on the others. */
-  actions?: ReactNode
-}) {
-  const { status: streamStatus, delayed: updatesDelayed } =
-    useConnectionStreamStatus(
-      connection.id,
-      connection.ready && reachability === "online"
-    )
-  // the strip scrolls inside the top bar's capped left end: the selected
-  // chip brings itself into view (a jsdom element has no scrollIntoView)
-  const chip = useRef<HTMLSpanElement>(null)
-  useEffect(() => {
-    if (active) chip.current?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
-  }, [active])
-  const issue = connectionIssue(connection, reachability)
-  const unavailable = issue !== null
-  const live = connection.ready && reachability === "online" && streamStatus === "live"
-  const opening = connection.ready && reachability === "online" &&
-    streamStatus === "opening" && !updatesDelayed
-  const updatesDown = connection.ready && reachability === "online" && !live && !opening
-  const statusTitle = connectionStatusTitle(
-    issue,
-    reachability,
-    streamStatus,
-    live,
-    opening
-  )
-  return (
-    <span
-      ref={chip}
-      data-testid="connection-tab-chip"
-      data-selected={active ? "" : undefined}
-      className={cn(
-        "flex min-w-0 shrink-0 items-center rounded-md pr-0.5",
-        active && "bg-accent"
-      )}
-    >
-      <Tab
-        role="tab"
-        aria-selected={active}
-        tabIndex={active ? 0 : -1}
-        active={active}
-        onClick={onSelect}
-        title={`${connection.name} · ${connection.kind === "local" ? "This Mac" : "Remote"}${issue ? ` · ${issue}` : ""}`}
-        className={cn("min-w-0 max-w-40 pr-1", active && "bg-transparent")}
-      >
-        <span className="[&>svg]:size-3.5 [&>svg]:text-muted-foreground">
-          <ConnectionGlyph kind={connection.kind} />
-        </span>
-        <span className="truncate">{connection.name}</span>
-        {unavailable && <span className="sr-only">{issue}</span>}
-      </Tab>
-      <button
-        type="button"
-        aria-label={`Reconnect ${connection.name}`}
-        title={unavailable ? `${statusTitle} · Click to reconnect` : statusTitle}
-        disabled={reconnectDisabled}
-        onClick={onReconnect}
-        className="flex size-5 shrink-0 items-center justify-center rounded-[5px] hover:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-45"
-      >
-        {unavailable ? (
-          <span
-            data-offline
-            className="flex text-destructive [&>svg]:size-3.5"
-          >
-            <Offline aria-hidden />
-          </span>
-        ) : (
-          <span className="relative flex size-3 items-center justify-center">
-            {opening && (
-              <span className="absolute inset-0 rounded-full border border-state-done/75 motion-safe:animate-pulse" />
-            )}
-            <span
-              data-live={live}
-              className={cn(
-                "size-1.5 rounded-full",
-                connectionDotColor(live, opening, updatesDown)
-              )}
-            />
-          </span>
-        )}
-      </button>
-      {actions}
-    </span>
-  )
-}
-
-/**
- * The direct tabs' strip. Past the top bar's capped left end it scrolls,
- * rather than pushing the task's title out of the bar (§5h); the selected
- * chip scrolls itself into view when it is selected, and again whenever the
- * strip narrows (a smaller window, a wider sidebar) and could hide it. One
- * component, so the gallery specimen lays out exactly as the app does.
- */
-export function ConnectionTabList({
-  children,
-  onKeyDown,
-}: {
-  children: ReactNode
-  onKeyDown?: (event: React.KeyboardEvent<HTMLDivElement>) => void
-}) {
-  const strip = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const element = strip.current
-    if (!element) return
-    const observer = new ResizeObserver(() => {
-      element.querySelector("[data-selected]")?.scrollIntoView?.({ block: "nearest", inline: "nearest" })
-    })
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [])
-  return (
-    <div
-      ref={strip}
-      role="tablist"
-      aria-label="Daemon connections"
-      className="scroll-slim flex min-w-0 items-center gap-0.5 overflow-x-auto"
-      onKeyDown={onKeyDown}
-    >
-      {children}
-    </div>
-  )
 }
 
 export function DesktopConnectionChrome({
@@ -336,120 +69,27 @@ function DesktopConnections() {
   const [dialog, setDialog] = useState<ConnectionDialogMode>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   useLocalSetupIntent(setDialog)
-  const split = useMemo(
-    () => splitConnections(desktop.connections, desktop.active.metadata.id),
-    [desktop.connections, desktop.active.metadata.id]
+  const connections = useMemo(
+    () => desktop.connections.map((entry) => entry.metadata),
+    [desktop.connections]
   )
-  const canAdd = desktop.connections.length < MAX_DESKTOP_CONNECTIONS
-
-  const activateByKeyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (
-      event.key !== "ArrowLeft" &&
-      event.key !== "ArrowRight" &&
-      event.key !== "Home" &&
-      event.key !== "End"
-    )
-      return
-    const tabs = Array.from(
-      event.currentTarget.querySelectorAll<HTMLButtonElement>("[role=tab]")
-    )
-    const current = tabs.indexOf(document.activeElement as HTMLButtonElement)
-    if (tabs.length === 0 || current < 0) return
-    event.preventDefault()
-    const next =
-      event.key === "Home"
-        ? 0
-        : event.key === "End"
-          ? tabs.length - 1
-          : event.key === "ArrowRight"
-            ? (current + 1) % tabs.length
-            : (current - 1 + tabs.length) % tabs.length
-    tabs[next]?.focus()
-    tabs[next]?.click()
-  }
 
   return (
     <>
-      <div className="flex min-w-0 items-center gap-1">
-        <ConnectionTabList onKeyDown={activateByKeyboard}>
-          {split.direct.map((entry) => {
-            const active = entry.metadata.id === desktop.active.metadata.id
-            return (
-              <ConnectionTab
-                key={entry.metadata.id}
-                connection={entry.metadata}
-                active={active}
-                reachability={desktop.reachability.get(entry.metadata.id)}
-                onSelect={() => void desktop.select(entry.metadata.id)}
-                onReconnect={() => {
-                  void desktop
-                    .reconnect({ connectionId: entry.metadata.id })
-                    .catch((error: unknown) => setActionError(errorMessage(error)))
-                }}
-                reconnectDisabled={desktop.pendingAction !== null}
-                actions={
-                  active ? (
-                    <ActiveConnectionActions
-                      onDialog={setDialog}
-                      onError={setActionError}
-                      disabled={desktop.pendingAction !== null}
-                    />
-                  ) : undefined
-                }
-              />
-            )
-          })}
-        </ConnectionTabList>
-
-        {split.overflow.length > 0 && (
-          <Menu label="More connections" icon={<More />} iconOnly>
-            <MenuRadioGroup
-              value={desktop.active.metadata.id}
-              onValueChange={(value) => void desktop.select(value)}
-            >
-              {split.overflow.map((entry) => (
-                <MenuRadioItem
-                  key={entry.metadata.id}
-                  value={entry.metadata.id}
-                  hint={
-                    connectionIssue(
-                      entry.metadata,
-                      desktop.reachability.get(entry.metadata.id)
-                    ) ??
-                    (desktop.attention.get(entry.metadata.id)
-                      ? STATE_LABEL[desktop.attention.get(entry.metadata.id)!]
-                      : undefined)
-                  }
-                >
-                  <span className="flex items-center gap-2 [&>svg]:size-3.5 [&>svg]:text-muted-foreground">
-                    <ConnectionGlyph kind={entry.metadata.kind} />
-                    {entry.metadata.name}
-                  </span>
-                </MenuRadioItem>
-              ))}
-            </MenuRadioGroup>
-          </Menu>
-        )}
-
-        <Button
-          size="sm"
-          icon
-          disabled={!canAdd || desktop.pendingAction !== null}
-          aria-label={
-            canAdd
-              ? "Add remote connection"
-              : `At most ${MAX_DESKTOP_CONNECTIONS} connections`
-          }
-          title={
-            canAdd
-              ? "Add remote connection"
-              : `At most ${MAX_DESKTOP_CONNECTIONS} connections`
-          }
-          onClick={() => setDialog("add")}
-        >
-          <Plus />
-        </Button>
-      </div>
+      <ConnectionPicker
+        connections={connections}
+        activeId={desktop.active.metadata.id}
+        reachability={desktop.reachability}
+        attention={desktop.attention}
+        busy={desktop.pendingAction !== null}
+        onSelect={(connectionId) => void desktop.select(connectionId)}
+        onReconnect={(connectionId) => {
+          void desktop
+            .reconnect({ connectionId })
+            .catch((error: unknown) => setActionError(errorMessage(error)))
+        }}
+        onDialog={setDialog}
+      />
       <ConnectionDialogs
         dialog={dialog}
         onDialog={setDialog}
@@ -518,7 +158,6 @@ function MobileConnections() {
           onDialog={setDialog}
           onError={setActionError}
           disabled={desktop.pendingAction !== null}
-          mobile
         />
       </div>
       <ConnectionDialogs
@@ -537,16 +176,15 @@ function MobileConnections() {
   )
 }
 
+/** The touch shell's `⋯` beside its connection menu: the selected connection's verbs. */
 function ActiveConnectionActions({
   onDialog,
   onError,
   disabled,
-  mobile = false,
 }: {
   onDialog: (mode: ConnectionDialogMode) => void
   onError: (error: string) => void
   disabled: boolean
-  mobile?: boolean
 }) {
   const desktop = useDesktopConnections()!
   const active = desktop.active.metadata
@@ -559,11 +197,8 @@ function ActiveConnectionActions({
       icon={<More />}
       iconOnly
       disabled={disabled}
-      // The trigger sits in the tab row now, not at the right edge of the
-      // chrome: a menu that opened leftward from here would reach for an edge
-      // that is no longer beside it.
-      align={mobile ? "end" : "start"}
-      className={mobile ? "size-11" : TAB_ACTION_SIZE}
+      align="end"
+      className="size-11"
     >
       <MenuItem onClick={() => onDialog("rename")}>
         <span className="flex items-center gap-2 [&>svg]:size-3.5">

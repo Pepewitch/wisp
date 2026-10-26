@@ -1,11 +1,9 @@
 import { Gear, WispMark, ZoomIn } from "@/components/icons"
-import { ConnectionTabsSpecimen } from "@/components/connection-gallery-specimen"
 import { TopBarLeft, TopBarTask } from "@/components/top-bar-task"
 import { UpdateCenter, WispUpdateControl } from "@/components/update-control"
 import { UsageRing } from "@/components/usage-limits-control"
 import { Button, Eyebrow, Rule } from "@/components/primitives"
 import { UPDATE_SPECIMEN } from "@/components/gallery-fixtures"
-import type { DesktopConnectionMetadata } from "@/lib/desktop-bridge"
 import type { DesktopUpdaterContextValue } from "@/lib/desktop-updater"
 import { TASKS } from "@/lib/fixtures"
 import type { ApiTask, UpdateStatus } from "@/lib/types"
@@ -184,20 +182,6 @@ const BAR_READINGS: { label: string; task: ApiTask }[] = [
 ]
 
 const SIDEBAR_180 = { "--sidebar-width": "180px" } as CSSProperties
-const LONG_CONNECTIONS: DesktopConnectionMetadata[] = [
-  "Local",
-  "Staging build host in the west region",
-  "Research workstation under the stairs",
-  "Release qualification runner",
-].map((name, index) => ({
-  id: `specimen-${index}`,
-  kind: index === 0 ? "local" : "remote",
-  name,
-  url: index === 0 ? null : `https://host-${index}.example.test`,
-  instanceId: `wisp-instance-${index}`,
-  ready: true,
-}))
-
 /**
  * The top bar's middle: which task this is (§5h). The real component on
  * fixture tasks; its title opens the real title menu (the gallery has no
@@ -225,19 +209,6 @@ export function TopBarTaskSpecimen() {
             </div>
           </div>
         ))}
-        <div>
-          <Eyebrow>Desktop at 900px · four long connection names</Eyebrow>
-          {/* the real left end and tab strip: capped at 40% of the bar, the strip scrolls */}
-          <div style={SIDEBAR_180} className="mt-2 flex h-9 w-[900px] max-w-full items-center rounded-lg border border-border bg-surface pr-3">
-            <TopBarLeft desktop>
-              <ConnectionTabsSpecimen connections={LONG_CONNECTIONS} />
-            </TopBarLeft>
-            <div className="flex h-full min-w-0 flex-1 items-center pl-4.5">
-              <TopBarTask task={BAR_READINGS[2]!.task} dragRegion={false} />
-            </div>
-            <WispUpdateControl status={DAEMON_IDLE} updating={false} error={null} onUpdate={() => undefined} />
-          </div>
-        </div>
       </div>
       <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
         The task&apos;s title used to lead a two-line header above the conversation, under an id, a branch and a
