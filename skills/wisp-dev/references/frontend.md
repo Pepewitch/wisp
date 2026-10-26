@@ -1112,7 +1112,7 @@ the `h1` title and a chevron open the **title menu**, whose header carries the
 facts the old meta line showed and nobody needs in view (id · branch, then
 state · harness · model · effort, then a subtask's kind and base). Under it sit
 the task's verbs: Find ⌘F, Rename, New subtask…, Archive, Export or delete, then Copy task id
-and Copy branch name. The autopilot switches are the summary card's (§5n). The phone keeps its `⋯` (`TaskActions` without `title`). A subtask leads
+and Copy branch name. The autopilot switches are the summary card's (§5n). The phone reaches the same verbs from its task sheet (§6b). A subtask leads
 with `Parent ›`: the parent opens the parent, is capped at 14rem and shrinks
 three times as fast as the title, so the task you are in stays readable.
 `Local` and `Archived` follow as quiet words, only when true. Where the centre
@@ -1540,8 +1540,8 @@ never disagree about which rows are on screen.
   stand. The daemon announces a child's change about the CHILD (a PR event
   moves a report without touching any task row), so the events bridge
   refreshes a parent's list for every event about it or one of its children
-  (`lib/sse.ts`); nothing polls. On a phone the tab shows only while the task
-  has subtasks, and if it goes while open, Chat takes over.
+  (`lib/sse.ts`); nothing polls. On a phone the sheet offers the tool only while the
+  task has subtasks, and if it goes while open, Chat takes over.
 - **Reading the live task list** (a parent's title, a subtask count) goes
   through `useLiveTasks(select)`, which registers the list's real fetch with
   `enabled: false`. Never a `skipToken` query on that key: a query runs
@@ -1573,8 +1573,8 @@ archive's nesting, both family-confirm steps and a report turn.
 
 `task-summary-card.tsx` (the card), `task-summary-chip.tsx` (its folded
 form), `hooks/useTaskSummary.tsx` (the model), `hooks/useSummaryCard.ts`
-(the fold point and the remembered choices). The pointer shell only; the
-phone keeps its banded header (§6b).
+(the fold point and the remembered choices). On the phone the same card,
+at touch size, is the top of the task sheet (§6b).
 
 **Two quiet boxes in the centre pane's right gutter.** 240px, `bg-surface`,
 a hairline, no shadow: it sits beside the reading column, not over it. It is
@@ -1734,7 +1734,7 @@ panel) and `wisp-ui-right` (Changes over Terminal). They moved once to
 kept as the panel's open width) and `wisp-ui-dock`; an unreadable one is
 dropped, so nobody opens to a broken layout.
 
-The tool panel is the pointer shell's. The phone keeps its tabs (§6b).
+The tool panel is the pointer shell's. The phone opens one tool full screen from its task sheet (§6b).
 
 **Nothing that CREATES may sit at the right end of a pane's header.** Changes
 keeps its Refresh there because refreshing acts on the view. Workflows put a
@@ -1782,9 +1782,12 @@ screen.
 ## 6b. Mobile — touch is not a small mouse
 
 Below the `md` breakpoint (`useIsMobile`) the three-pane grid is **replaced,
-not squeezed**: `MobileShell` renders a header, ONE tab strip (Chat · Changes ·
-Terminal), and a pinned composer. No resizable group mounts there at all, so
-desktop pane geometry is neither applied nor overwritten by phone dimensions.
+not squeezed**: `MobileShell` renders a header, the conversation and a pinned
+composer. No resizable group mounts there at all, so desktop pane geometry is
+neither applied nor overwritten by phone dimensions. The task is the pointer
+shell's model in three layers: the header (title and one status line), the
+**task sheet** (the summary card plus the tools and the verbs), and **one tool
+full screen**.
 
 Short landscape phones also keep this shell: coarse input, at most 1023px
 wide and 500px tall. Browser mobile windows follow the visual viewport when
@@ -1794,11 +1797,8 @@ installation section lives in Settings, with its specimen in the gallery.
 ### The header is BANDED, and each band answers one question
 
 This shell covers 320px to 767px — a phone AND a narrow Wisp Desktop window,
-whose `minWidth` is 720. One row carrying app chrome, task identity and task
-actions at once cannot align at either end of that range, and did not: the
-hamburger and the overflow menu centred against a two-or-three line stack, so
-nothing in the header shared a line with anything else, and an idle daemon
-version wrapped onto two lines inside the width the title needed.
+whose `minWidth` is 720 — so nothing in the header shares a line with
+anything it does not belong to.
 
 1. **The app band is Wisp Desktop's alone**, and it is not decoration. That
    window is `titleBarStyle: Overlay` with `hiddenTitle`, so the traffic lights
@@ -1807,23 +1807,45 @@ version wrapped onto two lines inside the width the title needed.
    top bar already gives them — and `data-tauri-drag-region`, and it carries the
    connection switcher and the zoom control. A browser has neither problem and
    neither control, so it gets **no band at all**.
-2. **The task band is a title over ONE metadata line**, between two 44px
-   controls. Exactly two lines, so the hamburger and the overflow menu centre on
-   the axis the title sits on. The line is state, `Local` when the task is one,
-   then harness · model — the composer's control bar used to carry harness and
-   model as well, three rows down and truncated to `claudeI…`, and one place
-   un-truncated beats two places truncated.
-3. **A pull request gets its own full-width row**, not a share of the header.
-   The compact link is a 44px two-line thumb target; splitting the header with
-   the title left both unreadable.
-4. **The tab strip fills the row** (`flex-1 basis-auto`, `px-1`), a segmented
-   control rather than left-packed pills with a dead right half. It is `Chat ·
-   Autopilot · Changes · Workflows · Subtasks · Terminal`; Autopilot and Workflows appear only
-   where the daemon supports them, and Subtasks only while the task has some.
-   Tabs are sized by their content plus an equal share, so five still fit at
-   320px; six do not, so the strip scrolls sideways there (scrollbar hidden)
-   rather than spilling off the screen. Each pane's `PaneHeader` takes
-   `touch` so its own action reaches 44px.
+2. **The task band is `☰ | title over ONE status line | task button`**, padded
+   by `var(--safe-top)`. The line is `● Running · ⎇ #318 open · CI pending`:
+   the state, the toned PR icon with its number and lifecycle, CI only while
+   the PR is open or a draft, then `Local` or `Archived` when true. The state
+   keeps its width and the PR words truncate. The two lines are ONE 44px
+   target (a stretched button under the words) that opens the sheet; while a
+   question waits, the line reads `Waiting for you · 1 question` in amber and
+   the same target goes to the question instead (`focusStream`, after the chat
+   is back on screen). The task button (`Task sheet`) always opens the sheet.
+
+There is no tab strip and no PR row: the old 6-tab strip took 185 of 844px
+before the first word of the transcript.
+
+### The task sheet
+
+`task-sheet.tsx`, a base-ui `Drawer` swiped down to dismiss, max 640px wide so
+a narrow Desktop window centres it. Top to bottom:
+
+- id · harness · model · effort (and, for a subtask, `↳ kind subtask of
+  Parent`, whose name opens the parent);
+- the summary card itself (`SummaryCard` with `touch`): the same rows as §5n,
+  each a 44px row, the Autopilot row opening to the touch-size switches;
+- the tools in the top bar's order — Terminal, Changes, Autopilot, Subtasks
+  (only while the task has some), Workflows — each with the small form of its
+  state from `tool-hints.ts`, the one source the top bar's icons read too;
+- Find, Rename, Subtask and Archive as 56px tiles (`useTaskVerbs`, the title
+  menu's verbs), and *Export or delete task data…* on an archived task. A
+  verb closes the sheet before its dialog opens.
+
+Its body mounts only while it is open, so the card's reads run only then. It
+rises on `--dur-in` / `--ease-out`, leaves on `--dur-out`, follows the finger
+while swiped, and is instant under `prefers-reduced-motion` (`.wisp-sheet`).
+
+### A tool on the phone is full screen
+
+A tool replaces the conversation, with a 48px `‹ Chat` back row naming it
+(Changes names itself in its own header). Every pane stays mounted, so
+leaving one never drops the transcript's scroll or a live shell. A task
+switch returns to the chat and closes the sheet.
 
 **App-level state lives in the drawer footer on touch**, beside the gear that is
 already there, because below `md` there is no persistent top bar to carry it.
@@ -1843,15 +1865,15 @@ The rules that differ from desktop, and why:
   always visible on touch. The desktop row's **archive** control is the one
   thing that does not come back another way: hover reveals it in the
   git-marks slot (the marks fade out, and the hover card suppresses while the
-  pointer is on it), and on touch archive simply stays in the **task header**,
+  pointer is on it), and on touch archive is a tile in the **task sheet**,
   where a finger already reaches it. A long press for one verb would be the
   app's only long press.
-- **Panes stay mounted when their tab is inactive**, so switching tabs never
+- **Panes stay mounted when they are not shown**, so opening a tool never
   drops the conversation's scroll position or tears down a live shell. They are
   `hidden`, which means a pane can mount at zero height — anything measuring
   itself (xterm) must refit on activation, and any pane root needs `flex-1` as
   well as `h-full` so it fills a flex column as well as a resizable panel.
-- **The composer is hidden on the Terminal tab.** Everywhere else it is
+- **The composer is hidden on the Terminal.** Everywhere else it is
   pinned. On Terminal the shell itself is the input, and two composers fight
   over one keyboard.
 - **The composer is one row of thumb targets**, it grows with the draft, and

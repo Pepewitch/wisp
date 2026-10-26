@@ -10,8 +10,13 @@ import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { TaskActions } from "./task-actions"
 
+/** The title menu, as the top bar mounts it, with a plain trigger. */
+function TitleMenu({ task }: { task: ApiTask }) {
+  return <TaskActions task={task} title={{ trigger: "Task menu", className: "", header: null, after: null }} />
+}
+
 /**
- * The overflow is rename and archive. Copy branch and Fresh session used to
+ * The menu's verbs are find, rename and archive. Copy branch and Fresh session used to
  * live here; they must not reappear. Archive still uses the shared confirm so
  * a refusal shows "Archive anyway" and never a different verb's dialog.
  */
@@ -75,23 +80,23 @@ afterEach(() => {
 
 /** base-ui's menu is a portal: click the trigger, then the item. */
 async function pick(itemName: string) {
-  fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+  fireEvent.click(screen.getByRole("button", { name: "Task menu" }))
   fireEvent.click(await screen.findByRole("menuitem", { name: new RegExp(itemName) }))
 }
 
-describe("the overflow menu", () => {
+describe("the title menu", () => {
   it("offers find, rename and archive only", async () => {
-    mount(<TaskActions task={TASK} />)
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
+    mount(<TitleMenu task={TASK} />)
+    fireEvent.click(screen.getByRole("button", { name: "Task menu" }))
 
     const items = await screen.findAllByRole("menuitem")
     // Find carries its chord, because the menu is how you learn there is one.
     expect(items.map((el) => el.textContent)).toEqual(["Find in task⌘F", "Rename", "Archive"])
   })
 
-  it("renames the task from the triple-dot menu", async () => {
+  it("renames the task from the title menu", async () => {
     const calls = stubApi(() => ({ status: 200, body: { ...TASK, title: "Clear task name" } }))
-    mount(<TaskActions task={TASK} />)
+    mount(<TitleMenu task={TASK} />)
 
     await pick("Rename")
 
@@ -115,7 +120,7 @@ describe("the overflow menu", () => {
     const reason = "task has unpushed commits — push first, or archive with force"
     let refuse = true
     const calls = stubApi(() => (refuse ? { status: 409, body: { error: reason } } : { status: 200, body: { ok: true } }))
-    mount(<TaskActions task={TASK} />)
+    mount(<TitleMenu task={TASK} />)
 
     await pick("Archive")
 
@@ -136,7 +141,7 @@ describe("the overflow menu", () => {
     const reason = "task has unpushed commits — push first, or archive with force"
     let refuse = true
     const calls = stubApi((path) => (path.endsWith("/archive") && refuse ? { status: 409, body: { error: reason } } : { status: 200, body: { ok: true } }))
-    mount(<TaskActions task={{ ...TASK, autopilot }} />)
+    mount(<TitleMenu task={{ ...TASK, autopilot }} />)
     await pick("Archive")
     // asked on the spot, before anything reaches the daemon
     expect(await screen.findByText("Auto-merge is on for PR #7 — archiving switches it off.")).toBeInTheDocument()
@@ -171,7 +176,7 @@ describe("the overflow menu", () => {
     ]
     const calls = stubApi((path) => (path.endsWith("/archive") ? replies.shift()! : { status: 200, body: {} }))
     const bodies = () => calls.filter((c) => c.path.endsWith("/archive")).map((c) => c.body)
-    mount(<TaskActions task={TASK} />, tasks)
+    mount(<TitleMenu task={TASK} />, tasks)
     await pick("Archive")
     // unforced and without the opt-in first: the daemon names the family
     const list = await screen.findByRole("list")
@@ -196,128 +201,7 @@ describe("the overflow menu", () => {
   })
 
   it("renders no dialog while nothing has been refused", () => {
-    mount(<TaskActions task={TASK} />)
+    mount(<TitleMenu task={TASK} />)
     expect(screen.queryByRole("dialog")).toBeNull()
-  })
-})
-
-describe("auto-merge in the phone's overflow menu", () => {
-  const armed = (over: Partial<NonNullable<ApiTask["autopilot"]>> = {}): ApiTask => ({
-    ...TASK,
-    autopilot: { autoMerge: true, autoFix: false, pr: 7, state: "waiting", reason: "Waiting for checks (2 running)", about: "pr", by: "auto-merge", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null, ...over },
-  })
-  function daemon(extra: (path: string) => { status: number; body: unknown } | null = () => null) {
-    return stubApi((path) => {
-      if (path.endsWith("/api/harnesses")) return { status: 200, body: { harnesses: [], features: { taskAutopilot: true } } }
-      return extra(path) ?? { status: 200, body: { autoMerge: true, autoFix: false, pr: null, state: "waiting", reason: "Waiting for a PR", about: "task", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null } }
-    })
-  }
-  async function open() {
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
-    return await screen.findByRole("menuitemcheckbox", { name: /Auto-merge/ })
-  }
-
-  it("is a switch that arms auto-merge without closing the menu", async () => {
-    const calls = daemon()
-    mount(<TaskActions task={TASK} />)
-    const toggle = await open()
-    expect(toggle).toHaveAttribute("aria-checked", "false")
-    fireEvent.click(toggle)
-    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot`, method: "PUT", body: { autoMerge: true } }))
-    expect(screen.getByRole("menuitemcheckbox", { name: /Auto-merge/ })).toBeInTheDocument()
-  })
-
-  it("names the bound PR, and leaves the reason to the Autopilot tab", async () => {
-    daemon()
-    mount(<TaskActions task={armed()} />)
-    const toggle = await open()
-    expect(toggle).toHaveTextContent("Auto-merge #7")
-    expect(toggle).toHaveAttribute("aria-checked", "true")
-    expect(screen.queryByText(/Waiting for checks/)).toBeNull()
-  })
-
-  it("keeps no notes and no action rows: Resume, Continue now, Send now and Skip live in the tab", async () => {
-    daemon()
-    const states = [
-      armed({ state: "paused", reason: "Merge failed: Base branch was modified" }),
-      armed({ state: "held", reason: "Held — you pressed Stop; continues after your next turn", about: "task" }),
-      armed({ autoFix: true, by: "auto-fix", reason: "Auto-fix will send: test failing", pendingFix: { summary: "test failing", sendsAt: new Date(Date.now() + 60_000).toISOString() } }),
-      { ...TASK, autopilot: { ...armed().autopilot!, autoMerge: false, state: "off" as const, reason: "Auto-merge off — #7 was closed" } },
-    ]
-    for (const task of states) {
-      const { unmount } = mount(<TaskActions task={task} />)
-      await open()
-      expect(screen.queryByText(new RegExp(task.autopilot!.reason.slice(0, 12)))).toBeNull()
-      for (const action of ["Resume", "Continue now", "Send now", "Skip"]) expect(screen.queryByRole("menuitem", { name: action })).toBeNull()
-      unmount()
-    }
-  })
-
-  it("keeps the switch where it was and says why when the daemon refuses", async () => {
-    daemon((path) => path.endsWith("/autopilot") ? { status: 409, body: { error: "An archived task cannot auto-merge" } } : null)
-    mount(<TaskActions task={TASK} />)
-    const toggle = await open()
-    fireEvent.click(toggle)
-    expect(await screen.findByText("An archived task cannot auto-merge")).toBeInTheDocument()
-    expect(screen.getByRole("menuitemcheckbox", { name: /Auto-merge/ })).toHaveAttribute("aria-checked", "false")
-  })
-
-  it("is not offered on an archived task", async () => {
-    const calls = daemon()
-    mount(<TaskActions task={{ ...TASK, archived: true }} />)
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
-    await screen.findAllByRole("menuitem")
-    await waitFor(() => expect(calls.some((c) => c.path.endsWith("/api/harnesses"))).toBe(true))
-    expect(screen.queryByRole("menuitemcheckbox")).toBeNull()
-  })
-
-  it("has its own auto-fix switch, which names the PR when auto-merge is off", async () => {
-    const calls = daemon()
-    mount(<TaskActions task={armed({ autoMerge: false, autoFix: true, reason: "Auto-fix will send: test failing", pendingFix: { summary: "test failing", sendsAt: new Date(Date.now() + 60_000).toISOString() } })} />)
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
-    const fix = await screen.findByRole("menuitemcheckbox", { name: /Auto-fix/ })
-    expect(fix).toHaveAttribute("aria-checked", "true")
-    expect(fix).toHaveTextContent("Auto-fix #7")
-    expect(screen.getByRole("menuitemcheckbox", { name: /Auto-merge/ })).toHaveAttribute("aria-checked", "false")
-    fireEvent.click(fix)
-    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot`, method: "PUT", body: { autoFix: false } }))
-  })
-
-  it("has an auto-review switch only on a daemon that advertises it", async () => {
-    const calls = stubApi((path) =>
-      path.endsWith("/api/harnesses")
-        ? { status: 200, body: { harnesses: [], features: { taskAutopilot: true, autoReview: true } } }
-        : { status: 200, body: armed({ autoReview: true }).autopilot },
-    )
-    const { unmount } = mount(<TaskActions task={TASK} />)
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
-    const review = await screen.findByRole("menuitemcheckbox", { name: /Auto-review/ })
-    expect(review).toHaveAttribute("aria-checked", "false")
-    fireEvent.click(review)
-    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot`, method: "PUT", body: { autoReview: true } }))
-    unmount()
-    daemon()
-    mount(<TaskActions task={TASK} />)
-    await open()
-    expect(screen.queryByRole("menuitemcheckbox", { name: /Auto-review/ })).toBeNull()
-  })
-
-  it("is disabled, and says why, for a task that runs in the project checkout", async () => {
-    daemon()
-    mount(<TaskActions task={{ ...TASK, mode: "local" }} />)
-    const toggle = await open()
-    expect(toggle).toHaveAttribute("aria-disabled", "true")
-    expect(screen.getByText(/Needs a worktree task/)).toBeInTheDocument()
-  })
-
-  it("is absent on a daemon that predates it", async () => {
-    const calls = stubApi(() => ({ status: 200, body: { harnesses: [], features: {} } }))
-    mount(<TaskActions task={TASK} />)
-    fireEvent.click(screen.getByRole("button", { name: "More actions" }))
-    await screen.findAllByRole("menuitem")
-    // wait for the daemon's answer, or this would pass before it arrived
-    await waitFor(() => expect(calls.some((c) => c.path.endsWith("/api/harnesses"))).toBe(true))
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(screen.queryByRole("menuitemcheckbox")).toBeNull()
   })
 })

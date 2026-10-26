@@ -1,13 +1,9 @@
 import { render, screen } from "@testing-library/react"
-import type { ReactNode } from "react"
 import { describe, expect, it } from "vitest"
 
-import { TASKS } from "@/lib/fixtures"
 import type { AutopilotStatus } from "../../../shared/autopilot"
 import type { PullRequestInfo, PullRequestStatus } from "@/lib/types"
-import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
-import { MobileShell } from "./mobile-shell"
 import { PullRequestStatusLink } from "./pull-request-status"
 
 const FOUND: PullRequestStatus = {
@@ -24,10 +20,6 @@ const FOUND: PullRequestStatus = {
     mergeState: "blocked",
     updatedAt: "2026-09-04T12:00:00Z",
   },
-}
-
-function withClient(node: ReactNode) {
-  return render(node, { wrapper: runtimeWrapper(fakeDaemonTransport()) })
 }
 
 describe("PullRequestStatusLink", () => {
@@ -110,31 +102,6 @@ describe("PullRequestStatusLink", () => {
     expect(link).not.toHaveTextContent("PR #42 · Open")
   })
 
-  it("keeps all three facts in the mobile two-line target", () => {
-    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} compact />)
-    const link = screen.getByTestId("pull-request-status")
-    expect(link).toHaveTextContent("PR #42 · Open")
-    expect(link).toHaveTextContent("CI failed · Changes requested")
-    expect(link).toHaveClass("h-11")
-  })
-})
-
-describe("PR status in the phone header", () => {
-  it("replaces the mobile Push button with the compact PR link", () => {
-    withClient(
-      <MobileShell
-        task={TASKS[0]!}
-        pullRequest={FOUND}
-        sidebar={() => null}
-        conversation={<div />}
-        changes={<div />}
-        terminal={<div />}
-        composer={<div />}
-      />,
-    )
-    expect(screen.getByTestId("pull-request-status")).toHaveClass("h-11")
-    expect(screen.queryByRole("button", { name: /push/i })).toBeNull()
-  })
 })
 
 describe("the auto-merge reason on the PR line", () => {
@@ -219,8 +186,4 @@ describe("the auto-merge reason on the PR line", () => {
     expect(screen.getByRole("link")).not.toHaveTextContent("Auto-fix paused")
   })
 
-  it("uses the compact link's second line for the reason on mobile", () => {
-    render(<PullRequestStatusLink pullRequest={FOUND.pullRequest} autoMerge={status()} compact />)
-    expect(screen.getByText("Auto-merge: Waiting for checks (2 running)")).toBeInTheDocument()
-  })
 })

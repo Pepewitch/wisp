@@ -193,7 +193,7 @@ export function AutopilotView({
 
   return (
     <div className={cn("h-full min-h-0 flex-1 flex-col", hidden ? "hidden" : "flex")} aria-hidden={hidden || undefined}>
-      {/* on touch the surface tab already names it */}
+      {/* on touch the back row above it already names it */}
       {!touch && (
         <PaneHeader onClose={onClose} closeLabel="Autopilot">
           <span className="text-[12.5px] font-medium text-foreground">Autopilot</span>

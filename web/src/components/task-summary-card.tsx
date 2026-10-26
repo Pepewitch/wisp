@@ -40,15 +40,19 @@ export function TaskSummaryGutter({ task, pullRequest, turns }: {
 
 /** Rows the gallery draws open, whatever this browser remembers. */
 const FixedRows = createContext<readonly SummaryRow[] | null>(null)
+/** The phone's task sheet: every row and every control inside one is a 44px thumb target (§6b). */
+const Touch = createContext(false)
 
 /**
  * Two quiet boxes: where the task stands (its state, its PR, autopilot), then
  * the session (subtasks, context). In the chip's popover the same rows sit
  * on the popover's own surface, split by a hairline (`floating`).
  */
-export function SummaryCard({ model, floating = false, openRows, onFold, onDone, footer }: {
+export function SummaryCard({ model, floating = false, touch = false, openRows, onFold, onDone, footer }: {
   model: SummaryModel
   floating?: boolean
+  /** the phone's task sheet: the same rows at touch size */
+  touch?: boolean
   /** the gallery's fixed rows, instead of the remembered ones */
   openRows?: readonly SummaryRow[]
   /** the card's own fold control; absent in the popover */
@@ -66,6 +70,7 @@ export function SummaryCard({ model, floating = false, openRows, onFold, onDone,
   const box = floating ? "" : "rounded-xl border border-border bg-surface p-1"
   return (
     <FixedRows.Provider value={openRows ?? null}>
+      <Touch.Provider value={touch}>
       <div data-testid="task-summary" className={cn("flex flex-col", floating ? "gap-0" : "wisp-summary-card gap-2.5")}>
         <div className={box}>
           <LeadRow model={model} onJump={done(model.onJumpToQuestion)} onFold={onFold} />
@@ -88,6 +93,7 @@ export function SummaryCard({ model, floating = false, openRows, onFold, onDone,
         )}
         {footer}
       </div>
+      </Touch.Provider>
     </FixedRows.Provider>
   )
 }
@@ -95,6 +101,7 @@ export function SummaryCard({ model, floating = false, openRows, onFold, onDone,
 /* ── rows ───────────────────────────────────────────────────────────────── */
 
 const ROW = "flex min-h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px]"
+const ROW_TOUCH = "flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 text-left text-[14px] active:bg-hover"
 const FOCUS = "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
 
 /**
@@ -114,12 +121,14 @@ function Row({ row, label, value, title, children }: {
 }) {
   const remembered = useSummaryRows()
   const fixed = useContext(FixedRows)
+  const touch = useContext(Touch)
   const open = fixed ? fixed.includes(row) : remembered.isOpen(row)
+  const rowClass = touch ? ROW_TOUCH : ROW
   const line = (
     <>
       <ChevronRight
         aria-hidden
-        className={cn("size-2.5 shrink-0 text-faint", children ? "wisp-turn group-data-panel-open:rotate-90" : "invisible")}
+        className={cn(touch ? "size-3" : "size-2.5", "shrink-0 text-faint", children ? "wisp-turn group-data-panel-open:rotate-90" : "invisible")}
       />
       <span className="shrink-0 text-fg-secondary">{label}</span>
       <span title={title} className="ml-auto flex min-w-0 items-center justify-end gap-1.5 text-muted-foreground tabular-nums">
@@ -127,12 +136,12 @@ function Row({ row, label, value, title, children }: {
       </span>
     </>
   )
-  if (!children) return <div className={ROW}>{line}</div>
+  if (!children) return <div className={rowClass}>{line}</div>
   return (
     <Collapsible open={open} onOpenChange={(next) => !fixed && remembered.set(row, next)}>
-      <CollapsibleTrigger className={cn("group hover:bg-hover data-panel-open:bg-hover", ROW, FOCUS)}>{line}</CollapsibleTrigger>
+      <CollapsibleTrigger className={cn("group hover:bg-hover data-panel-open:bg-hover", rowClass, FOCUS)}>{line}</CollapsibleTrigger>
       <CollapsibleContent className="wisp-unfold">
-        <div className="flex flex-col gap-1.5 pt-1.5 pr-2 pb-2 pl-6 text-[12px]">{children}</div>
+        <div className={cn("flex flex-col", touch ? "gap-1 pt-1 pr-3 pb-2 pl-8 text-[13px]" : "gap-1.5 pt-1.5 pr-2 pb-2 pl-6 text-[12px]")}>{children}</div>
       </CollapsibleContent>
     </Collapsible>
   )
@@ -141,6 +150,7 @@ function Row({ row, label, value, title, children }: {
 /** "Running 1m 07s", "Waiting for you · 1 question", "Done 4 min ago". A waiting question is a button: it scrolls to it. */
 function LeadRow({ model, onJump, onFold }: { model: SummaryModel; onJump: () => void; onFold?: () => void }) {
   const { task } = model
+  const row = useContext(Touch) ? ROW_TOUCH : ROW
   const running = model.runningSince !== null && task.state === "running"
   // by the second only while a turn runs; "4 min ago" moves by the minute
   const second = useTick(running)
@@ -164,11 +174,11 @@ function LeadRow({ model, onJump, onFold }: { model: SummaryModel; onJump: () =>
   return (
     <div className="flex items-center gap-0.5">
       {waiting ? (
-        <button type="button" onClick={onJump} title="Show the question" className={cn(ROW, FOCUS, "min-w-0 flex-1 hover:bg-hover")}>
+        <button type="button" onClick={onJump} title="Show the question" className={cn(row, FOCUS, "min-w-0 flex-1 hover:bg-hover")}>
           {words}
         </button>
       ) : (
-        <div className={cn(ROW, "min-w-0 flex-1")}>{words}</div>
+        <div className={cn(row, "min-w-0 flex-1")}>{words}</div>
       )}
       {onFold && (
         <Button size="sm" icon aria-label="Fold into the top bar" title="Fold into the top bar" onClick={onFold} className="mr-0.5">
@@ -181,6 +191,7 @@ function LeadRow({ model, onJump, onFold }: { model: SummaryModel; onJump: () =>
 
 /** `#318 · Open`; open, it says CI, review and whether it can merge, and links to GitHub. */
 function PullRequestRow({ pullRequest, autopilot }: { pullRequest?: PullRequestStatus; autopilot: ApiTask["autopilot"] }) {
+  const touch = useContext(Touch)
   if (!pullRequest || pullRequest.kind === "unsupported") return null
   if (pullRequest.kind !== "found") {
     const none = pullRequest.kind === "none"
@@ -213,7 +224,7 @@ function PullRequestRow({ pullRequest, autopilot }: { pullRequest?: PullRequestS
       <span className="text-muted-foreground">{words.mergeState}</span>
       {pullRequest.others ? <span className="text-faint">Newest of {pullRequest.others + 1} on this task</span> : null}
       {link && (
-        <a {...link} className={cn("w-fit rounded-sm text-fg-secondary underline-offset-2 hover:text-foreground hover:underline", FOCUS)}>
+        <a {...link} className={cn("w-fit rounded-sm text-fg-secondary underline-offset-2 hover:text-foreground hover:underline", touch && "flex min-h-11 items-center", FOCUS)}>
           Open on GitHub ↗
         </a>
       )}
@@ -233,6 +244,7 @@ function AutopilotRow({ model, pullRequest, onOpen }: {
   // its lines say "4 min ago": a clock only while they are on screen
   const remembered = useSummaryRows().isOpen("autopilot")
   const fixed = useContext(FixedRows)
+  const touch = useContext(Touch)
   const now = useTick(fixed ? fixed.includes("autopilot") : remembered)
   const found = pullRequest?.kind === "found" ? pullRequest.pullRequest : null
   const links: HistoryLinks = {
@@ -252,8 +264,8 @@ function AutopilotRow({ model, pullRequest, onOpen }: {
       ) : <span className="text-faint">Off</span>}
     >
       {/* the Automation section's own switches, so a flip here and there are one control */}
-      <div className="-mr-2 -ml-6">
-        <Switches automation={model.switches} reviewable={model.reviewable} touch={false} now={now} links={links} />
+      <div className={touch ? "-mr-3 -ml-8" : "-mr-2 -ml-6"}>
+        <Switches automation={model.switches} reviewable={model.reviewable} touch={touch} now={now} links={links} />
       </div>
       {onOpen && <PanelLink label="Open Autopilot" hint="history, rounds" onClick={onOpen} />}
     </Row>
@@ -268,6 +280,7 @@ function SubtasksRow({ items, onOpenTask, onOpen }: {
 }) {
   const waiting = items.filter((child) => child.state === "needs-input").length
   const running = items.filter((child) => child.state === "running").length
+  const touch = useContext(Touch)
   const lead = waiting > 0 ? { state: "needs-input" as const, words: `${waiting} waiting` } : running > 0 ? { state: "running" as const, words: `${running} running` } : null
   return (
     <Row
@@ -286,11 +299,11 @@ function SubtasksRow({ items, onOpenTask, onOpen }: {
             <button
               type="button"
               onClick={() => onOpenTask(child.id)}
-              className={cn("flex h-6 w-full items-center gap-2 rounded-md px-1.5 text-left hover:bg-hover", FOCUS)}
+              className={cn("flex w-full items-center gap-2 rounded-md px-1.5 text-left hover:bg-hover", touch ? "h-11 active:bg-hover" : "h-6", FOCUS)}
             >
               <StateDot state={child.state} background={child.background} />
               <span className="min-w-0 flex-1 truncate text-fg-secondary">{child.title}</span>
-              {child.subtask_kind && <span className="shrink-0 text-[11px] text-faint">{child.subtask_kind}</span>}
+              {child.subtask_kind && <span className={cn("shrink-0 text-faint", touch ? "text-[12px]" : "text-[11px]")}>{child.subtask_kind}</span>}
             </button>
           </li>
         ))}
@@ -314,11 +327,12 @@ function ContextRow({ tokens, children }: { tokens: number; children: ReactNode 
 }
 
 function PanelLink({ label, hint, onClick }: { label: string; hint: string; onClick: () => void }) {
+  const touch = useContext(Touch)
   return (
-    <button type="button" onClick={onClick} className={cn("-ml-1.5 flex h-6 w-[calc(100%+6px)] items-center gap-1 rounded-md px-1.5 text-fg-secondary hover:bg-hover hover:text-foreground", FOCUS)}>
+    <button type="button" onClick={onClick} className={cn("-ml-1.5 flex w-[calc(100%+6px)] items-center gap-1 rounded-md px-1.5 text-fg-secondary hover:bg-hover hover:text-foreground", touch ? "h-11 active:bg-hover" : "h-6", FOCUS)}>
       {label}
       <ChevronRight aria-hidden className="size-2.5" />
-      <span className="ml-auto text-[11px] text-faint">{hint}</span>
+      <span className={cn("ml-auto text-faint", touch ? "text-[12px]" : "text-[11px]")}>{hint}</span>
     </button>
   )
 }
