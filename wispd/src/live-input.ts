@@ -14,7 +14,7 @@ import {
   type StoredAttachment,
 } from "./attachments";
 import { emit } from "./events";
-import { getTask, runningTurn, transition } from "./store";
+import { getTask, runningTurn, transition, turnForTask } from "./store";
 import { clearHarnessBackground, setHarnessBackground } from "./task-processes";
 import { deliveredMessage, nativeImageAttachments } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
@@ -716,6 +716,8 @@ function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
     initialInput: codexInput(options.def, options.prompt, options.attachments),
     emit,
     onTerminal: () => void closeLiveInput(options.task.id, options.turnId),
+    // The driver reads its resume's starting point from the previous turn's usage.
+    previousUsage: options.task.session_id ? turnForTask(options.task.id, options.turn - 1)?.usage_json : null,
   });
   liveInputs.set(options.task.id, {
     turnId: options.turnId,

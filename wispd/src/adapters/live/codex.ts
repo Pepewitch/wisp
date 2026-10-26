@@ -23,6 +23,8 @@ interface CodexLiveOptions {
   initialInput: CodexLiveInput[];
   emit: (event: Record<string, unknown>) => void;
   onTerminal: () => void;
+  /** The usage JSON Wisp stored for the previous turn, when resuming. */
+  previousUsage?: string | null;
 }
 
 function record(value: unknown): Record<string, any> {
@@ -146,21 +148,70 @@ function snakeItem(value: unknown): Record<string, unknown> {
   }
 }
 
-function snakeUsage(value: unknown): Record<string, number> | null {
+/** The app-server's counter names, and the snake_case names Wisp stores them under. */
+const USAGE_NAMES: [camel: string, snake: string][] = [
+  ["totalTokens", "total_tokens"],
+  ["inputTokens", "input_tokens"],
+  ["cachedInputTokens", "cached_input_tokens"],
+  ["cacheWriteInputTokens", "cache_write_input_tokens"],
+  ["outputTokens", "output_tokens"],
+  ["reasoningOutputTokens", "reasoning_output_tokens"],
+];
+
+function renameUsage(value: unknown, from: 0 | 1): Record<string, number> | null {
   const usage = record(value);
-  const fields: [string, unknown][] = [
-    ["total_tokens", usage.totalTokens],
-    ["input_tokens", usage.inputTokens],
-    ["cached_input_tokens", usage.cachedInputTokens],
-    ["cache_write_input_tokens", usage.cacheWriteInputTokens],
-    ["output_tokens", usage.outputTokens],
-    ["reasoning_output_tokens", usage.reasoningOutputTokens],
-  ];
-  const normalized: Record<string, number> = {};
-  for (const [name, amount] of fields) {
-    if (typeof amount === "number") normalized[name] = amount;
+  const renamed: Record<string, number> = {};
+  for (const names of USAGE_NAMES) {
+    const amount = usage[names[from]];
+    if (typeof amount === "number") renamed[names[1 - from]!] = amount;
   }
-  return Object.keys(normalized).length > 0 ? normalized : null;
+  return Object.keys(renamed).length > 0 ? renamed : null;
+}
+
+function snakeUsage(value: unknown): Record<string, number> | null {
+  return renameUsage(value, 0);
+}
+
+function sameUsage(a: Record<string, number>, b: Record<string, number>): boolean {
+  const names = Object.keys(a);
+  return names.length > 0 && names.length === Object.keys(b).length && names.every((name) => a[name] === b[name]);
+}
+
+/**
+ * What the previous turn's stored usage says about where a resume starts.
+ * Since this change Wisp stores the thread's total, trusted only for the same
+ * thread. Before it, Wisp stored that turn's final call (`last`), which is
+ * exactly what a stale re-send at the start of the next turn carries.
+ */
+function previousStart(
+  usageJson: string | null | undefined,
+  threadId: string | null,
+): { total: Record<string, number> | null; lastCall: Record<string, number> | null } {
+  const none = { total: null, lastCall: null };
+  if (!usageJson || !threadId) return none;
+  let usage: Record<string, any>;
+  try {
+    usage = record(JSON.parse(usageJson));
+  } catch {
+    return none;
+  }
+  if (usage.thread_id === undefined) return { total: null, lastCall: renameUsage(usage, 1) };
+  return usage.thread_id === threadId ? { total: renameUsage(usage.thread_total, 1), lastCall: null } : none;
+}
+
+/** `after − before` for every counter `after` reports (camelCase breakdowns). */
+function usageDelta(after: unknown, before: Record<string, number>): Record<string, number> {
+  const delta: Record<string, number> = {};
+  for (const [name, amount] of Object.entries(record(after))) {
+    if (typeof amount === "number") delta[name] = amount - (before[name] ?? 0);
+  }
+  return delta;
+}
+
+function addUsage(sum: Record<string, number>, more: Record<string, number>): Record<string, number> {
+  const added = { ...sum };
+  for (const [name, amount] of Object.entries(more)) added[name] = (added[name] ?? 0) + amount;
+  return added;
 }
 
 /**
@@ -187,11 +238,27 @@ export class CodexLiveDriver {
   private threadId: string | null;
   private turnId: string | null = null;
   private model: string | null;
-  private usage: Record<string, number> | null = null;
+  /** This turn's model calls, summed (camelCase, as the app-server reports them). */
+  private turnUsage: Record<string, number> | null = null;
+  private lastUsage: Record<string, number> | null = null;
+  /** The thread's cumulative `total` as of the latest update; unknown on a resume until it reports. */
+  private threadTotal: Record<string, number> | null;
+  /** The previous turn's final call, when Wisp stored only that (before it stored totals). */
+  private readonly previousLastCall: Record<string, number> | null;
   private readonly children = new Set<string>();
 
   constructor(private readonly options: CodexLiveOptions) {
     this.threadId = options.sessionId;
+    // A resume's starting point, in order: the update the app-server replays
+    // (set in recordUsage), then the total Wisp stored at the end of the
+    // previous turn, and only then a guess. The stored value comes before
+    // guessing because a first update is ambiguous without one: an earlier
+    // call re-sent and a new call can both report total == last. A replay
+    // always wins, because the stored total can lag after a compact or an
+    // attach outside Wisp spends tokens on the thread.
+    const previous = previousStart(options.previousUsage, options.sessionId);
+    this.threadTotal = options.sessionId ? previous.total : {};
+    this.previousLastCall = previous.lastCall;
     this.model = options.model;
     this.peer = new JsonRpcPeer({
       sink: options.sink,
@@ -274,6 +341,53 @@ export class CodexLiveDriver {
     return this.peer.notify(method);
   }
 
+  /**
+   * `total` is cumulative per THREAD, across resumes (live-probed on
+   * 0.162.1), and `last` is the call that just finished. The turn's usage
+   * is the total's growth, update by update; the last call alone goes
+   * out as `last_usage`, whose prompt is the context size.
+   */
+  private recordUsage(params: Record<string, any>): void {
+    const tokenUsage = record(params.tokenUsage);
+    const total = usageDelta(tokenUsage.total, {});
+    if (!this.turnId || params.turnId !== this.turnId) {
+      // A resume replays the previous turn's update right after its response,
+      // excludeTurns or not (live-probed on 0.162.1): the starting point.
+      if (!this.turnId) this.threadTotal = total;
+      return;
+    }
+    if (!this.threadTotal) {
+      // Nothing replayed and no total stored. A stale re-send repeats the
+      // previous turn's final call, which is what Wisp stored before it stored
+      // totals: an exact match is a re-send, anything else a new call. With no
+      // previous usage at all, a total that is exactly this call is taken as
+      // the thread's first call; anything more may be a re-send.
+      const last = usageDelta(tokenUsage.last, {});
+      const before = usageDelta(total, last);
+      const resent = this.previousLastCall
+        ? sameUsage(last, this.previousLastCall)
+        : Object.values(before).some((amount) => amount !== 0);
+      this.threadTotal = resent ? total : before;
+    }
+    const growth = usageDelta(total, this.threadTotal);
+    // Only a completed call adds prompt tokens. Codex also re-sends an
+    // unchanged count (on rate-limit news), and a context-window overflow
+    // refills `total` with zeroed counters, which is a reset, not usage.
+    if ((growth.inputTokens ?? 0) > 0 && Object.values(growth).every((amount) => amount >= 0)) {
+      this.turnUsage = addUsage(this.turnUsage ?? {}, growth);
+    }
+    this.threadTotal = total;
+    this.lastUsage = snakeUsage(tokenUsage.last);
+  }
+
+  /** The turn's summed usage, stored with the thread's total so the next resume can start from it. */
+  private usageReport(): Record<string, unknown> | null {
+    const usage = snakeUsage(this.turnUsage);
+    const threadTotal = snakeUsage(this.threadTotal);
+    if (!usage && !threadTotal) return null;
+    return { ...usage, ...(threadTotal ? { thread_id: this.threadId, thread_total: threadTotal } : {}) };
+  }
+
   handle(frame: RpcFrame): void {
     if (this.peer.handle(frame)) return;
     if (typeof frame.method !== "string") return;
@@ -296,7 +410,7 @@ export class CodexLiveDriver {
         return;
       }
       case "thread/tokenUsage/updated":
-        if (!this.turnId || params.turnId === this.turnId) this.usage = snakeUsage(record(params.tokenUsage).last);
+        this.recordUsage(params);
         return;
       case "turn/completed": {
         if (this.terminal) return;
@@ -322,10 +436,11 @@ export class CodexLiveDriver {
             error: record(turn.error).message
               ? turn.error
               : { message: `Codex turn ${String(turn.status ?? "failed")}` },
-            usage: this.usage,
+            usage: this.usageReport(),
+            last_usage: this.lastUsage,
           });
         } else {
-          this.options.emit({ type: "turn.completed", usage: this.usage });
+          this.options.emit({ type: "turn.completed", usage: this.usageReport(), last_usage: this.lastUsage });
         }
         this.terminal = true;
         this.options.onTerminal();

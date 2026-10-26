@@ -885,11 +885,12 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
       completedAtMs: 123,
       item: { type: "agentMessage", id: "agent-1", text: "STEERED_CODEX", phase: "final_answer" },
     });
+    const usage = { totalTokens: 9, inputTokens: 7, cachedInputTokens: 2,
+      cacheWriteInputTokens: 0, outputTokens: 2, reasoningOutputTokens: 0 };
     notify("thread/tokenUsage/updated", {
       threadId: "codex-live-thread",
       turnId: "codex-live-turn",
-      tokenUsage: { last: { totalTokens: 9, inputTokens: 7, cachedInputTokens: 2,
-        cacheWriteInputTokens: 0, outputTokens: 2, reasoningOutputTokens: 0 } },
+      tokenUsage: { total: usage, last: usage },
     });
     notify("turn/completed", {
       threadId: "codex-live-thread",
@@ -945,7 +946,7 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     const [turn] = turnsFor(task.id);
     expect(turn?.result).toBe("STEERED_CODEX");
     expect(turn?.model).toBe("fake-codex-model");
-    expect(JSON.parse(turn!.usage_json!)).toEqual({
+    expect(JSON.parse(turn!.usage_json!)).toMatchObject({
       total_tokens: 9,
       input_tokens: 7,
       cached_input_tokens: 2,

@@ -100,10 +100,13 @@ export const CONTEXT_TRACKERS: Record<string, ContextTracker> = {
    * added: codex nests the cached count INSIDE input (166,151 total of which
    * 165,248 cached), the opposite of claude's disjoint fields. Adding them
    * would double-count the whole conversation.
+   *
+   * The app-server driver's `usage` is the turn's sum instead, so it states
+   * the final call separately as `last_usage`, read here when present.
    */
   "codex-jsonl": (event) => {
     if (event.type !== "turn.completed") return null;
-    const used = num(nested(event, "usage")?.input_tokens);
+    const used = num((nested(event, "last_usage") ?? nested(event, "usage"))?.input_tokens);
     return used === null ? null : point(used);
   },
 
