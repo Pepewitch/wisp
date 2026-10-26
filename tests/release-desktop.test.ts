@@ -14,6 +14,7 @@ import {
   desktopPackageVersion,
   desktopTargetDir,
   deterministicAppTarGz,
+  ensureStapled,
   machOHasUuid,
   releaseCertificateSource,
   signDesktopUpdate,
@@ -388,5 +389,25 @@ describe("updater signing is a separate pass that builds nothing", () => {
     expect(trusted.indexOf("name: remove signing material")).toBeLessThan(
       trusted.indexOf("name: stage trusted macOS assets"),
     );
+  });
+});
+
+describe("ensureStapled", () => {
+  // Tauri ignores `stapler staple`'s exit status, so a dropped ticket download
+  // leaves a notarized app with no Contents/CodeResources (0.7.2's first run).
+  test("staples an app Tauri left without a ticket, and leaves a stapled one alone", () => {
+    const root = mkdtempSync(join(tmpdir(), "wisp-desktop-staple-"));
+    try {
+      const app = join(root, "Wisp.app");
+      mkdirSync(join(app, "Contents"), { recursive: true });
+      const stapled: string[] = [];
+      ensureStapled(app, (path) => void stapled.push(path));
+      expect(stapled).toEqual([app]);
+      writeFileSync(join(app, "Contents/CodeResources"), "ticket");
+      ensureStapled(app, (path) => void stapled.push(path));
+      expect(stapled).toEqual([app]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

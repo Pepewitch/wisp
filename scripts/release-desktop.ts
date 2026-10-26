@@ -2,6 +2,7 @@
 import { gzipSync } from "node:zlib";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -18,7 +19,7 @@ import { VERSION } from "../wispd/src/version";
 import { sourceIdentity, type SourceIdentity } from "../wispd/scripts/build-binary";
 import { sha256File } from "../wispd/scripts/release-linux";
 import { assertMacReleaseSource } from "../wispd/scripts/release-macos";
-import { validateStapled } from "../wispd/scripts/stapler";
+import { stapleTicket, validateStapled } from "../wispd/scripts/stapler";
 
 const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const DESKTOP_TARGET = "darwin-arm64";
@@ -201,6 +202,18 @@ const EXPECTED_STAPLED_APP_MEMBERS = [
   "Contents/_CodeSignature/",
   "Contents/_CodeSignature/CodeResources",
 ] as const;
+
+/**
+ * Tauri staples after notarizing, but ignores `stapler staple`'s exit status,
+ * so a dropped download from Apple's ticket service leaves a notarized app
+ * with no ticket (0.7.2's first run). Staple it here, with retries, when the
+ * ticket is missing; the inventory check below still refuses an app without one.
+ */
+export function ensureStapled(app: string, staple: (app: string) => void = stapleTicket): void {
+  if (existsSync(join(app, "Contents/CodeResources"))) return;
+  console.error("release-desktop: Tauri left the notarized app without a stapled ticket; stapling it again");
+  staple(app);
+}
 
 /** Which members a bundle may contain, with and without Apple's stapled ticket. */
 export function verifyDesktopInventory(app: string, signed: boolean): void {
@@ -533,6 +546,7 @@ export function releaseDesktop(options: ReleaseDesktopOptions = {}): DesktopRele
     throw new Error("desktop build changed the clean release source");
   }
   const app = resolve(targetDir, "aarch64-apple-darwin/release/bundle/macos/Wisp.app");
+  if (signed) ensureStapled(app);
   const signing = verifyDesktopApp(app, signed);
 
   const outDir = resolve(root, options.outDir ?? `dist/release/v${VERSION}`);
