@@ -2,8 +2,9 @@
 
 This ledger separates release evidence from the version label. The 0.7 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.7.2 is the current release; earlier 0.7 records are retained
-below. The 0.6 records remain in
+coverage. 0.7.2 was the last 0.7 release; 0.8.0 supersedes it, and its record
+is in [the 0.8 ledger](../v0.8/QUALIFICATION.md). Earlier 0.7 records are
+retained below. The 0.6 records remain in
 [the 0.6 ledger](../v0.6/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
@@ -14,8 +15,8 @@ still apply to 0.7.2.
 ## 0.7.2 publication
 
 **Published and promoted on 2026-10-26.**
-[Wisp 0.7.2](https://github.com/Pepewitch/wisp/releases/tag/v0.7.2) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.7.2](https://github.com/Pepewitch/wisp/releases/tag/v0.7.2) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 04:00:40 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`bd4d12655a52f3c0672334c230b6725a59f5728e`](https://github.com/Pepewitch/wisp/commit/bd4d12655a52f3c0672334c230b6725a59f5728e),
@@ -59,8 +60,8 @@ for the published tag completed every job successfully on its first run:
 
 Promotion completed at 04:03:10 UTC with Homebrew tap commit
 [`666f77a89bf603ad57648cb8b425a7a724e6a608`](https://github.com/Pepewitch/homebrew-tap/commit/666f77a89bf603ad57648cb8b425a7a724e6a608).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.7.2.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.7.2 until 0.8.0 was promoted.
 
 0.7.2 adds database migration 26, so a 0.7.1 daemon cannot reopen a profile that
 0.7.2 has opened. No PNG asset or brand-generator input changed since 0.7.1, so
