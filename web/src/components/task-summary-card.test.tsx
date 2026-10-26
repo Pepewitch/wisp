@@ -139,10 +139,21 @@ describe("the pull request row", () => {
     daemon()
     mount(card(TASK, FOUND))
     const pr = row(/Pull request/)
-    expect(pr).toHaveTextContent("#42 · Open")
+    expect(screen.getByRole("link", { name: /#42 · Open/ })).toHaveAttribute("href", PR_SPECIMEN.url)
     fireEvent.click(pr)
     expect(await screen.findByText("Open on GitHub ↗")).toHaveAttribute("href", PR_SPECIMEN.url)
     expect(screen.getByText(/^CI .* · .*/)).toBeInTheDocument()
+  })
+
+  it("opens the PR from the number in one click, without opening the row", () => {
+    daemon()
+    mount(card(TASK, FOUND))
+    const link = screen.getByRole("link", { name: /#42 · Open/ })
+    expect(link).toHaveAttribute("target", "_blank")
+    expect(link.closest("button")).toBeNull()
+    fireEvent.click(link)
+    expect(screen.queryByText("Open on GitHub ↗")).toBeNull()
+    expect(row(/Pull request/)).toHaveAttribute("aria-expanded", "false")
   })
 
   it("says there is none yet, and has nothing to open", () => {
@@ -307,7 +318,7 @@ describe("the chip", () => {
     expect(chip).toHaveTextContent("Running·#42")
     fireEvent.click(chip)
     const popup = await screen.findByRole("dialog", { name: "Task summary" })
-    expect(within(popup).getByRole("button", { name: /Pull request/ })).toHaveTextContent("#42 · Open")
+    expect(within(popup).getByRole("link", { name: /#42 · Open/ })).toHaveAttribute("href", PR_SPECIMEN.url)
     // folded by the pane, not by a person: there is nothing to put back
     expect(within(popup).queryByRole("button", { name: "Show beside the conversation" })).toBeNull()
     // a long /tokens report or many children scroll inside it, within the height left below the bar
