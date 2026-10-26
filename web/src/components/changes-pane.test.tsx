@@ -58,7 +58,7 @@ describe("the Changes pane's diff parse", () => {
   it("parses one answer once for the panel's count, the header and the file list, however often they render", async () => {
     okDiff()
     mocks.parseDiff.mockClear()
-    withClient(<TaskPanel task={null} taskId="tk9zdy" archived={false} />)
+    withClient(<TaskPanel task={null} taskId="tk9zdy" archived={false} view="changes" />)
     await waitFor(() => expect(screen.getByText("a.ts")).toBeInTheDocument())
     fireEvent.click(screen.getByText("a.ts"))
     fireEvent.click(screen.getByText("scratch.txt"))

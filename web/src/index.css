@@ -623,6 +623,16 @@
 .bg-scrim[data-ending-style] {
   opacity: 0;
 }
+/* The tool panel's width glides open and shut (panes.tsx). Only while
+   `data-glide` is on the group, which is only while the panel opens or
+   closes: a divider drag follows the pointer and never eases after it. */
+[data-glide] > [data-panel] {
+  transition: flex-grow var(--dur-size) var(--ease-glide);
+}
+[data-glide="out"] > [data-panel] {
+  transition-duration: var(--dur-out);
+  transition-timing-function: var(--ease-out);
+}
 
 /* Wisp's own tooltip (lib/title-tips.ts) stands in for every `title` in the
    app. It opens as a hairline from the side that faces what you point at,
@@ -716,7 +726,8 @@
   [role="dialog"]:not([data-side]):not([data-swipe-direction]),
   [role="dialog"].wisp-zoom:not([data-side]):not([data-swipe-direction]),
   [role="alertdialog"],
-  .bg-scrim {
+  .bg-scrim,
+  [data-glide] > [data-panel] {
     transition: none;
   }
   .wisp-tip[data-state]::before,

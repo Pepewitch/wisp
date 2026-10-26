@@ -28,11 +28,12 @@ export function connectionStorageKey(
  * The built-in local connection lazily adopts the pre-connection-runtime key.
  * Remote connections never inspect that key, so adding one cannot inherit a
  * preference from the daemon that happened to serve the browser before it.
+ * `null` is a value that never had a pre-connection key to adopt.
  */
 export function readConnectionStorage(
   connectionId: string,
   name: string,
-  legacyKey: string,
+  legacyKey: string | null,
   storage?: ReadWriteStorage
 ): string | null {
   try {
@@ -40,7 +41,7 @@ export function readConnectionStorage(
     const key = connectionStorageKey(connectionId, name)
     const scoped = target.getItem(key)
     if (scoped !== null) return scoped
-    if (connectionId !== LOCAL_CONNECTION_ID) return null
+    if (connectionId !== LOCAL_CONNECTION_ID || legacyKey === null) return null
 
     const legacy = target.getItem(legacyKey)
     if (legacy === null) return null
@@ -63,14 +64,14 @@ export function readConnectionStorage(
 export function writeConnectionStorage(
   connectionId: string,
   name: string,
-  legacyKey: string,
+  legacyKey: string | null,
   value: string,
   storage?: WritableStorage
 ): void {
   try {
     const target = storage ?? localStorage
     target.setItem(connectionStorageKey(connectionId, name), value)
-    if (connectionId === LOCAL_CONNECTION_ID) target.removeItem(legacyKey)
+    if (connectionId === LOCAL_CONNECTION_ID && legacyKey !== null) target.removeItem(legacyKey)
   } catch {
     // blocked or full storage costs only this convenience
   }

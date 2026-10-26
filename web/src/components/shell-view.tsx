@@ -9,6 +9,8 @@ import { TerminalFindBar } from "@/components/terminal-find-bar"
 import {
   isClearChord,
   isFindChord,
+  isPanelChord,
+  isTerminalToggleChord,
   terminalOriginRefusal,
   TerminalConnection,
   TRY_AGAIN_LATER,
@@ -106,6 +108,9 @@ type Phase = "connecting" | "live" | "exited" | "error"
 const RETRY_LIMIT = 6
 const RETRY_DELAYS_MS = [400, 800, 1600, 3000, 3000, 3000]
 
+/** Below this a pane is a sliver in motion, not a size anyone works at. */
+const MIN_FIT = { cols: 20, rows: 2 }
+
 /**
  * One xterm bound to one TerminalConnection. Kept mounted while inactive so
  * scrollback survives a tab switch; the socket is disposed on deactivate and
@@ -116,6 +121,7 @@ export function ShellView({
   taskId,
   shellId,
   active,
+  shown = true,
   register,
   apple,
   daemonScreen,
@@ -128,6 +134,12 @@ export function ShellView({
   taskId: string
   shellId: number
   active: boolean
+  /**
+   * The pane is on screen. A closed panel hides the terminal without ending
+   * it: the socket stays open and output keeps arriving, but nothing is
+   * measured until it is shown again, and then it refits.
+   */
+  shown?: boolean
   /** Publish this tab's controls to the strip; null on teardown. */
   register: (id: number, handle: ShellHandle | null) => void
   apple: boolean
@@ -207,6 +219,9 @@ export function ShellView({
         clear()
         return false
       }
+      // The panel's chords are the window's: false keeps xterm from sending
+      // them to the shell and stopping them, so they bubble to the app.
+      if (isTerminalToggleChord(event) || (keys.current.apple && isPanelChord(event, true))) return false
       return true
     })
 
@@ -230,11 +245,12 @@ export function ShellView({
    * Refit whenever the pane can actually be measured. An inactive tab is
    * `hidden`, so xterm opened at 0x0 and its renderer never sized itself —
    * without the fit on activation the terminal comes up blank with the
-   * accessibility buffer leaking through. The observer then covers the
-   * draggable divider above it on desktop.
+   * accessibility buffer leaking through. The same goes for a panel that was
+   * closed and is shown again. The observer then covers the draggable
+   * dividers and the panel's glide on desktop.
    */
   useEffect(() => {
-    if (!active || !host.current) return
+    if (!active || !shown || !host.current) return
     const refit = () => pushSize(measure())
     const raf = requestAnimationFrame(refit)
     const ro = new ResizeObserver(refit)
@@ -245,7 +261,7 @@ export function ShellView({
     }
     // measure and pushSize read refs only
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active])
+  }, [active, shown])
 
   useTouchScroll(host, term, active)
 
@@ -340,12 +356,16 @@ function useShellConnection({
   /**
    * Fit the xterm to its pane and report what that came to. Returns null when
    * the renderer has not measured a cell yet — an inactive tab is hidden, so
-   * its terminal has no dimensions to propose.
+   * its terminal has no dimensions to propose — and when the pane is only a
+   * sliver: the tool panel glides open from zero, and a dock collapses to
+   * nothing, and fitting there would squeeze the shell to two columns (the
+   * addon's floor), reflow its scrollback and redraw its prompt for a size
+   * nobody sees.
    */
   const measure = (): { cols: number; rows: number } | null => {
-    fit.current?.fit()
     const d = fit.current?.proposeDimensions()
-    if (!d || !(d.cols > 0) || !(d.rows > 0)) return null
+    if (!d || !(d.cols >= MIN_FIT.cols) || !(d.rows >= MIN_FIT.rows)) return null
+    fit.current?.fit()
     return { cols: d.cols, rows: d.rows }
   }
 

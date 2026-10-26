@@ -1,4 +1,6 @@
 import { render } from "@testing-library/react"
+import { FitAddon } from "@xterm/addon-fit"
+import type { ComponentProps } from "react"
 import { describe, expect, it, vi } from "vitest"
 
 import { fakeDaemonTransport } from "@/test/runtime"
@@ -31,8 +33,11 @@ class MockSocket {
     MockSocket.urls.push(url)
     MockSocket.sockets.push(this)
   }
+  closed = 0
   send() {}
-  close() {}
+  close() {
+    this.closed += 1
+  }
   addEventListener() {}
   removeEventListener() {}
 }
@@ -103,6 +108,57 @@ describe("ShellView", () => {
     // the reason is known, so the pane does not ask why its origin was refused
     expect(requested.filter((path) => path.includes("terminal-origin"))).toEqual([])
     random.mockRestore()
+  })
+
+  // The tool panel hides the Terminal rather than unmounting it. Hidden, the
+  // shell keeps its socket (output keeps arriving, scrollback keeps growing)
+  // and nothing is measured; shown again, it refits to the pane it is in.
+  it("keeps its socket open while hidden, and refits only once it is shown again", async () => {
+    MockSocket.sockets = []
+    const propose = vi.spyOn(FitAddon.prototype, "proposeDimensions").mockReturnValue({ cols: 100, rows: 30 })
+    const fit = vi.spyOn(FitAddon.prototype, "fit").mockImplementation(() => {})
+    const transport = fakeDaemonTransport("local", {
+      openWebSocket: ((url: string) => new MockSocket(url)) as unknown as DaemonTransport["openWebSocket"],
+    })
+    const props: ComponentProps<typeof ShellView> = {
+      transport,
+      taskId: "t1",
+      shellId: 0,
+      active: true,
+      register: () => {},
+      apple: true,
+      daemonScreen: false,
+      finding: null,
+      onFind: () => {},
+      onFindClose: () => {},
+      touch: false,
+    }
+    const view = render(<ShellView {...props} shown />)
+    await vi.waitFor(() => expect(MockSocket.sockets.length).toBe(1))
+
+    view.rerender(<ShellView {...props} shown={false} />)
+    fit.mockClear()
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    expect(fit).not.toHaveBeenCalled()
+    expect(MockSocket.sockets).toHaveLength(1)
+    expect(MockSocket.sockets[0]!.closed).toBe(0)
+
+    view.rerender(<ShellView {...props} shown />)
+    await vi.waitFor(() => expect(fit).toHaveBeenCalled())
+    expect(MockSocket.sockets).toHaveLength(1)
+    expect(MockSocket.sockets[0]!.closed).toBe(0)
+
+    // a pane gliding open from nothing is a sliver: never fitted to
+    view.rerender(<ShellView {...props} shown={false} />)
+    propose.mockReturnValue({ cols: 2, rows: 1 })
+    fit.mockClear()
+    view.rerender(<ShellView {...props} shown />)
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    expect(fit).not.toHaveBeenCalled()
+
+    view.unmount()
+    propose.mockRestore()
+    fit.mockRestore()
   })
 
   it("spreads 1013 retries over 300 to 1500 ms", () => {

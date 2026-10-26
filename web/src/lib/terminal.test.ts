@@ -7,6 +7,8 @@ import {
   isApplePlatform,
   isClearChord,
   isFindChord,
+  isPanelChord,
+  isTerminalToggleChord,
   loadShellTabs,
   saveShellTabs,
   SHELL_TABS_KEY,
@@ -539,6 +541,24 @@ describe("terminal chords", () => {
   it("clears with ⌘K on Apple platforms only", () => {
     expect(isClearChord(key({ key: "k", code: "KeyK", metaKey: true }), true)).toBe(true);
     expect(isClearChord(key({ key: "k", code: "KeyK", ctrlKey: true }), false)).toBe(false);
+  });
+
+  it("toggles the Terminal with Ctrl+` on every platform, by key position as well as by character", () => {
+    expect(isTerminalToggleChord(key({ key: "`", code: "Backquote", ctrlKey: true }))).toBe(true);
+    // a layout whose key left of 1 types a dead accent
+    expect(isTerminalToggleChord(key({ key: "Dead", code: "Backquote", ctrlKey: true }))).toBe(true);
+    expect(isTerminalToggleChord(key({ key: "`", code: "Backquote", metaKey: true }))).toBe(false);
+    expect(isTerminalToggleChord(key({ key: "`", code: "Backquote", ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(isTerminalToggleChord(key({ key: "`", code: "Backquote" }))).toBe(false);
+  });
+
+  it("toggles the panel with ⌘\\ on Apple platforms and Ctrl+\\ elsewhere", () => {
+    const backslash = { key: "\\", code: "Backslash" };
+    expect(isPanelChord(key({ ...backslash, metaKey: true }), true)).toBe(true);
+    expect(isPanelChord(key({ ...backslash, ctrlKey: true }), true)).toBe(false);
+    expect(isPanelChord(key({ ...backslash, ctrlKey: true }), false)).toBe(true);
+    expect(isPanelChord(key({ ...backslash, metaKey: true }), false)).toBe(false);
+    expect(isPanelChord(key({ ...backslash, metaKey: true, shiftKey: true }), true)).toBe(false);
   });
 
   it("recognizes Apple platforms", () => {

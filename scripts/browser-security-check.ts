@@ -340,7 +340,7 @@ async function checkNoAmbientCredential(page: Page, origin: string): Promise<voi
 
 /** Real browser terminal: refusal must never count as positive acceptance. */
 async function checkTerminalHandshake(page: Page, origin: string, home: string): Promise<void> {
-  // Same-origin document without mounting the app (which auto-attaches a terminal).
+  // Same-origin document without mounting the app, so no Terminal of its own attaches.
   await page.client.send("Page.navigate", { url: `${origin}/api/health` }, page.session);
   await waitInPage(page, 'location.pathname === "/api/health"', "terminal test origin");
   async function attempt(mode: "valid" | "invalid" | "preauth") {
@@ -426,8 +426,15 @@ async function checkMermaidRecovery(page: Page, origin: string, mermaidPath: str
   check("lazy Mermaid loads under the browser CSP", violations.length === 0, violations.join("; "));
 }
 
-/** The open task's terminal arrives as its own chunk, and xterm still renders under the CSP. */
+/**
+ * The open task's terminal arrives as its own chunk, and xterm still renders
+ * under the CSP. The Terminal mounts only once it is opened, so open it the
+ * way a person does: from its top-bar icon.
+ */
 async function checkLazyTerminal(page: Page): Promise<void> {
+  const terminalIcon = `Array.from(document.querySelectorAll('header button[aria-pressed]')).find(b => b.textContent.startsWith('Terminal'))`;
+  await waitInPage(page, `!!${terminalIcon}`, "the Terminal's top-bar icon", 30_000);
+  await page.evaluate(`${terminalIcon}.click()`);
   await waitInPage(page, "!!document.querySelector('[data-terminal] .xterm')", "the lazily loaded terminal", 30_000);
   const violations = JSON.parse(String(await page.evaluate("JSON.stringify(window.__cspViolations ?? [])"))) as string[];
   check("the lazy terminal renders xterm under the browser CSP", violations.length === 0, violations.join("; "));

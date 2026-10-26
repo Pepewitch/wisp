@@ -1,108 +1,52 @@
-import { useState } from "react"
-
 import { ChangesPane } from "@/components/changes-pane"
 import { PaneErrorBoundary } from "@/components/error-boundary"
-import { Tab } from "@/components/primitives"
 import { AutopilotPane } from "@/components/autopilot-pane"
 import { SubtasksPane } from "@/components/subtasks-pane"
 import { WorkflowsPane } from "@/components/workflows-pane"
-import { parsedDiff, useDiff, useHarnessFeatures, useTaskWorkflows } from "@/hooks/queries"
-import { useSubtaskCount } from "@/hooks/useSubtasks"
-import { changedFileCount } from "@/lib/diff"
+import { useHarnessFeatures } from "@/hooks/queries"
+import type { PanelTool } from "@/hooks/useToolPanel"
 import { useDaemonRuntime } from "@/lib/runtime"
 import type { ApiTask } from "@/lib/types"
 
-type PanelTab = "autopilot" | "changes" | "workflows" | "subtasks"
-
 /**
- * The right column's upper panel. Three views of the same task's durable state:
- * **Autopilot** (where it stands, and what auto-merge and auto-fix are doing
- * about it), its **Changes**, and the **Workflows** watching it.
+ * The tool panel's upper half: the views of a task's durable state that the
+ * top bar's icons open — **Autopilot** (where it stands, and what auto-merge,
+ * auto-fix and auto-review are doing about it), its **Changes**, the
+ * **Workflows** watching it, and its **Subtasks**. One shows at a time
+ * (`view`); the Terminal docks below it (`panes.tsx`).
  *
- * The frontend reference said Changes "keeps a tab's shape so Checks can slot
- * in beside it later". Workflows is the sibling that arrived first. It belongs
- * here rather than behind a button under the task header, because an armed
- * workflow is standing state you want to SEE: the button only said how many
- * were active, and "what is it waiting for?" cost a modal over the whole app.
+ * There is no tab strip any more: the top bar's icons are the switch, and
+ * each pane draws its own label and a close control.
  *
- * The auto-merge and auto-fix switches moved in from the task menu, with the
- * room to say what they did, and Autopilot is the tab the panel opens on.
- *
- * **Subtasks** lists a parent's children (with `features.subtasks`): where
- * each stands and what it said, and New subtask beside them.
- *
- * All panes stay mounted. Switching to Workflows and back must not close the
- * diff you had open — the same rule the mobile shell's tabs already follow.
- *
- * A daemon with neither `taskAutopilot` nor `taskWorkflows`
- * gets no strip at all: one pane, its own label, exactly as before.
+ * All panes stay mounted. Opening Workflows and going back to Changes must
+ * not close the diff you had open, and closing the panel must not either —
+ * the same rule the mobile shell's tabs follow. A pane this daemon has no
+ * feature for (`taskAutopilot`, `taskWorkflows`, `subtasks`) is not mounted.
  */
 export function TaskPanel({
   task,
   taskId,
   archived,
   onRefresh,
-  touch = false,
+  view,
+  onClose,
 }: {
   task: ApiTask | null
   taskId: string | null
   archived: boolean
   onRefresh?: () => void
-  touch?: boolean
+  /** the tool on screen; null while the panel shows only the Terminal, or nothing */
+  view: PanelTool | null
+  onClose?: () => void
 }) {
   const { connectionId } = useDaemonRuntime()
   const features = useHarnessFeatures()
   const workflowsSupported = Boolean(features.data?.taskWorkflows)
   const autopilotSupported = Boolean(features.data?.taskAutopilot)
   const subtasksSupported = features.data?.subtasks === true
-  const tabs: PanelTab[] = [
-    ...(autopilotSupported ? (["autopilot"] as const) : []),
-    "changes",
-    ...(workflowsSupported ? (["workflows"] as const) : []),
-    ...(subtasksSupported ? (["subtasks"] as const) : []),
-  ]
-  const label: Record<PanelTab, string> = {
-    autopilot: "Autopilot",
-    changes: "Changes",
-    workflows: "Workflows",
-    subtasks: "Subtasks",
-  }
-  const children = useSubtaskCount(taskId)
-  // What the person last asked for; Autopilot is the opening choice. Features
-  // load after first paint, so the choice is held even while it is unavailable.
-  const [tab, setTab] = useState<PanelTab>("autopilot")
-  const view = tabs.includes(tab) ? tab : "changes"
 
-  // Both counts belong to the strip, so it reads the same from either tab.
-  // Each is the query the pane below already makes — one key, one request.
-  const diff = useDiff(taskId, archived).data
-  const changes = diff?.kind === "ok" ? changedFileCount(parsedDiff(diff).files, diff.untracked) : undefined
-  const workflows = useTaskWorkflows(taskId, workflowsSupported).data
-  const attached = workflows?.filter((w) => w.state !== "completed").length ?? 0
-
-  // Handed to the VISIBLE pane only: the hidden one keeps its own plain label,
-  // so there is never a second tablist in the tree.
-  const strip = tabs.length > 1 ? (
-    <div role="tablist" aria-label="Task panel" className="flex items-center gap-0.5">
-      {tabs.map((name) => (
-        <Tab
-          key={name}
-          role="tab"
-          size={touch ? "lg" : "sm"}
-          active={view === name}
-          aria-selected={view === name}
-          count={name === "changes" ? changes : name === "workflows" ? attached || undefined : name === "subtasks" ? children || undefined : undefined}
-          onClick={() => setTab(name)}
-        >
-          {label[name]}
-        </Tab>
-      ))}
-    </div>
-  ) : undefined
-
-  // The strip depends on which surfaces the daemon has. Painting before that
-  // is known opens on Changes, then jumps to Autopilot when features arrive.
-  // A failed features read falls through to Changes, as it always did.
+  // Which panes exist depends on the daemon. Painting before that is known
+  // would show a remembered Autopilot as nothing, then as itself.
   if (features.isPending) return <div className="h-full min-h-0 flex-1" />
 
   return (
@@ -115,9 +59,8 @@ export function TaskPanel({
           // prefix keeps it apart from its siblings, whose keys would otherwise be identical
           key={`autopilot:${connectionId}:${taskId ?? ""}`}
           task={task}
-          header={view === "autopilot" ? strip : undefined}
           hidden={view !== "autopilot"}
-          touch={touch}
+          onClose={onClose}
         />
       )}
       {/* Keyed like its siblings: a diff that broke rendering one task must not
@@ -127,9 +70,8 @@ export function TaskPanel({
           taskId={taskId}
           archived={archived}
           onRefresh={onRefresh}
-          header={view === "changes" ? strip : undefined}
           hidden={view !== "changes"}
-          touch={touch}
+          onClose={onClose}
         />
       </PaneErrorBoundary>
       {workflowsSupported && (
@@ -138,18 +80,16 @@ export function TaskPanel({
           // must not leave a half-filled form pointing at the wrong place
           key={`workflows:${connectionId}:${taskId ?? ""}`}
           task={task}
-          header={view === "workflows" ? strip : undefined}
           hidden={view !== "workflows"}
-          touch={touch}
+          onClose={onClose}
         />
       )}
       {subtasksSupported && (
         <SubtasksPane
           key={`subtasks:${connectionId}:${taskId ?? ""}`}
           task={task}
-          header={view === "subtasks" ? strip : undefined}
           hidden={view !== "subtasks"}
-          touch={touch}
+          onClose={onClose}
         />
       )}
     </div>

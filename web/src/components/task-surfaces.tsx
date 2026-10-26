@@ -8,16 +8,18 @@ import { SubtasksPane } from "@/components/subtasks-pane"
 import { TaskPanel } from "@/components/task-panel"
 import { TerminalSection } from "@/components/terminal-pane"
 import { WorkflowsPane } from "@/components/workflows-pane"
+import type { ToolPanelControls } from "@/hooks/useToolPanel"
 import { revealFileHandler } from "@/lib/external-links"
 import type { ApiTask, HarnessesResponse } from "@/lib/types"
 
-/** What sits beside a task's conversation: the right column on a desktop, the tabs on a phone. */
+/** What sits beside a task's conversation: the tool panel on a desktop, the tabs on a phone. */
 export interface TaskSurfaces {
+  /** On the desktop, the tool panel's upper half: Autopilot, Changes, Workflows and Subtasks, one at a time. */
   changes: ReactNode
-  /** Touch only: on the desktop, Autopilot is a tab inside `changes`' task panel. */
+  /** Touch only: on the desktop, Autopilot is a tool inside `changes`' task panel. */
   autopilot?: (showConversation: () => void, hidden: boolean) => ReactNode
   workflows?: ReactNode
-  /** Touch only, with `features.subtasks`: on the desktop, Subtasks is a tab of the task panel too. */
+  /** Touch only, with `features.subtasks`: on the desktop, Subtasks is a tool of the task panel too. */
   subtasks?: ReactNode
   terminal: ReactNode
 }
@@ -30,6 +32,7 @@ export function buildTaskSurfaces({
   taskId,
   archived,
   onRefresh,
+  tools,
 }: {
   mobile: boolean
   /** the daemon's feature flags, which decide the surfaces it has; absent reads as none */
@@ -39,6 +42,8 @@ export function buildTaskSurfaces({
   taskId: string | null
   archived: boolean
   onRefresh: () => void
+  /** the desktop's tool panel: which tool shows, and how a pane closes itself; unused on touch */
+  tools: Pick<ToolPanelControls, "layout" | "close" | "claimTerminalFocus">
 }): TaskSurfaces {
   const workflowsSupported = features?.taskWorkflows === true
   const autopilotSupported = features?.taskAutopilot === true
@@ -62,6 +67,10 @@ export function buildTaskSurfaces({
           taskId={taskId}
           archived={archived}
           onRefresh={onRefresh}
+          view={tools.layout.tool}
+          onClose={() => {
+            if (tools.layout.tool) tools.close(tools.layout.tool)
+          }}
         />
       )}
     </FileViewerProvider>
@@ -106,6 +115,9 @@ export function buildTaskSurfaces({
         worktreePath={task?.worktree_path ?? null}
         archived={archived}
         touch={mobile}
+        shown={mobile ? undefined : tools.layout.terminal}
+        onClose={mobile ? undefined : () => tools.close("terminal")}
+        claimFocus={mobile ? undefined : tools.claimTerminalFocus}
       />
     </PaneErrorBoundary>
   )

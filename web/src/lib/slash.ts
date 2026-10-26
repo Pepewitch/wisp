@@ -8,6 +8,7 @@ import type {
   SkillEntry,
   StatusEntry,
 } from "@/lib/types";
+import type { ToolName } from "@/lib/tools";
 
 /**
  * The `/` palette's THREE tiers (v0.3 A2, decision Q6). The tier is not
@@ -89,6 +90,8 @@ export interface SlashEntry {
   command?: boolean;
   /** A local harness command whose honest equivalent is an external page. */
   externalHref?: string;
+  /** Opens one of the top bar's tools in the tool panel; nothing reaches the harness. */
+  tool?: ToolName;
   /**
    * A5/Q6: the cost marker, overriding the group's `costsTurn` marker. The
    * harness group is free reads EXCEPT compact, so the one costing entry
@@ -103,10 +106,13 @@ export interface SlashEntry {
  */
 const PROBE_VALUE_PREFIX = "probe:";
 const COMMAND_VALUE_PREFIX = "command:";
+// a skill called `changes` must not share a row value with the Changes tool
+const TOOL_VALUE_PREFIX = "tool:";
 
 export function slashValue(entry: SlashEntry): string {
   if (entry.probe) return `${PROBE_VALUE_PREFIX}${entry.probe}`;
   if (entry.command) return `${COMMAND_VALUE_PREFIX}${entry.name}`;
+  if (entry.tool) return `${TOOL_VALUE_PREFIX}${entry.name}`;
   return entry.name;
 }
 
@@ -117,6 +123,7 @@ export function slashValue(entry: SlashEntry): string {
 export function slashName(value: string): string {
   if (value.startsWith(PROBE_VALUE_PREFIX)) return value.slice(PROBE_VALUE_PREFIX.length);
   if (value.startsWith(COMMAND_VALUE_PREFIX)) return value.slice(COMMAND_VALUE_PREFIX.length);
+  if (value.startsWith(TOOL_VALUE_PREFIX)) return value.slice(TOOL_VALUE_PREFIX.length);
   return value;
 }
 
@@ -224,6 +231,25 @@ export const TIER1_ENTRIES: SlashEntry[] = [
 
 export function isTier1Command(name: string): name is Tier1CommandName {
   return TIER1_ENTRIES.some((entry) => entry.name === name);
+}
+
+/**
+ * The top bar's tools, by name: `/terminal` opens what ⌃` toggles. They
+ * open and stay open — a command you typed should not close what it names —
+ * and they are only offered where the pointer shell's panel exists.
+ */
+const TOOL_ENTRIES: SlashEntry[] = [
+  { name: "terminal", tool: "terminal", hint: "open the Terminal · ⌃`", keywords: ["shell", "console", "tty"] },
+  { name: "changes", tool: "changes", hint: "open the branch's changes", keywords: ["diff", "files"] },
+  { name: "autopilot", tool: "autopilot", hint: "open the pull request and autopilot", keywords: ["pr", "merge", "review", "fix"] },
+  { name: "subtasks", tool: "subtasks", hint: "open this task's subtasks", keywords: ["children", "child"] },
+  { name: "workflows", tool: "workflows", hint: "open the workflows watching this task", keywords: ["watch", "automation"] },
+];
+
+/** The tool entries this daemon has; null (features unknown) offers the two every daemon has. */
+export function toolEntries(available: readonly ToolName[] | null): SlashEntry[] {
+  const offered = available ?? ["terminal", "changes"];
+  return TOOL_ENTRIES.filter((entry) => offered.includes(entry.tool!));
 }
 
 /**

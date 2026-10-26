@@ -113,16 +113,17 @@ it("completes a workflow with the CLI's own verb, and files it under Completed",
   expect(screen.queryByRole("button", { name: "Pause" })).not.toBeInTheDocument()
 })
 
-it("puts adding in the list rather than in the tab strip", async () => {
-  // A `+` at the right end of a tab row is the universal "new tab" affordance,
-  // and the Terminal pane one divider down uses exactly that for new shells.
-  // The control belongs beside the things it adds to.
+it("puts adding in the list rather than in the pane's header", async () => {
+  // A `+` at the right end of a header row reads as "new tab", and the
+  // Terminal one divider down uses exactly that for new shells. The control
+  // belongs beside the things it adds to; the header holds only its close.
   const request = vi.fn(async (path: string) => path === "/api/workflow-types" ? [definition] : [item])
-  render(<WorkflowsPane task={task} header={<div role="tablist" aria-label="Task panel" />} />, {
+  render(<WorkflowsPane task={task} onClose={() => {}} />, {
     wrapper: runtimeWrapper(fakeDaemonTransport("fixture", { request: request as DaemonTransport["request"] })),
   })
   const add = await screen.findByRole("button", { name: "New workflow…" })
-  expect(within(screen.getByRole("tablist")).queryByRole("button")).toBeNull()
+  const close = screen.getByRole("button", { name: "Close Workflows" })
+  expect(within(close.parentElement!).getAllByRole("button")).toEqual([close])
   fireEvent.click(add)
   expect(await screen.findByRole("button", { name: "Choose Deployment watch" })).toBeInTheDocument()
 })
@@ -146,33 +147,32 @@ it("ends its empty state in the control, not in a noun", async () => {
 
 const EMPTY_DIFF = { diff: "", untracked: [], base: null, worktreeReason: null }
 
-it("tabs Workflows beside Changes in the right column", async () => {
+it("shows the one tool it is given, and keeps the other mounted behind it", async () => {
   const request = vi.fn(async (path: string) => path === "/api/harnesses" ? { features: { taskWorkflows: true } }
     : path === "/api/workflow-types" ? [definition]
     : path.endsWith("/diff") ? EMPTY_DIFF
     : [item])
-  render(<TaskPanel task={task} taskId={task.id} archived={false} />, {
-    wrapper: runtimeWrapper(fakeDaemonTransport("new", { request: request as unknown as DaemonTransport["request"] })),
-  })
-  const tabs = await screen.findByRole("tablist", { name: "Task panel" })
-  // the count is on the strip, so "is anything watching this?" is answered
-  // from the Changes tab without switching
-  await waitFor(() => expect(within(tabs).getByRole("tab", { name: /Workflows/ })).toHaveTextContent("1"))
-  fireEvent.click(within(tabs).getByRole("tab", { name: /Workflows/ }))
-  expect(await screen.findByText("Deployment still building")).toBeInTheDocument()
-  expect(screen.getByRole("tab", { name: /Changes/ })).toBeInTheDocument()
+  const wrapper = runtimeWrapper(fakeDaemonTransport("new", { request: request as unknown as DaemonTransport["request"] }))
+  const rendered = render(<TaskPanel task={task} taskId={task.id} archived={false} view="workflows" />, { wrapper })
+  const row = await screen.findByText("Deployment still building")
+  expect(row).toBeVisible()
+  // Changes is mounted, hidden: switching back must find its diff where it was
+  expect(screen.getByText("Changes", { selector: "span" }).closest("[aria-hidden]")).not.toBeNull()
+  rendered.rerender(<TaskPanel task={task} taskId={task.id} archived={false} view="changes" />)
+  expect(screen.getByText("Deployment still building").closest("[aria-hidden]")).not.toBeNull()
+  expect(screen.getByText("Changes", { selector: "span" }).closest("[aria-hidden]")).toBeNull()
 })
 
-it("offers no strip, and asks for no workflows, on an older daemon", async () => {
+it("mounts no Workflows pane, and asks for no workflows, on an older daemon", async () => {
   const request = vi.fn(async (path: string) => path === "/api/harnesses" ? { features: {} }
     : path.endsWith("/diff") ? EMPTY_DIFF
     : [])
-  render(<TaskPanel task={task} taskId={task.id} archived={false} />, {
+  render(<TaskPanel task={task} taskId={task.id} archived={false} view="changes" />, {
     wrapper: runtimeWrapper(fakeDaemonTransport("old", { request: request as unknown as DaemonTransport["request"] })),
   })
   await waitFor(() => expect(request).toHaveBeenCalled())
-  expect(screen.queryByRole("tablist", { name: "Task panel" })).not.toBeInTheDocument()
   expect(await screen.findByText("Changes")).toBeInTheDocument()
+  expect(screen.queryByText("Workflows")).not.toBeInTheDocument()
   expect(request.mock.calls.some(([path]) => String(path).includes("/workflows"))).toBe(false)
 })
 
@@ -187,12 +187,11 @@ it("drops a half-filled form when the daemon changes under the same task ID", as
   const view = (transport: DaemonTransport) => (
     <QueryClientProvider client={client}>
       <DaemonRuntimeProvider transport={transport}>
-        <TaskPanel task={task} taskId={task.id} archived={false} />
+        <TaskPanel task={task} taskId={task.id} archived={false} view="workflows" />
       </DaemonRuntimeProvider>
     </QueryClientProvider>
   )
   const rendered = render(view(a))
-  fireEvent.click(await screen.findByRole("tab", { name: /Workflows/ }))
   fireEvent.click(await screen.findByRole("button", { name: "New workflow…" }))
   fireEvent.click(await screen.findByRole("button", { name: "Choose Deployment watch" }))
   expect(screen.getByRole("button", { name: "Start" })).toBeInTheDocument()

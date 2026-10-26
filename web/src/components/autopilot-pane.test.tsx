@@ -102,15 +102,17 @@ function mount(node: ReactNode) {
 afterEach(() => vi.unstubAllGlobals())
 
 describe("the Autopilot tab", () => {
-  it("opens the panel, first and labelled Autopilot, and never marks the tab itself", async () => {
+  it("labels itself Autopilot in the tool panel, with a close control, and never marks the label", async () => {
     stub(ALL)
-    mount(<TaskPanel task={withStatus(PAUSED)} taskId={TASK.id} archived={false} />)
-    const tabs = await screen.findByRole("tablist", { name: "Task panel" })
-    const first = within(tabs).getAllByRole("tab")[0]!
-    expect(first).toHaveTextContent(/^Autopilot$/)
-    expect(first).toHaveAttribute("aria-selected", "true")
-    // the rail and the PR icon turn red; the tab stays plain
-    expect(first.querySelector("[class*='bg-destructive']")).toBeNull()
+    const onClose = vi.fn()
+    mount(<TaskPanel task={withStatus(PAUSED)} taskId={TASK.id} archived={false} view="autopilot" onClose={onClose} />)
+    const close = await screen.findByRole("button", { name: "Close Autopilot" })
+    const header = close.parentElement!
+    expect(header).toHaveTextContent(/^Autopilot$/)
+    // the rail and the PR icon turn red; the label stays plain
+    expect(header.querySelector("[class*='bg-destructive']")).toBeNull()
+    fireEvent.click(close)
+    expect(onClose).toHaveBeenCalledOnce()
   })
 
   it("off: switches that teach what they do", async () => {

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react"
 
+import { Dismiss } from "@/components/icons"
 import { useBackgroundDetail } from "@/hooks/useBackgroundDetail"
 import { backgroundLabel, NETWORK_PAUSED_LABEL, STATE_DOT, STATE_LABEL } from "@/lib/state"
 import type { ApiTask, TaskState } from "@/lib/types"
@@ -227,10 +228,16 @@ export function PaneHeader({
   children,
   touch = false,
   className,
+  onClose,
+  closeLabel,
 }: {
   children: ReactNode
   touch?: boolean
   className?: string
+  /** the tool panel's close control, always the strip's last thing */
+  onClose?: () => void
+  /** the pane's name, for the control's accessible name */
+  closeLabel?: string
 }) {
   return (
     <div
@@ -241,6 +248,18 @@ export function PaneHeader({
       )}
     >
       {children}
+      {onClose && (
+        <Button
+          size={touch ? "touch" : "sm"}
+          icon
+          aria-label={closeLabel ? `Close ${closeLabel}` : "Close"}
+          title="Close (Esc)"
+          onClick={onClose}
+          className="ml-auto"
+        >
+          <Dismiss />
+        </Button>
+      )}
     </div>
   )
 }

@@ -684,9 +684,11 @@ under the caret** — the `/` through the next whitespace. `src/lib` is a path;
 `look at src/lib /st` is a command. Hiding is cmdk's, driven by a
 visually-hidden `Command.Input`; the textarea stays the real input and forwards
 ↑/↓/Home/End/↵ to the cmdk root. No component above the composer may install a
-document-level key handler. The palette and report panels share one positioned
-wrapper with the composer, so their left and right edges answer the input width,
-not the outer footer before its responsive padding.
+document-level handler for a bare key. ⌘-, Ctrl- and ⌃-modified chords are
+never in that set (find ⌘F, the tool panel's ⌃` and ⌘\\). The palette and
+report panels share one positioned wrapper with the composer, so their left and
+right edges answer the input width, not the outer footer before its responsive
+padding.
 
 ### Ranking is OURS, and it is what Enter runs
 
@@ -797,9 +799,16 @@ the composer, keyed to its task — a 409 is an expected state and stays muted;
 only a real failure is destructive.
 
 Two entries that are not what they were: **`/diff` is cut** (the Changes pane IS
-the diff and is always on screen — there was no hidden pane to reveal), and
-**`/log` pins the conversation to the live tail** rather than focusing a stream
-pane, because §5 deleted that pane.
+the diff; `/changes` opens it), and **`/log` pins the conversation to the live
+tail** rather than focusing a stream pane, because §5 deleted that pane.
+
+On the pointer shell a **Tools** group, under `Wisp`, names the tool panel's
+tools: `/terminal`, `/changes`, `/autopilot`, `/subtasks`, `/workflows`, only
+the ones this daemon has (§6). A pick opens the tool and leaves it open — a
+command you typed does not close what it names — and consumes only its token,
+like Tier 1. Their row values carry a `tool:` prefix, so a skill called
+`changes` is a different row. The phone, whose tabs are its tools, has no such
+group.
 
 ## 5f. The pull-request link
 
@@ -1109,6 +1118,11 @@ three times as fast as the title, so the task you are in stays readable.
 the context reading ride after them for now; the summary card takes them over.
 The dot's hover names background work, as everywhere (`StateDot`).
 
+Then **what you can open** for that task (`top-bar-tools.tsx`): the tool
+icons, before a hairline that sets them apart from the app's own cluster. §6
+owns what they do. Each is a toggle (`aria-pressed`) whose `title` names it, and
+the Terminal's names its chord.
+
 What is left of the old header is `task-notices.tsx`: the archive-cleanup panel
 and the worktree reason, in the reading column above the transcript, and only
 when there is something to decide: a cleanup that is `complete` gets no band.
@@ -1122,7 +1136,8 @@ or other control. So every non-interactive box in the bar carries the
 attribute (the three sections, the empty stretch, the quiet words, a
 subtask crumb's gap and its `›`), glyphs
 inside them are `pointer-events-none`, and no control carries it. The empty
-stretch between the title and the right cluster is the big drag target.
+stretch between the title and the tools is the big drag target; the tools'
+wrapper and the hairline after it drag too, the icons do not.
 
 The **right end** is *this app*: the connection indicator states what it is
 doing, and then everything you can do TO it sits in one
@@ -1555,14 +1570,17 @@ archive's nesting, both family-confirm steps and a report turn.
 
 Every divider is draggable **and says so**: a hairline with a 3px grip in its
 middle (`web/src/components/panes.tsx`). Panes carry no border toward a
-handle — the handle *is* the divider. Layouts persist through the library's
-own `useDefaultLayout`; never hand-roll layout JSON.
+handle — the handle *is* the divider, and a handle whose neighbour is closed is
+not drawn and cannot drag it open. Layouts persist through the library's own
+`useDefaultLayout`; never hand-roll layout JSON. The one exception is
+`lib/pane-layouts.ts`, which moved the always-open right column's saved
+layouts to the tool panel's new ids once (below).
 
-The right column is a vertical split, not tabs: the **task panel** over
-**Terminal**. Terminal holds as many shells in the worktree as you want, tabbed,
-each its own websocket, connecting only while active. A shell with something
-long-running keeps its own dot so a finishing test run is visible without
-switching to it.
+The right of the shell is the **tool panel**, closed by default so the reading
+column has the room. Terminal holds as many shells in the worktree as you want,
+tabbed, each its own websocket, connecting only while its tab is active. A shell
+with a program in the foreground puts a 6px dot on the top bar's Terminal icon,
+so a finishing test run is visible without opening it.
 
 The **daemon** keeps the tab list (`useShellTabs`, `taskTerminals`), so every
 window shows the same tabs, and closing a tab hangs its shell up the way
@@ -1576,26 +1594,74 @@ clear, restart and close. Find is ⌘F on Apple platforms and Ctrl+Alt+F
 elsewhere: plain Ctrl+F is readline's, and the terminal never takes a key the
 shell uses.
 
-### The task panel: Autopilot · Changes · Workflows · Subtasks
+### The tool panel: tools on demand
 
-`Changes` used to be a label that merely kept a tab's shape, "so `Checks` can
-slot in beside it later". **Workflows** is the sibling that arrived first, and
-**Autopilot** joined them (§5k,
-`task-panel.tsx`); the shape was right: tabs, selection is a background pill,
-no underline and no hue. Autopilot is first and the panel opens on it.
+Tools are summoned, not resident. The top bar's icons (§5h) are **Terminal,
+Changes, Autopilot (the pull-request icon), Subtasks and Workflows**, the last
+three only where the daemon has them (`taskAutopilot`, `subtasks`,
+`taskWorkflows`). An icon opens its tool in the panel and closes it when it is
+the one showing; the open one wears `bg-accent`, no hue. Each icon carries its
+glance form so the panel can stay closed: Changes counts files, Subtasks counts
+children, Workflows counts the ones still watching, the PR icon takes its PR's
+tone (`PULL_REQUEST_ICON_TONE`), and the Terminal gets the running dot. Every
+count is the query the pane makes anyway: one key, one request.
 
-Both panes stay **mounted**; the inactive one is `hidden`, so switching tabs
-never closes the diff you had open. The strip is handed to the VISIBLE pane's
-`PaneHeader`, never to both — two tablists in one tree is the bug that trades
-one duplicated label for a broken a11y tree. Each pane still renders its own
-plain label when it is given no strip. The strip is built from the daemon's
-features (`taskAutopilot`, `taskWorkflows`, `subtasks`): a daemon with none gets Changes
-alone, with its own label. The panel paints nothing until those features are
-known, so a cold load never opens on Changes and then jumps to Autopilot.
+**One tool at a time, and the Terminal docks.** Another icon swaps the panel's
+upper tool. The Terminal is the one exception: opened while a tool is up, it
+docks below it with a draggable divider (`ToolPanel`), because watching tests
+while reading a diff is the common pair. Each tool's header ends in a close
+control, and so does the Terminal's strip; Esc closes the tool when focus is in
+it and nothing inside took the key. In the Terminal Esc is the shell's, so ⌃`
+closes it there.
 
-**Nothing that CREATES may sit at the right end of a tab strip.** Changes keeps
-its Refresh there because refreshing acts on the view. Workflows put a `+`
-there and it was wrong twice over: a `+` at the end of a tab row is the
+**Closing hides; it never unmounts.** Every pane stays mounted and `hidden`, so
+the diff keeps its scroll, an open drill-down survives, and a shell keeps
+running with its socket open and its scrollback growing. The Terminal alone
+waits to mount until it is first shown for a task, so selecting a task does not
+start a shell nobody asked for. A hidden xterm measures nothing (`shown`), and
+it never fits to a sliver: a pane gliding open from zero, or a collapsed dock,
+proposes the fit addon's two-column floor, which would reflow the scrollback and
+SIGWINCH the shell for a size nobody sees (`MIN_FIT` in `shell-view.tsx`).
+Shown again, it refits.
+
+**Memory.** The open tool, or none, is remembered **per task**, per connection,
+in this browser (`useToolPanel`), so switching tasks and coming back restores
+it. The panel's **width** is one for every task, in px, and only a divider drag
+changes it; dragging the divider past the panel's minimum closes the panel. New
+tasks start closed, and **nothing ever opens by itself**: a task that needs you
+changes its dot and its notification, never the layout.
+
+**Keys.** ⌃` toggles the Terminal on every platform (VS Code's chord);
+⌘\\ (Ctrl+\\ off Apple) closes the panel, or reopens what this task last had open,
+or Changes for a task that never had a tool. A focused xterm passes both
+through (`isTerminalToggleChord`, `isPanelChord` in `lib/terminal.ts`) rather
+than sending them to the shell, except Ctrl+\\ off Apple, which is SIGQUIT and
+stays the shell's. Both are modified chords on the window, like ⌘F (§5e's rule
+is about bare keys). Neither is claimed by a browser or by Wisp Desktop, which
+declares no menu accelerators. The `/` palette names each tool too (§5e).
+
+**Focus.** Opening the Terminal gives its front shell the keyboard; a task
+switch that lands on a task with its Terminal open does not, because a focused
+xterm keeps Ctrl+Tab for the shell and task switching would stop there
+(`claimTerminalFocus`). Closing a region that holds the focus hands it to the
+composer, since focus in a `hidden` box is focus nowhere.
+
+**Motion.** The panel's width glides open on `--dur-size` / `--ease-glide` and
+shut on `--dur-out` / `--ease-out`, and only while it opens or closes
+(`data-glide` on the group): a divider drag follows the pointer. Instant under
+`prefers-reduced-motion`. A reload restores the layout without performing it.
+
+**Saved layouts.** The always-open column saved `wisp-ui-main` (with a `right`
+panel) and `wisp-ui-right` (Changes over Terminal). They moved once to
+`wisp-ui-main-v2` (the panel's share back to the centre, closed, and its width
+kept as the panel's open width) and `wisp-ui-dock`; an unreadable one is
+dropped, so nobody opens to a broken layout.
+
+The tool panel is the pointer shell's. The phone keeps its tabs (§6b).
+
+**Nothing that CREATES may sit at the right end of a pane's header.** Changes
+keeps its Refresh there because refreshing acts on the view. Workflows put a
+`+` there and it was wrong twice over: a `+` at the end of a header row is the
 universal *new tab* affordance, and one divider below it the Terminal pane uses
 exactly that glyph, in exactly that corner, to open a new SHELL TAB. Adding
 belongs beside the things it adds to, so the Workflows pane ends its list in a

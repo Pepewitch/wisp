@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState, type RefObject } from "react"
 
-import { Check, ClipboardPaste, Copy, Plus, type FluentIcon } from "@/components/icons"
+import { Check, ClipboardPaste, Copy, Dismiss, Plus, type FluentIcon } from "@/components/icons"
 import { ShellKillDialog, ShellMenu, ShellTab } from "@/components/shell-tab"
 import { LazyShellView } from "@/components/lazy-shell-view"
 import type { ShellHandle } from "@/components/shell-view"
@@ -48,6 +48,9 @@ export function TerminalSection({
   worktreePath,
   archived,
   touch = false,
+  shown,
+  onClose,
+  claimFocus,
 }: {
   taskId: string | null
   /**
@@ -60,6 +63,18 @@ export function TerminalSection({
   archived: boolean
   /** thumb-sized shell tabs below the md breakpoint */
   touch?: boolean
+  /**
+   * The pane is on screen. The tool panel hides the Terminal rather than
+   * unmounting it, so the shells, their sockets and their scrollback all
+   * survive a close; this only says whether there is anything to measure.
+   * Absent on touch, whose tab strip keeps the pane mounted and measurable,
+   * and whose keyboard must not open just because the pane mounted.
+   */
+  shown?: boolean
+  /** the panel's close control, at the strip's right end; absent on touch, whose tabs close nothing */
+  onClose?: () => void
+  /** whether the person just opened the Terminal, so the front shell should take the keyboard (`useToolPanel`) */
+  claimFocus?: () => boolean
 }) {
   const runtime = useDaemonRuntime()
   const apple = isApplePlatform()
@@ -82,13 +97,28 @@ export function TerminalSection({
    * and therefore every mounted shell — on mount and unmount.
    */
   const handles = useRef(new Map<number, ShellHandle>())
+  // Opening the Terminal is when you mean to type in it, so the front shell
+  // takes the keyboard then — whether ⌃` or the top bar's icon opened it.
+  // Only then: a task switch that lands on a task with its Terminal open must
+  // leave focus where it was, because a focused xterm keeps Ctrl+Tab for the
+  // shell and task switching would stop there. `claimFocus` says which.
+  const opening = useRef({ shown: false, claimFocus, front: 0 })
+  const focusFront = useCallback(() => {
+    const handle = handles.current.get(opening.current.front)
+    if (handle && opening.current.shown && opening.current.claimFocus?.()) handle.terminal.focus()
+  }, [])
   // Must stay referentially stable: a tab's terminal is created and disposed by
   // an effect that depends on this, so a `register` that changed identity would
   // tear down live shells — scrollback, socket and all — to rebuild them.
-  const register = useCallback((id: number, handle: ShellHandle | null) => {
-    if (handle) handles.current.set(id, handle)
-    else handles.current.delete(id)
-  }, [])
+  const register = useCallback(
+    (id: number, handle: ShellHandle | null) => {
+      if (handle) handles.current.set(id, handle)
+      else handles.current.delete(id)
+      // opened before this shell's code had arrived: it takes the keyboard now
+      if (handle) requestAnimationFrame(focusFront)
+    },
+    [focusFront],
+  )
 
   const tabs = useShellTabs({
     taskId,
@@ -97,16 +127,14 @@ export function TerminalSection({
   })
   const { shells, activeId, labelOf } = tabs
 
-  const [copied, setCopied] = useState(false)
-  const copiedReset = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const mounted = useRef(true)
   useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-      if (copiedReset.current) clearTimeout(copiedReset.current)
-    }
-  }, [])
+    opening.current = { shown: shown === true, claimFocus, front: activeId }
+  })
+  useEffect(() => {
+    if (shown !== true) return
+    const frame = requestAnimationFrame(focusFront)
+    return () => cancelAnimationFrame(frame)
+  }, [shown, focusFront])
 
   const [findState, setFinding] = useState<{ id: number; token: number } | null>(null)
   // a closed tab takes its find bar with it
@@ -126,54 +154,7 @@ export function TerminalSection({
     handles.current.get(id)?.clear()
   }
 
-  /**
-   * Copy whichever selection exists, or the whole buffer when none does.
-   *
-   * The ORDER is the substance here, and `lib/terminal-clipboard.ts` explains
-   * why: a phone's only selection is the platform's, made by long press and
-   * held in the DOM where xterm cannot see it, so asking xterm first would
-   * ignore the one selection a finger can actually make and copy the entire
-   * buffer over the top of it.
-   */
-  const copy = async () => {
-    const terminal = handles.current.get(activeId)?.terminal
-    if (!terminal) return
-    const root = terminal.element ?? null
-    const text =
-      selectionWithin(root, root?.ownerDocument.getSelection() ?? null) ||
-      (terminal.hasSelection() ? terminal.getSelection() : "") ||
-      bufferText(terminal.buffer.active)
-    if (!text) return
-    try {
-      await writeClipboardText(text)
-      if (!mounted.current) return
-      setCopied(true)
-      if (copiedReset.current) clearTimeout(copiedReset.current)
-      copiedReset.current = setTimeout(() => setCopied(false), 1_200)
-    } catch {
-      setCopied(false)
-    }
-  }
-
-  /**
-   * Paste into the active shell.
-   *
-   * `Terminal.paste` rather than an input frame of our own: it normalizes line
-   * endings and applies bracketed-paste mode, so a shell that asked to be told
-   * a paste is a paste still gets told.
-   */
-  const paste = async () => {
-    const terminal = handles.current.get(activeId)?.terminal
-    if (!terminal) return
-    try {
-      const text = await readClipboardText()
-      if (text) terminal.paste(text)
-      terminal.focus()
-    } catch {
-      // A refused permission or an empty clipboard is not an error worth a
-      // surface; the control stays where it is and the shell is untouched.
-    }
-  }
+  const { copied, copy, paste } = useShellClipboard(handles, activeId)
 
   return (
     // h-full for the desktop resizable panel, flex-1 for the mobile flex
@@ -270,6 +251,16 @@ export function TerminalSection({
           disabled={unavailable !== null || !clipboardCan("readText")}
           touch={touch}
         />
+        {onClose && (
+          <ShellControl
+            icon={Dismiss}
+            label="Close Terminal"
+            title="Close the Terminal (⌃`) — its shells keep running"
+            onAct={onClose}
+            disabled={false}
+            touch={touch}
+          />
+        )}
       </div>
 
       <div className="relative min-h-0 flex-1">
@@ -283,6 +274,7 @@ export function TerminalSection({
               taskId={taskId!}
               shellId={id}
               active={id === activeId}
+              shown={shown ?? true}
               register={register}
               apple={apple}
               daemonScreen={tabs.daemonTabs}
@@ -338,4 +330,71 @@ function ShellControl({
       <Icon className={touch ? "size-4" : "size-3"} />
     </button>
   )
+}
+
+/**
+ * The strip's copy and paste, acting on the shell in front.
+ */
+function useShellClipboard(handles: RefObject<Map<number, ShellHandle>>, activeId: number) {
+  const [copied, setCopied] = useState(false)
+  const copiedReset = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      if (copiedReset.current) clearTimeout(copiedReset.current)
+    }
+  }, [])
+
+  /**
+   * Copy whichever selection exists, or the whole buffer when none does.
+   *
+   * The ORDER is the substance here, and `lib/terminal-clipboard.ts` explains
+   * why: a phone's only selection is the platform's, made by long press and
+   * held in the DOM where xterm cannot see it, so asking xterm first would
+   * ignore the one selection a finger can actually make and copy the entire
+   * buffer over the top of it.
+   */
+  const copy = async () => {
+    const terminal = handles.current.get(activeId)?.terminal
+    if (!terminal) return
+    const root = terminal.element ?? null
+    const text =
+      selectionWithin(root, root?.ownerDocument.getSelection() ?? null) ||
+      (terminal.hasSelection() ? terminal.getSelection() : "") ||
+      bufferText(terminal.buffer.active)
+    if (!text) return
+    try {
+      await writeClipboardText(text)
+      if (!mounted.current) return
+      setCopied(true)
+      if (copiedReset.current) clearTimeout(copiedReset.current)
+      copiedReset.current = setTimeout(() => setCopied(false), 1_200)
+    } catch {
+      setCopied(false)
+    }
+  }
+
+  /**
+   * Paste into the active shell.
+   *
+   * `Terminal.paste` rather than an input frame of our own: it normalizes line
+   * endings and applies bracketed-paste mode, so a shell that asked to be told
+   * a paste is a paste still gets told.
+   */
+  const paste = async () => {
+    const terminal = handles.current.get(activeId)?.terminal
+    if (!terminal) return
+    try {
+      const text = await readClipboardText()
+      if (text) terminal.paste(text)
+      terminal.focus()
+    } catch {
+      // A refused permission or an empty clipboard is not an error worth a
+      // surface; the control stays where it is and the shell is untouched.
+    }
+  }
+
+  return { copied, copy, paste }
 }
