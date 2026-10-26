@@ -31,11 +31,12 @@ async function until(pred: () => boolean, ms = 8000): Promise<void> {
 
 // A fake app-server. Turn 1 (thread/start) makes one call, so its total equals
 // its last. Turn 2 (thread/resume) replays nothing, re-sends that same count
-// (as codex does on rate-limit news) and then makes one real call.
+// (as codex does on rate-limit news) and then makes one real call. Each turn's
+// frames go out in ONE write with turn/start's response, so the driver handles
+// the turn's updates before it has the turn's id, every run.
 const FAKE_CODEX = `#!/usr/bin/env bun
 import { createInterface } from "node:readline";
 const frame = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
-const notify = (method, params) => frame({ jsonrpc: "2.0", method, params });
 const usage = (input, output) => ({ totalTokens: input + output, inputTokens: input, cachedInputTokens: 0,
   cacheWriteInputTokens: 0, outputTokens: output, reasoningOutputTokens: 0 });
 const earlier = usage(1000, 10);
@@ -49,7 +50,8 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     frame({ jsonrpc: "2.0", id: request.id, result: { thread: { id: "stored-total-thread" }, model: "fake" } });
   } else if (request.method === "turn/start") {
     const turnId = resumed ? "turn-2" : "turn-1";
-    frame({ jsonrpc: "2.0", id: request.id, result: { turn: { id: turnId } } });
+    const chunk = [{ jsonrpc: "2.0", id: request.id, result: { turn: { id: turnId } } }];
+    const notify = (method, params) => chunk.push({ jsonrpc: "2.0", method, params });
     const update = (total, last) =>
       notify("thread/tokenUsage/updated", { threadId: "stored-total-thread", turnId, tokenUsage: { total, last } });
     if (resumed) {
@@ -64,6 +66,7 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
       item: { type: "agentMessage", id: "agent-" + turnId, text: "DONE " + turnId, phase: "final_answer" },
     });
     notify("turn/completed", { threadId: "stored-total-thread", turn: { id: turnId, status: "completed", error: null } });
+    process.stdout.write(chunk.map((value) => JSON.stringify(value) + "\\n").join(""));
   }
 }
 `;

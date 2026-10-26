@@ -245,12 +245,16 @@ export class CodexLiveDriver {
   private threadTotal: Record<string, number> | null;
   /** The previous turn's final call, when Wisp stored only that (before it stored totals). */
   private readonly previousLastCall: Record<string, number> | null;
+  /** Usage updates that arrived before the turn's id was known; `adoptTurn` sorts them. */
+  private heldUsage: Record<string, any>[] = [];
+  /** Set once turn/start is sent: from then on, the thread's next turn is ours. */
+  private turnRequested = false;
   private readonly children = new Set<string>();
 
   constructor(private readonly options: CodexLiveOptions) {
     this.threadId = options.sessionId;
     // A resume's starting point, in order: the update the app-server replays
-    // (set in recordUsage), then the total Wisp stored at the end of the
+    // (set in adoptTurn), then the total Wisp stored at the end of the
     // previous turn, and only then a guess. The stored value comes before
     // guessing because a first update is ambiguous without one: an earlier
     // call re-sent and a new call can both report total == last. A replay
@@ -313,10 +317,34 @@ export class CodexLiveDriver {
     if (this.options.effort) turnParams.effort = this.options.effort;
     const tier = speedTier(this.options.def, this.options.fast);
     if (tier) turnParams.serviceTier = tier;
+    this.turnRequested = true;
     const started = record(await this.call("turn/start", turnParams));
     const turn = record(started.turn);
     if (typeof turn.id !== "string" || !turn.id) throw new Error("Codex started without returning a turn id");
-    this.turnId = turn.id;
+    this.adoptTurn(turn.id);
+  }
+
+  /**
+   * The turn's id became known: from turn/start's response, or from a
+   * notification handled first, because one stdout read can carry the
+   * response and the turn's first frames and they are handled before the
+   * response's promise resolves. The usage held until now is sorted by the
+   * turn each update names, not by when it came: another turn's update is
+   * the resume replay, this turn's are its own calls.
+   */
+  private adoptTurn(turnId: string): void {
+    if (this.turnId) return;
+    this.turnId = turnId;
+    const held = this.heldUsage;
+    this.heldUsage = [];
+    for (const params of held) {
+      // A resume replays the previous turn's update right after its response,
+      // excludeTurns or not (live-probed on 0.162.1): the starting point.
+      if (params.turnId !== turnId) this.threadTotal = usageDelta(record(params.tokenUsage).total, {});
+    }
+    for (const params of held) {
+      if (params.turnId === turnId) this.recordUsage(params);
+    }
   }
 
   async send(messageId: string, input: CodexLiveInput[]): Promise<void> {
@@ -348,14 +376,13 @@ export class CodexLiveDriver {
    * out as `last_usage`, whose prompt is the context size.
    */
   private recordUsage(params: Record<string, any>): void {
-    const tokenUsage = record(params.tokenUsage);
-    const total = usageDelta(tokenUsage.total, {});
-    if (!this.turnId || params.turnId !== this.turnId) {
-      // A resume replays the previous turn's update right after its response,
-      // excludeTurns or not (live-probed on 0.162.1): the starting point.
-      if (!this.turnId) this.threadTotal = total;
+    if (!this.turnId) {
+      this.heldUsage.push(params);
       return;
     }
+    if (params.turnId !== this.turnId) return;
+    const tokenUsage = record(params.tokenUsage);
+    const total = usageDelta(tokenUsage.total, {});
     if (!this.threadTotal) {
       // Nothing replayed and no total stored. A stale re-send repeats the
       // previous turn's final call, which is what Wisp stored before it stored
@@ -412,6 +439,11 @@ export class CodexLiveDriver {
       case "thread/tokenUsage/updated":
         this.recordUsage(params);
         return;
+      case "turn/started": {
+        const turnId = str(record(params.turn).id);
+        if (this.turnRequested && turnId && str(params.threadId) === this.threadId) this.adoptTurn(turnId);
+        return;
+      }
       case "turn/completed": {
         if (this.terminal) return;
         const turn = record(params.turn);
@@ -429,6 +461,7 @@ export class CodexLiveDriver {
           });
           return;
         }
+        if (!this.turnId && this.turnRequested && str(turn.id)) this.adoptTurn(turn.id);
         if (this.turnId && turn.id !== this.turnId) return;
         if (turn.status !== "completed") {
           this.options.emit({

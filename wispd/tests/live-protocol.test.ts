@@ -315,6 +315,14 @@ describe("Codex live terminal events", () => {
    * (live-probed on 0.162.1); `replay: false` covers a resume where it does not.
    */
   async function resumedTurn(events: Record<string, any>[], replay = true, previousUsage: object | null = null) {
+    const { driver, startTurn } = await resumedUntilTurnStart(events, replay, previousUsage);
+    driver.handle({ id: startTurn.id, result: { turn: { id: "turn-1" } } });
+    await driver.ready;
+    return driver;
+  }
+
+  /** The same resume, stopped once turn/start is sent and not yet answered. */
+  async function resumedUntilTurnStart(events: Record<string, any>[], replay = true, previousUsage: object | null = null) {
     const sink = new MemorySink();
     const driver = new CodexLiveDriver({
       sink,
@@ -338,9 +346,7 @@ describe("Codex live terminal events", () => {
     driver.handle({ id: resume.id, result: { thread: { id: "existing-thread", turns: [] } } });
     if (replay) driver.handle(usageUpdate("previous-turn", previousTotal, previousLast));
     const startTurn = await requestAt(sink, 3);
-    driver.handle({ id: startTurn.id, result: { turn: { id: "turn-1" } } });
-    await driver.ready;
-    return driver;
+    return { driver, startTurn };
   }
 
   const settle = (status: string) => ({
@@ -377,6 +383,51 @@ describe("Codex live terminal events", () => {
     expect(completed.last_usage).toMatchObject({ input_tokens: 16_226, output_tokens: 5 });
     const parsed = parseOutput(BUILTIN_ADAPTERS.codex!, events.map((event) => JSON.stringify(event)).join("\n"));
     expect(parsed).toMatchObject({ usage: { output_tokens: 116 }, context: { usedTokens: 16_226 } });
+    await driver.close();
+  });
+
+  // pumpJsonLines hands every line of one stdout read to `handle` in a row,
+  // before turn/start's promise resolves: the turn's id is not set yet when
+  // its first updates, or its completion, are handled.
+  test("turn/start's response and the turn's updates in one read are counted", async () => {
+    const events: Record<string, any>[] = [];
+    const { driver, startTurn } = await resumedUntilTurnStart(events, false);
+    for (const frame of [
+      usageUpdate("previous-turn", previousTotal, previousLast),
+      { id: startTurn.id, result: { turn: { id: "turn-1" } } },
+      usageUpdate("turn-1", breakdown(88_523, 75_008, 235, 21), firstCall),
+      usageUpdate("turn-1", breakdown(104_669, 90_880, 285, 21), breakdown(16_146, 15_872, 50, 0)),
+      settle("completed"),
+    ]) {
+      driver.handle(frame);
+    }
+    await driver.ready;
+
+    const completed = events.find((event) => event.type === "turn.completed")!;
+    expect(completed.usage).toMatchObject({
+      input_tokens: 16_058 + 16_146,
+      output_tokens: 61 + 50,
+      thread_total: { input_tokens: 104_669, output_tokens: 285 },
+    });
+    expect(completed.last_usage).toMatchObject({ input_tokens: 16_146 });
+    await driver.close();
+  });
+
+  test("turn/started names the turn when its updates come before turn/start's response", async () => {
+    const events: Record<string, any>[] = [];
+    const { driver, startTurn } = await resumedUntilTurnStart(events);
+    for (const frame of [
+      { method: "turn/started", params: { threadId: "existing-thread", turn: { id: "turn-1" } } },
+      usageUpdate("turn-1", breakdown(88_523, 75_008, 235, 21), firstCall),
+      { id: startTurn.id, result: { turn: { id: "turn-1" } } },
+      settle("completed"),
+    ]) {
+      driver.handle(frame);
+    }
+    await driver.ready;
+
+    const completed = events.find((event) => event.type === "turn.completed")!;
+    expect(completed.usage).toMatchObject({ input_tokens: 16_058, output_tokens: 61 });
     await driver.close();
   });
 
