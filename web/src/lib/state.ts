@@ -1,4 +1,4 @@
-import type { ApiTask, TaskState, TurnStatus } from "./types"
+import type { ApiTask, ConversationDetail, TaskState, TurnStatus } from "./types"
 
 /**
  * Task-state → tailwind class maps. These MUST stay static records: tailwind
@@ -81,6 +81,15 @@ export function outcomeWord(task: ApiTask): string {
   return pausedOnNetwork(task) ? NETWORK_PAUSED_LABEL
     : task.state === "failed" && task.latest_turn_has_result && task.latest_turn_exit_code
       ? `Exited ${task.latest_turn_exit_code}` : STATE_LABEL[task.state]
+}
+
+/**
+ * The harness is blocked on a question the conversation shows ("Waiting for
+ * you · 1 question"). The conversation detail carries it; the list row alone
+ * does not, so a row reads false.
+ */
+export function questionWaiting(task: ApiTask): boolean {
+  return task.state === "needs-input" && Boolean((task as Partial<ConversationDetail>).pending_question_id)
 }
 
 /** The state line's tone: a network pause needs nobody, so it stays gray. */

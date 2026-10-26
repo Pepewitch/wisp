@@ -104,14 +104,13 @@ describe("a signalled daemon", () => {
     test(`${signal} runs the graceful stop, then stops the shells and exits ${code}`, async () => {
       const daemon = await startDaemon();
       // An open event stream, as every browser tab keeps, must not hold the
-      // stop to its deadline. The stream sends nothing until its first event,
-      // so its response is not awaited; the pause lets the request land.
+      // stop to its deadline.
       const reader = new AbortController();
       const events = fetch(`${daemon.base}/api/events`, {
         headers: { authorization: `Bearer ${daemon.token}` },
         signal: reader.signal,
       }).catch(() => null);
-      await Bun.sleep(300);
+      expect((await events)?.status).toBe(200);
       const started = Date.now();
       daemon.proc.kill(signal);
       const exitCode = await daemon.proc.exited;

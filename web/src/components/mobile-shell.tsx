@@ -9,9 +9,9 @@ import { TOOL_LABEL } from "@/components/tool-hints"
 import { PULL_REQUEST_ICON_TONE, pullRequestIconTone } from "@/lib/pull-request-tone"
 import { pullRequestWords } from "@/lib/pull-request-words"
 import { useDaemonRuntime } from "@/lib/runtime"
-import { outcomeWord, pausedOnNetwork } from "@/lib/state"
+import { outcomeWord, pausedOnNetwork, questionWaiting } from "@/lib/state"
 import { TOOL_NAMES, type ToolName } from "@/lib/tools"
-import type { ApiTask, ConversationDetail, PullRequestStatus, Turn } from "@/lib/types"
+import type { ApiTask, PullRequestStatus, Turn } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 import { useMobileViewport } from "@/hooks/use-mobile-viewport"
@@ -274,8 +274,7 @@ function TaskLines({ task, pullRequest, onOpen, onQuestion }: {
   onQuestion: () => void
 }) {
   const waiting = task.state === "needs-input"
-  // the conversation detail carries it; the list row alone does not
-  const question = waiting && Boolean((task as Partial<ConversationDetail>).pending_question_id)
+  const question = questionWaiting(task)
   const found = pullRequest?.kind === "found" ? pullRequest.pullRequest : null
   const words = found ? pullRequestWords(found, task.autopilot) : null
   // CI belongs on the line only while the PR is still going somewhere

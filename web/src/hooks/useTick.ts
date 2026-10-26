@@ -6,16 +6,22 @@ interface Clock {
 }
 
 /** One interval per period, alive only while something reads it. */
-function clock(periodMs: number): Clock {
+export function clock(periodMs: number): Clock {
   let now = Date.now();
   let timer: ReturnType<typeof setInterval> | null = null;
   const listeners = new Set<() => void>();
   return {
     subscribe(onChange) {
+      // A reader may join up to a period after the last tick, and must not
+      // read that tick's instant: the clock moves to now, and the readers it
+      // already has move with it, so every reader still shares one instant.
+      const joined = Date.now();
+      if (joined !== now) {
+        now = joined;
+        for (const fn of listeners) fn();
+      }
       listeners.add(onChange);
       if (timer === null) {
-        // the first subscriber may arrive long after the last one left
-        now = Date.now();
         timer = setInterval(() => {
           now = Date.now();
           for (const fn of listeners) fn();

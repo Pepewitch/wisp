@@ -314,6 +314,24 @@ describe("the chip", () => {
     expect(popup).toHaveClass("max-h-(--available-height)", "overflow-y-auto")
   })
 
+  it("focuses the popover itself when a pointer opens it, and its first row when the keyboard does", async () => {
+    daemon()
+    mount(<TaskSummaryChip task={{ ...TASK, state: "running" }} pullRequest={FOUND} turns={undefined} roomy={false} />)
+    const chip = screen.getByRole("button", { name: /Task summary/ })
+    fireEvent.pointerDown(chip, { pointerType: "mouse" })
+    fireEvent.click(chip, { detail: 1 })
+    const popup = await screen.findByRole("dialog", { name: "Task summary" })
+    await waitFor(() => expect(popup).toHaveFocus())
+
+    fireEvent.keyDown(popup, { key: "Escape" })
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull())
+    // a click with no pointer behind it (`detail` 0) is Enter or Space on the chip
+    fireEvent.click(chip, { detail: 0 })
+    const again = await screen.findByRole("dialog", { name: "Task summary" })
+    await waitFor(() => expect(again).toContainElement(document.activeElement as HTMLElement))
+    expect(again).not.toHaveFocus()
+  })
+
   it("puts a folded card back beside the conversation where there is room", async () => {
     daemon()
     localStorage.setItem("wisp_summary_card_folded", "1")

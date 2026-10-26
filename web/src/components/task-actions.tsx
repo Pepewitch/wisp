@@ -18,8 +18,8 @@ export function TaskActions({
   title,
 }: {
   task: ApiTask
-  /** its trigger, the facts above the verbs, and rows after them */
-  title: { trigger: ReactNode; className: string; header: ReactNode; after: ReactNode }
+  /** its trigger, the facts above the verbs (and their spoken form), and rows after them */
+  title: { trigger: ReactNode; className: string; header: ReactNode; headerLabel?: string; after: ReactNode }
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const verbs = useTaskVerbs(task)
@@ -36,6 +36,7 @@ export function TaskActions({
         trigger={title.trigger}
         className={title.className}
         header={title.header}
+        headerLabel={title.headerLabel}
         open={menuOpen}
         onOpenChange={setMenuOpen}
       >

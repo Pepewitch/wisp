@@ -142,7 +142,8 @@ describe("the title menu", () => {
     fireEvent.click(titleButton())
     const menu = await screen.findByRole("menu")
     const group = within(menu).getByRole("group")
-    expect(group).toHaveAccessibleName(/^tk9zdy · wisp\/tk9zdy-paginate.*high effort$/)
+    // one line at a time, never run together ("…paginateRunning")
+    expect(group).toHaveAccessibleName("tk9zdy · wisp/tk9zdy-paginate, Running · claude · claude-opus-5 · high effort")
     expect(within(group).getByRole("menuitem", { name: /Rename/ })).toBeInTheDocument()
     // nothing but the group sits directly in the menu
     expect([...menu.children].map((el) => el.getAttribute("role"))).toEqual(["group"])

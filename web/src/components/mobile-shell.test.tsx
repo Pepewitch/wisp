@@ -238,6 +238,22 @@ describe("a tool on the phone", () => {
     expect(intents.findRequest()).toMatchObject({ query: "autosave", turn: 4 })
   })
 
+  it("leaves a tool other than Autopilot open when a find arrives, and asks only once", async () => {
+    mount({ autopilot: () => <div>Autopilot content</div> })
+    const intents = uiIntentsFor("test-connection")
+    fireEvent.click(within(await openSheet()).getByRole("button", { name: /^Changes/ }))
+    await waitFor(() => expect(shown("Diff")).toBe(true))
+
+    const before = intents.findRequest()?.seq ?? 0
+    act(() => intents.openFind("autosave", 4))
+    // the frame the Autopilot case waits before it asks again
+    await act(() => new Promise((resolve) => requestAnimationFrame(resolve)))
+
+    expect(shown("Diff")).toBe(true)
+    expect(shown("Transcript")).toBe(false)
+    expect(intents.findRequest()?.seq ?? 0).toBe(before + 1)
+  })
+
   it("returns to the chat when the task changes", async () => {
     const view = mount()
     fireEvent.click(within(await openSheet()).getByRole("button", { name: /^Changes/ }))
