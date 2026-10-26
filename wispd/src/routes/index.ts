@@ -98,10 +98,11 @@ function projectRoutes(
   path: string,
   method: string,
   cfg: WispConfig,
+  adapters: Record<string, AdapterDef>,
 ): Response | Promise<Response> | null {
   if (path === "/api/status" && method === "GET") return statusRoute(req);
   if (path === "/api/repos" && method === "GET") return reposRoute(cfg);
-  if (path === "/api/projects" && method === "POST") return addProjectRoute(req, cfg);
+  if (path === "/api/projects" && method === "POST") return addProjectRoute(req, cfg, adapters);
   if (path === "/api/projects/copy-preview" && method === "POST") return copyPreviewRoute(req);
   if (path === "/api/projects" && method === "DELETE") return removeProjectRoute(req, cfg);
   return null;
@@ -173,7 +174,7 @@ export function route(req: Request, url: URL, path: string, ctx: RouteContext): 
   const verificationResponse = verificationRoute(req, url, path, m, cfg, adapters, models);
   if (verificationResponse !== null) return verificationResponse;
 
-  const projectResponse = projectRoutes(req, path, m, cfg);
+  const projectResponse = projectRoutes(req, path, m, cfg, adapters);
   if (projectResponse !== null) return projectResponse;
 
   const suffixPromptResponse = suffixPromptRoutes(req, path, m);

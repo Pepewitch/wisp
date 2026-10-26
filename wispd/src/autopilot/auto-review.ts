@@ -33,7 +33,8 @@ import {
   launchReview, nudgeReviewer, planRound, RETIRE_GRACE_MS, retireReviewer, secondAgent, startRecipeTask, verifyAgent, type ReviewerStart,
 } from "../verify/reviewer"
 import {
-  addSecondReview, endReview, evidenceOf, findingsOf, reviewsOf, settleRound, substituteReview, supersedeRound, unretiredReviews, type ReviewRow,
+  addSecondReview, endReview, evidenceOf, findingsOf, reviewsOf, settleRound, substituteReview, supersedeRound, unretiredFallbackSources, unretiredReviews,
+  type ReviewRow,
 } from "../verify/reviews"
 import { fallbackAgent, infrastructureFailure } from "../verify/fallback"
 import { latestRound, MAX_REVIEW_ROUNDS, orphanedRounds, runningRounds, staleRunningRounds, type RoundRow } from "../verify/rounds"
@@ -101,13 +102,16 @@ export function endUnwantedReviews(taskId: string, task: Task | null, autoReview
 /**
  * Kept true on every autopilot pass, whatever the looks did: a round whose
  * row ended (switched off, PR closed, task archived) ends too, and a review
- * that ended has its reviewer archived once its turn is over. A look cannot do
+ * that ended has its reviewer archived once its turn is over, as has a failed
+ * reviewer a fallback replaced. A look cannot do
  * this alone: it may never touch that round again (a merge rebinds, a busy
  * author skips).
  */
 export async function sweepReviews(cfg: ReviewerStart["cfg"], now = new Date()): Promise<void> {
   for (const round of orphanedRounds()) endRound(round, "auto-review stopped for this task", cfg, now)
-  for (const review of unretiredReviews(new Date(now.getTime() - RETIRE_GRACE_MS).toISOString())) {
+  // a failed reviewer a fallback replaced, still there after a restart cut its archive short
+  const lingering = [...unretiredReviews(new Date(now.getTime() - RETIRE_GRACE_MS).toISOString()), ...unretiredFallbackSources()]
+  for (const review of lingering) {
     await retireReviewer(review, cfg, now).catch((error: unknown) => {
       console.error(`[wisp] auto-review: could not archive reviewer ${review.reviewer_task_id}: ${error instanceof Error ? error.message : String(error)}`)
     })

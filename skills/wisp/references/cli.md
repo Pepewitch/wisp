@@ -123,9 +123,11 @@ Resume on a task whose reviewer needs you has a fresh reviewer look at the same
 head again without spending a round.
 
 `verify fallback` names who reviews in reviewer A's or B's place when its task
-fails on the network, the provider or setup: once per round, on the same head.
-A verdict, a missing one and the time limit never fall back. Unset (`none`, the
-default) leaves such a round for you. `review show` marks a reviewer that stood
+fails on the network, on the provider (a 5xx, overloaded, unavailable) or in
+setup (before its prompt: worktree, setup script, spawn, or a live session that
+never started): once per round, on the same head. A verdict, a missing one, a
+usage limit and the time limit never fall back. Unset (`none`, the default)
+leaves such a round for you; a harness the daemon does not have is refused. `review show` marks a reviewer that stood
 in (`fallback for <agent>: <cause>`), and its `--json` carries `fallback`.
 
 ## Tasks

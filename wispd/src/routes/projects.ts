@@ -297,13 +297,27 @@ function mergedVerifyAgent(existing: RepoConfig | undefined, body: ProjectUpdate
   return validateVerifyAgent(body.verify ?? undefined, "verify");
 }
 
+/**
+ * A fallback naming a harness this daemon does not have: refused, because it
+ * would only be skipped when it is needed (verify/fallback.ts fallbackAgent).
+ */
+function unknownFallbackError(body: ProjectUpdateBody, adapters: Readonly<Record<string, unknown>>): Response | null {
+  for (const key of ["verifyFallback", "verifySecondFallback"] as const) {
+    const harness = (body[key] as { harness?: string } | null | undefined)?.harness?.trim()
+    if (harness && !Object.hasOwn(adapters, harness)) {
+      return err(`${key}.harness '${harness}' is not a harness this daemon has (it has: ${Object.keys(adapters).join(", ")})`, 400);
+    }
+  }
+  return null;
+}
+
 /** POST /api/projects */
-export function addProjectRoute(req: Request, cfg: WispConfig): Promise<Response> {
+export function addProjectRoute(req: Request, cfg: WispConfig, adapters: Readonly<Record<string, unknown>>): Promise<Response> {
   return (async () => {
     const parsed = await jsonObjectBody(req);
     if (parsed instanceof Response) return parsed;
     const body = parsed as ProjectUpdateBody;
-    const invalid = projectUpdateError(body);
+    const invalid = projectUpdateError(body) ?? unknownFallbackError(body, adapters);
     if (invalid) return invalid;
     // projectUpdateError narrowed the runtime value; bind that fact for the
     // async filesystem checks and merge helpers below.

@@ -40,6 +40,11 @@ const NEVER_NETWORK = [
   /oauth/, /token (?:has )?expired/, /usage limit/, /rate[ _-]?limit/, /quota/, /credit/, /billing/,
 ];
 
+/** Credentials, plan limits or quotas in a lowercased failure detail: no retry, and no other agent's turn, fixes those. */
+export function cannotRetry(normalized: string): boolean {
+  return NEVER_NETWORK.some((pattern) => pattern.test(normalized));
+}
+
 /**
  * True when a failed turn ended on the network. `exitCode` is the harness's
  * own: a turn that died to a signal (128 and up) did not end on the network,
@@ -50,7 +55,7 @@ const NEVER_NETWORK = [
 export function isNetworkFailure(detail: string | null, exitCode: number | null): boolean {
   if (detail === null || (exitCode !== null && exitCode >= 128)) return false;
   const normalized = detail.toLowerCase();
-  if (NEVER_NETWORK.some((pattern) => pattern.test(normalized))) return false;
+  if (cannotRetry(normalized)) return false;
   return NETWORK_MARKERS.some((marker) => normalized.includes(marker));
 }
 

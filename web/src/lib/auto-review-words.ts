@@ -110,15 +110,16 @@ export function reviewAgentWords(agent: AutoReviewReview["agent"]): string {
 }
 
 /**
- * Why the agent on a review's row stood in for another, for its `fallback`
- * mark's title: `Fallback for droid · kimi-k3, whose task failed on the
- * network: getaddrinfo ENOTFOUND`. Null for a review on its first agent.
+ * Why the agent on a review's row stood in for another, as the line under the
+ * row says it (`Fallback for droid · kimi-k3, whose task failed on the
+ * network`) and, with `detail`, as its title adds the failed task's words.
+ * Null for a review on its first agent.
  */
-export function reviewFallbackWords(review: AutoReviewReview): string | null {
+export function reviewFallbackWords(review: AutoReviewReview, detail = false): string | null {
   const fallback = review.fallback
   if (!fallback) return null
   const from = reviewAgentWords({ harness: fallback.from.harness, model: fallback.from.model })
-  return `Fallback for ${from}, whose task ${FALLBACK_CAUSE_WORDS[fallback.cause]}${fallback.detail ? `: ${fallback.detail}` : ""}`
+  return `Fallback for ${from}, whose task ${FALLBACK_CAUSE_WORDS[fallback.cause]}${detail && fallback.detail ? `: ${fallback.detail}` : ""}`
 }
 
 /**

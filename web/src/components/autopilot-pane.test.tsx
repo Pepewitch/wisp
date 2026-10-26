@@ -370,9 +370,10 @@ describe("auto-review's panel in the Autopilot tab", () => {
     await screen.findByRole("heading", { name: "Reviews" })
     const row = document.querySelector("[data-reviewer='A']") as HTMLElement
     expect(row).toHaveTextContent("Aclaude · opus-5fallback")
-    expect(row.querySelector("[data-fallback='network']")).toHaveAttribute(
-      "title", "Fallback for droid · kimi-k3, whose task failed on the network: getaddrinfo ENOTFOUND api.example.test",
-    )
+    // the reason is text under the row, reachable without hovering; the failed task's words are its title
+    const reason = row.querySelector("[data-fallback='network']")!
+    expect(reason).toHaveTextContent("Fallback for droid · kimi-k3, whose task failed on the network")
+    expect(reason).toHaveAttribute("title", "Fallback for droid · kimi-k3, whose task failed on the network: getaddrinfo ENOTFOUND api.example.test")
   })
 
   it("without features.reviewPanel, the same rounds keep the phase-1 look", async () => {

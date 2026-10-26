@@ -219,6 +219,20 @@ export function unretiredReviews(lingeringBefore: string): ReviewRow[] {
     ORDER BY v.finished_at LIMIT 20`).all(lingeringBefore) as ReviewRow[]
 }
 
+/**
+ * Failed reviewer tasks a fallback replaced that are still on the books: the
+ * substitution unlinked them and archives them at once, but a restart in
+ * between leaves only the fallback record pointing at them. Each comes back
+ * as its review, read as the failed task's own part (ended in error), so
+ * retireReviewer archives it like any other.
+ */
+export function unretiredFallbackSources(): ReviewRow[] {
+  const rows = db.query(`SELECT v.*, t.id AS source FROM round_reviews v
+    JOIN tasks t ON t.id = json_extract(v.fallback_json, '$.taskId')
+    WHERE v.fallback_json IS NOT NULL AND v.carried_from IS NULL AND t.archived = 0 LIMIT 20`).all() as (ReviewRow & { source: string })[]
+  return rows.map(({ source, ...review }) => ({ ...review, reviewer_task_id: source, state: "error" }))
+}
+
 function parsed<T>(json: string | null, fallback: T): T {
   if (!json) return fallback
   try {

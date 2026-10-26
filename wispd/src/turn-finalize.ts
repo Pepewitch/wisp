@@ -5,6 +5,7 @@ import {
   isLimitError,
   isNetworkFailure,
   isTransientError,
+  LIMIT_PREFIX,
   NETWORK_PREFIX,
   parseOutput,
   TRANSIENT_PREFIX,
@@ -170,7 +171,7 @@ function endedOnNetwork(facts: FailedTurnFacts, detail: string | null): boolean 
 
 async function finalizeFailedTurn(facts: FailedTurnFacts): Promise<void> {
   const detail = facts.recorderDetail ?? errorDetail(facts.def, facts.rawOut, await safeRead(facts.errPath));
-  const limitPrefix = !facts.killReason && detail !== null && isLimitError(facts.def, detail) ? "limit: " : "";
+  const limitPrefix = !facts.killReason && detail !== null && isLimitError(facts.def, detail) ? LIMIT_PREFIX : "";
   // A dropped network outranks a provider fault: it is the one autopilot resumes on its own.
   const networkPrefix = !limitPrefix && endedOnNetwork(facts, detail) ? NETWORK_PREFIX : "";
   const transientPrefix =

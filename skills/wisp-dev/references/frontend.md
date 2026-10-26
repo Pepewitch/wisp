@@ -1315,8 +1315,9 @@ dot and its words (`Waiting for a slot`, `Kept` for a pass carried from an
 earlier round on the head, `escalated: <reason>` when a light round's A
 asked for B), and Open for that reviewer's task, which replaces the
 round's own. A reviewer that stood in for a failed one carries a faint
-`fallback` mark after its agent, whose `title` names the agent it replaced
-and why (`reviewFallbackWords`). The row's `title` holds the findings, blocking first; there
+`fallback` mark after its agent and a faint line under its row naming the
+agent it replaced and why (`reviewFallbackWords`), in text so touch reaches
+it; the line's `title` adds the failed task's own words. The row's `title` holds the findings, blocking first; there
 is no red text, because a rejection's dot already carries it. A round from
 before the panel (`legacy`) keeps its one line and a faint `before the
 panel`. Without the flag every round is drawn exactly as phase 1.

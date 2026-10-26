@@ -5,9 +5,14 @@
  * fall back.
  */
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { VerificationStatus } from "../../shared/api/auto-review";
-import type { AdapterDef } from "../src/adapters";
+import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
+import { sweepReviews } from "../src/autopilot/auto-review";
+import { recordKillReason, startTurn } from "../src/runner";
+import { finalizeTurn } from "../src/turn-finalize";
 import { autopilotHistory, autopilotStatus, setAutopilot } from "../src/autopilot/store";
 import { formatRound } from "../src/cli-review";
 import { formatVerification } from "../src/cli-verify";
@@ -15,7 +20,7 @@ import { LOG_DIR, loadConfig, type RepoConfig } from "../src/config";
 import type { NewTaskInput } from "../src/domain/task-create";
 import { createTask, createTurn, db, freeSlot, getTask, newTaskId, setTaskFields, settleTurn, transition } from "../src/store";
 import { submitVerdict } from "../src/verify/reviewer";
-import { reviewsOf, reviewTokenFor, reviewView, type ReviewRow } from "../src/verify/reviews";
+import { reviewsOf, reviewTokenFor, reviewView, substituteReview, type ReviewRow } from "../src/verify/reviews";
 import { roundsOf, roundView, type RoundRow } from "../src/verify/rounds";
 import { infrastructureFailure } from "../src/verify/fallback";
 import { START, created, doneTask, fakeGitHub, forgetTasks, pass, runtime, seed, until } from "./autopilot-harness";
@@ -235,4 +240,94 @@ test("`wisp verify status` names each reviewer's fallback, and says nothing when
   expect(text).toContain("fallback for A: claude opus-5 (high effort), after an infrastructure failure");
   expect(text).not.toContain("fallback for B");
   expect(formatVerification({ ...status, fallbacks: undefined }, "/fixture/repo")).not.toContain("fallback");
+});
+
+/** Settle a reviewer's turn from these logs the way the runner does (turn-finalize.ts), after an optional kill reason. */
+async function finalizeReviewerTurn(taskId: string, def: AdapterDef, exit: number | null, out: string, kill?: string): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), "wisp-fallback-turn-"));
+  const outPath = join(dir, "turn.out.log"), errPath = join(dir, "turn.err.log");
+  writeFileSync(outPath, out);
+  writeFileSync(errPath, "");
+  const turnId = createTurn(taskId, 1, "review", 99999, outPath);
+  if (kill) recordKillReason(turnId, kill);
+  await finalizeTurn(taskId, turnId, def, exit, outPath, errPath);
+}
+
+const CLAUDE_503 = `${JSON.stringify({
+  type: "result", subtype: "success", is_error: true, session_id: "s-fixture",
+  result: 'API Error: 503 {"type":"error","error":{"type":"api_error","message":"Service Unavailable"}}',
+})}\n`;
+const CODEX_503 = [
+  { type: "thread.started", thread_id: "t-fixture" },
+  { type: "turn.started" },
+  { type: "turn.failed", error: { message: '{"type":"error","status":503,"error":{"type":"service_unavailable","message":"Service Unavailable"}}' } },
+].map((line) => JSON.stringify(line)).join("\n") + "\n";
+
+describe("through the real failure paths", () => {
+  test("a harness that could not even be spawned is setup: the fallback reviews", async () => {
+    const { clock, task, rt, launched } = setup();
+    await pass(rt, task.id, clock);
+    const reviewer = getTask(roleOf(latest(task.id), "primary").reviewer_task_id!)!;
+    const missing: AdapterDef = { bin: join(tmpdir(), "wisp-no-such-reviewer-harness"), exec: [], parse: { format: "text" }, attach: null };
+    startTurn(reviewer, "review", missing, loadConfig());
+    await until(() => getTask(reviewer.id)?.state === "failed", "the spawn failure settled");
+    expect(getTask(reviewer.id)!.state_detail).toStartWith("spawn failed: ");
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(2);
+    expect(reviewView(roleOf(latest(task.id), "primary"), true).fallback).toMatchObject({ cause: "setup" });
+  });
+
+  test("a live session whose initialize timed out before the prompt is setup", async () => {
+    const { clock, task, rt, launched } = setup();
+    await pass(rt, task.id, clock);
+    const reviewer = roleOf(latest(task.id), "primary").reviewer_task_id!;
+    await finalizeReviewerTurn(reviewer, BUILTIN_ADAPTERS.droid!, 143, "", "live input setup failed: initialize_session timed out after 30000 ms");
+    expect(getTask(reviewer)!.state_detail).toStartWith("turn killed: live input setup failed: ");
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(2);
+    expect(reviewView(roleOf(latest(task.id), "primary"), true).fallback).toMatchObject({ cause: "setup" });
+  });
+
+  for (const [harness, out] of [["claude", CLAUDE_503], ["codex", CODEX_503]] as const) {
+    test(`a 503 from the built-in ${harness}, settled by its own error strategy, is the provider`, async () => {
+      const { clock, task, rt, launched } = setup();
+      await pass(rt, task.id, clock);
+      const reviewer = roleOf(latest(task.id), "primary").reviewer_task_id!;
+      await finalizeReviewerTurn(reviewer, BUILTIN_ADAPTERS[harness]!, 1, out);
+      expect(getTask(reviewer)!.state).toBe("failed");
+      expect(infrastructureFailure(getTask(reviewer)!)).toMatchObject({ cause: "provider" });
+      await pass(rt, task.id, clock);
+      expect(launched).toHaveLength(2);
+      expect(reviewView(roleOf(latest(task.id), "primary"), true).fallback).toMatchObject({ cause: "provider" });
+    });
+  }
+
+  test("a restart between the substitution and the archive: the next sweep still retires the failed task", async () => {
+    const { clock, task, rt } = setup();
+    await pass(rt, task.id, clock);
+    const review = roleOf(latest(task.id), "primary");
+    failAfterTurn(review.reviewer_task_id!, "network: connection refused");
+    // the substitution committed, and the daemon stopped before it archived the failed task
+    expect(substituteReview(review.id, { harness: "standin", model: null, effort: null }, { cause: "network", detail: "connection refused" })).not.toBeNull();
+    expect(getTask(review.reviewer_task_id!)?.archived).toBe(0);
+    await sweepReviews(loadConfig(), new Date(clock.now));
+    expect(getTask(review.reviewer_task_id!)?.archived).toBe(1);
+  });
+});
+
+test("the provider's words, in any harness's detail; never credentials, limits or Wisp's own kills", () => {
+  const failed = (detail: string) => {
+    const id = newTaskId();
+    createTask({ id, title: "classified", repo_path: "/fixture/repo", harness: "fake", model: null, slot: freeSlot() });
+    created.push(id);
+    failAfterTurn(id, detail);
+    return infrastructureFailure(getTask(id)!)?.cause ?? null;
+  };
+  expect(failed("turn reported failure: API Error: 529 overloaded_error")).toBe("provider");
+  expect(failed("turn exited 1: unexpected status 502 Bad Gateway")).toBe("provider");
+  expect(failed("spawn failed: ENOENT: no such file or directory, posix_spawn")).toBe("setup");
+  expect(failed("turn exited 1: API Error: 429 rate limit, service unavailable")).toBeNull();
+  expect(failed("turn exited 1: API Error: 401 authentication_error")).toBeNull();
+  expect(failed("turn killed: log cap exceeded (503 lines over)")).toBeNull();
+  expect(failed("turn exited 1: wrote 503 files")).toBeNull();
 });

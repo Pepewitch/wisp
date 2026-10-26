@@ -44,7 +44,8 @@ wisp verify fallback a none                                   # no fallback (the
 
 They are saved in `config.json` as `repos[].verifyFallback` and
 `repos[].verifySecondFallback` (`{ harness, model?, effort? }`). With none set,
-nothing changes.
+nothing changes. A fallback naming a harness this daemon does not have is
+refused when you save it.
 
 When a reviewer's task fails for an **infrastructure** reason, its fallback
 reviews the same round and head in a fresh task, instead of the round ending
@@ -53,8 +54,8 @@ for a person. The reasons are the ones Wisp already records on the failed task:
 | Cause | What Wisp saw |
 | --- | --- |
 | network | the turn ended on the network (Wisp's network classifier, the same one that lets autopilot resume a dropped turn) |
-| provider | the turn ended on a transient provider fault the harness declares (overloaded, service unavailable) |
-| setup | the task failed before its first turn: the worktree, the setup script, or setup's time limit |
+| provider | the provider could not serve the turn: a 5xx answer (`API Error: 503`, `status 502`), "overloaded" or "service unavailable", in any harness's words, or a transient fault the harness declares. Credentials, quotas and rate limits never count |
+| setup | the reviewer never got its prompt: the worktree, the setup script or setup's time limit failed, the harness could not be spawned, or its live session failed to start (an initialize that timed out included) |
 
 Nothing else falls back. A verdict stands. A reviewer that ends without a
 verdict, keeps asking, or gives a malformed one, a usage limit, and the tier's
@@ -64,12 +65,20 @@ needs you. The fallback starts its own time limit.
 
 The substitution is on record. The round's history says
 `Round 1: reviewer A (droid) failed on the network (…) — falling back to claude opus-5`.
-The reviewer's row in the Autopilot tab is marked *fallback*, and its title
-names the failed agent and why. `wisp review show` prints
+The reviewer's row in the Autopilot tab is marked *fallback*, with a line
+under it naming the failed agent and why; that line's title holds the failed
+task's own words. `wisp review show` prints
 `A claude opus-5 (fallback for droid: network): pass`, and `--round <n>` adds
 the failed task's words and id. `--json` carries the same on the review as
 `fallback: { cause, detail, from, taskId, at }`, while `agent` is the one that
 actually reviewed. The failed task is archived; its transcript stays readable.
+If the daemon stops between the substitution and that archive, the next pass
+archives it.
+
+**A known limit: a network outage.** A fallback starts at once. When the whole
+machine has lost its route to the providers, the fallback is likely to fail
+the same way and the round then needs you. Autopilot's own resume-after-network
+pause does not hold the fallback back.
 
 **Depth, measured by Wisp.** Before a round starts, Wisp measures the diff (it
 fetches the PR's head and base first) and picks a tier. Reviewers are told the

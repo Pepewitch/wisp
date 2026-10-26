@@ -14,5 +14,8 @@ export const REVIEW_FALLBACK: Migration = {
     // and why. Every existing review ran on its first agent, which NULL says.
     const columns = db.query("PRAGMA table_info(round_reviews)").all() as { name: string }[];
     if (!columns.some((column) => column.name === "fallback_json")) db.exec("ALTER TABLE round_reviews ADD COLUMN fallback_json TEXT");
+    // the failed task a fallback replaced, which the sweep archives after a restart cut the substitution short
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_round_reviews_fallback_source
+      ON round_reviews(json_extract(fallback_json, '$.taskId')) WHERE fallback_json IS NOT NULL`);
   },
 };
