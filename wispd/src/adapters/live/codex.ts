@@ -304,13 +304,14 @@ export class CodexLiveDriver {
     const tokenUsage = record(params.tokenUsage);
     const total = usageDelta(tokenUsage.total, {});
     if (!this.turnId || params.turnId !== this.turnId) {
-      // A resume replays the previous turn's update before this turn has an id.
+      // A resume replays the previous turn's update right after its response,
+      // excludeTurns or not (live-probed on 0.162.1): the starting point.
       if (!this.turnId) this.threadTotal = total;
       return;
     }
-    // Resumed without that replay: the first update is taken to be a new call.
-    this.threadTotal ??= usageDelta(total, usageDelta(tokenUsage.last, {}));
-    const growth = usageDelta(total, this.threadTotal);
+    // With no replay to start from, the first update only becomes the starting
+    // point: it may be a real call or a stale re-send, and is not counted.
+    const growth = this.threadTotal ? usageDelta(total, this.threadTotal) : {};
     // Only a completed call adds prompt tokens. Codex also re-sends an
     // unchanged count (on rate-limit news), and a context-window overflow
     // refills `total` with zeroed counters, which is a reset, not usage.

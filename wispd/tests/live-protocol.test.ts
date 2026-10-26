@@ -304,8 +304,12 @@ describe("Codex live terminal events", () => {
   const previousLast = breakdown(14_630, 14_336, 5, 0);
   const firstCall = breakdown(16_058, 6_784, 61, 9);
 
-  /** A driver resumed onto turn-1, after the replay of the previous turn's update. */
-  async function resumedTurn(events: Record<string, any>[]) {
+  /**
+   * A driver resumed onto turn-1. The app-server replays the previous turn's
+   * update right after the resume response, excludeTurns:true or not
+   * (live-probed on 0.162.1); `replay: false` covers a resume where it does not.
+   */
+  async function resumedTurn(events: Record<string, any>[], replay = true) {
     const sink = new MemorySink();
     const driver = new CodexLiveDriver({
       sink,
@@ -324,8 +328,9 @@ describe("Codex live terminal events", () => {
     driver.handle({ id: initialize.id, result: {} });
     expect((await requestAt(sink, 1)).method).toBe("initialized");
     const resume = await requestAt(sink, 2);
-    driver.handle(usageUpdate("previous-turn", previousTotal, previousLast));
+    expect(resume.params.excludeTurns).toBe(true);
     driver.handle({ id: resume.id, result: { thread: { id: "existing-thread", turns: [] } } });
+    if (replay) driver.handle(usageUpdate("previous-turn", previousTotal, previousLast));
     const startTurn = await requestAt(sink, 3);
     driver.handle({ id: startTurn.id, result: { turn: { id: "turn-1" } } });
     await driver.ready;
@@ -371,6 +376,21 @@ describe("Codex live terminal events", () => {
 
     const completed = events.find((event) => event.type === "turn.completed")!;
     expect(completed.usage).toMatchObject({ input_tokens: 16_058, output_tokens: 61 });
+    await driver.close();
+  });
+
+  test("without a replay the first update only sets the starting point", async () => {
+    // The one ambiguous case: that first update may be a real call or a stale
+    // re-send, so it is never counted. An undercount, never a double count.
+    const events: Record<string, any>[] = [];
+    const driver = await resumedTurn(events, false);
+    driver.handle(usageUpdate("turn-1", previousTotal, previousLast));
+    driver.handle(usageUpdate("turn-1", breakdown(88_523, 75_008, 235, 21), firstCall));
+    driver.handle(usageUpdate("turn-1", breakdown(104_669, 90_880, 285, 21), breakdown(16_146, 15_872, 50, 0)));
+    driver.handle(settle("completed"));
+
+    const completed = events.find((event) => event.type === "turn.completed")!;
+    expect(completed.usage).toMatchObject({ input_tokens: 16_058 + 16_146, output_tokens: 61 + 50 });
     await driver.close();
   });
 
