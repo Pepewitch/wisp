@@ -29,6 +29,8 @@ import { Shell, ToolPanel } from "@/components/panes"
 import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
 import { TaskNotices } from "@/components/task-notices"
+import { TaskSummaryGutter } from "@/components/task-summary-card"
+import { TaskSummaryChip } from "@/components/task-summary-chip"
 import { TopBar } from "@/components/top-bar"
 import { headerTask } from "@/lib/header-task"
 import { buildTaskSurfaces, type TaskSurfaces } from "@/components/task-surfaces"
@@ -52,13 +54,11 @@ import { useDesktopTaskNavigation } from "@/hooks/useDesktopTaskNavigation"
 import { useSidebarTree } from "@/hooks/useSidebarTree"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
+import { useSummaryPlacement } from "@/hooks/useSummaryCard"
 import { ToolPanelContext, useTaskToolPanel, type ToolPanelControls } from "@/hooks/useToolPanel"
 import { connectionStore } from "@/lib/conn"
 import { connectionAttention } from "@/lib/connection-attention"
-import {
-  readConnectionStorage,
-  writeConnectionStorage,
-} from "@/lib/connection-storage"
+import { readConnectionStorage, writeConnectionStorage } from "@/lib/connection-storage"
 import { classifyConnectionError } from "@/lib/connection-reachability"
 import { useDesktopConnections } from "@/lib/desktop-connections"
 import { preloadProseHighlighter } from "@/lib/prose-highlight"
@@ -449,6 +449,7 @@ function MainView({
       desktop={desktop !== null}
       task={header}
       pullRequest={pullRequests.selected}
+      turns={detailQuery.data?.turns}
       sidebar={sidebarNode}
       conversation={conversationNode}
       surfaces={taskSurfaces}
@@ -470,6 +471,7 @@ function AppShell({
   desktop,
   task,
   pullRequest,
+  turns,
   sidebar,
   conversation,
   surfaces,
@@ -485,6 +487,8 @@ function AppShell({
   desktop: boolean
   task: ApiTask | null
   pullRequest?: PullRequestStatus
+  /** the selected task's loaded turns: the summary card's clock and `/tokens` fallback */
+  turns: Turn[] | undefined
   sidebar: (options?: {
     touch?: boolean
     afterSelect?: () => void
@@ -505,6 +509,10 @@ function AppShell({
   firstRun: ReactNode
 }) {
   const barRef = useRef<HTMLElement>(null)
+  // The summary card stands beside the reading column while the centre pane
+  // has room for both, measured on the pane (a tool opening narrows it), and
+  // folds into the top bar's chip otherwise, or when a person folded it (§5n).
+  const { setPane, roomy, placement } = useSummaryPlacement(task !== null && firstRun === null)
   // Below `md`, the three-pane grid is replaced rather than squeezed, so no
   // resizable group applies phone dimensions to desktop geometry.
   if (mobile) {
@@ -539,6 +547,7 @@ function AppShell({
           desktop={desktop}
           task={firstRun === null ? task : null}
           pullRequest={pullRequest}
+          chip={placement === "chip" && task && <TaskSummaryChip task={task} pullRequest={pullRequest} turns={turns} roomy={roomy} />}
           updateControl={updateControl}
           onOpenSettings={onOpenSettings}
         />
@@ -549,14 +558,18 @@ function AppShell({
           // does not re-render the app on every frame
           onSidebarResize={(px) => barRef.current?.style.setProperty("--sidebar-width", `${px}px`)}
           centre={
-            <main className="flex h-full min-w-0 flex-col bg-background">
-              {firstRun ?? (
-                <>
-                  {taskNotices}
-                  {conversation}
-                  {composer}
-                </>
-              )}
+            // the card takes its own column, so it can never cover the reading column or the composer
+            <main ref={setPane} className="flex h-full min-w-0 bg-background">
+              <div className="flex h-full min-w-0 flex-1 flex-col">
+                {firstRun ?? (
+                  <>
+                    {taskNotices}
+                    {conversation}
+                    {composer}
+                  </>
+                )}
+              </div>
+              {placement === "card" && task && <TaskSummaryGutter task={task} pullRequest={pullRequest} turns={turns} />}
             </main>
           }
           panel={

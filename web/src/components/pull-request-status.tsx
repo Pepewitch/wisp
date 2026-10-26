@@ -5,41 +5,10 @@ import {
   PULL_REQUEST_ICON_TONE,
   pullRequestIconTone,
 } from "@/lib/pull-request-tone"
+import { pullRequestWords } from "@/lib/pull-request-words"
 import type { PullRequestInfo } from "@/lib/types"
 import { externalLinkProps } from "@/lib/external-links"
 import { cn } from "@/lib/utils"
-
-const LIFECYCLE = {
-  draft: "Draft",
-  open: "Open",
-  merged: "Merged",
-  closed: "Closed",
-} as const
-
-const CHECKS = {
-  none: "No CI",
-  pending: "CI pending",
-  passed: "CI passed",
-  failed: "CI failed",
-  unknown: "CI unknown",
-} as const
-
-const REVIEW = {
-  none: "No review",
-  required: "Review required",
-  approved: "Approved",
-  "changes-requested": "Changes requested",
-  unknown: "Review unknown",
-} as const
-
-const MERGE_STATE = {
-  ready: "Merge ready",
-  unstable: "Mergeable with non-passing checks",
-  blocked: "Merge blocked",
-  behind: "Branch behind base",
-  conflicting: "Merge conflict",
-  unknown: "Merge status unknown",
-} as const
 
 /**
  * Whether that reason may REPLACE the CI and review words. Only when it is
@@ -75,17 +44,7 @@ export function PullRequestStatusLink({
   autoMerge?: AutopilotStatus | null
   className?: string
 }) {
-  // a finished row names its PR; one that stayed on for the next PR remembers the last merge
-  const mergedByWisp = pullRequest.lifecycle === "merged" && Boolean(autoMerge) &&
-    ((autoMerge!.mergedByWisp && autoMerge!.pr === pullRequest.number) ||
-      (autoMerge!.lastMerged?.byWisp === true && autoMerge!.lastMerged.pr === pullRequest.number))
-  const lifecycle = mergedByWisp
-    ? "Merged by Wisp"
-    : pullRequest.lifecycle === "open" && pullRequest.queuedToMerge
-      ? "Queued to merge"
-      : LIFECYCLE[pullRequest.lifecycle]
-  const checks = CHECKS[pullRequest.checks]
-  const review = REVIEW[pullRequest.review]
+  const { lifecycle, checks, review, mergeState } = pullRequestWords(pullRequest, autoMerge)
   // A task with several branches shows its NEWEST pull request, so the count
   // is the one thing the row would otherwise be hiding.
   const more = others > 0 ? `newest of ${others + 1} on this task` : null
@@ -94,7 +53,6 @@ export function PullRequestStatusLink({
   // for the reason only when the reason is about this PR's own state
   const label = `PR #${pullRequest.number} · ${lifecycle} · ${checks} · ${review}${automation ? ` · ${automation}` : ""}`
   const detail = automation && replacesFacts(autoMerge, pullRequest) ? automation : `${checks} · ${review}`
-  const mergeState = MERGE_STATE[pullRequest.mergeState]
   const iconTone = pullRequestIconTone(pullRequest)
   // No href when the daemon reported something that is not a web address: the
   // card still states the PR's condition, it just is not a link.

@@ -839,10 +839,11 @@ older as current would be a confident lie. The public response is the provider-n
 implementation is GitHub through the daemon's authenticated `gh`, and it
 accepts same-repository heads only — fork pull requests are outside this slice.
 
-Only `found` renders. The pointer shell uses one neutral external link in the top
-bar, after the title (until the summary card takes it over);
-mobile uses the same facts in a thumb-sized two-line link. Both say PR number,
-lifecycle, CI, and review, and replace the old prominent Push button. The
+Only `found` renders a link. The pointer shell says it in the summary card's
+Pull request row (§5n: `#318 · Open`, opening to CI, review, merge state and
+*Open on GitHub*), with the words `pullRequestWords` (`lib/pull-request-words.ts`)
+gives every surface; mobile uses the same facts in a thumb-sized two-line link.
+Both replace the old prominent Push button. The
 branch icon relays GitHub's policy-aware merge state: green is ready, yellow is
 mergeable despite failed checks, red is a known blocker, purple is merged, and
 pending or unknown stays muted. Never recreate branch protection,
@@ -857,7 +858,8 @@ line truncates: a reason appended at the end would be the first thing cut. The
 hover title keeps every fact. A PR Wisp merged reads `Merged by Wisp`. The
 switches — Auto-merge, Auto-fix and Auto-review — live in the Autopilot tab (§5k) with
 their live line, the one action the state asks for, and History; the task's
-title menu (§5h) keeps them as checkbox rows (`MenuCheckboxItem`, a trailing switch)
+summary card's Autopilot row (§5n) opens to the same switch rows, and the phone's
+`⋯` menu keeps them as checkbox rows (`MenuCheckboxItem`, a trailing switch)
 naming the PR they are bound to, and nothing else. Only a reason about the PR's own state
 (`about: "pr"`) may stand in for CI and review; one about the task never does.
 The daemon checks armed PRs on its own loop (docs/PR-AUTOPILOT.md), separate
@@ -1109,13 +1111,13 @@ task header above the conversation. `● Title ⌄` is one control: the state do
 the `h1` title and a chevron open the **title menu**, whose header carries the
 facts the old meta line showed and nobody needs in view (id · branch, then
 state · harness · model · effort, then a subtask's kind and base). Under it sit
-the task's verbs: Find ⌘F, Rename, New subtask…, Archive, Export or delete, the
-Auto-merge / Auto-fix / Auto-review switches, then Copy task id and Copy branch
-name. The phone keeps its `⋯` (`TaskActions` without `title`). A subtask leads
+the task's verbs: Find ⌘F, Rename, New subtask…, Archive, Export or delete, then Copy task id
+and Copy branch name. The autopilot switches are the summary card's (§5n). The phone keeps its `⋯` (`TaskActions` without `title`). A subtask leads
 with `Parent ›`: the parent opens the parent, is capped at 14rem and shrinks
 three times as fast as the title, so the task you are in stays readable.
-`Local` and `Archived` follow as quiet words, only when true. The PR link and
-the context reading ride after them for now; the summary card takes them over.
+`Local` and `Archived` follow as quiet words, only when true. Where the centre
+is too narrow for the summary card, its chip sits right after the title and
+takes the title's dot with it (§5n).
 The dot's hover names background work, as everywhere (`StateDot`).
 
 Then **what you can open** for that task (`top-bar-tools.tsx`): the tool
@@ -1454,9 +1456,10 @@ no evidence is drawn, and without the flag none of this is. Words live in
   survive a look at the diff. On touch it is its own surface in the
   mobile shell's strip (`Chat · Autopilot · Changes · Workflows · Terminal`);
   a task still opens on Chat.
-- **The task menu keeps the switches as shortcuts** — `Auto-merge #318`,
-  `Auto-fix`, `Auto-review` — and nothing else: no reason notes, no action
-  rows. A menu that repeats a paragraph is why this tab exists. Each surface
+- **The summary card's Autopilot row opens to these switch rows**
+  (`Switches`, exported for it), and the phone's `⋯` menu keeps them as
+  shortcuts — `Auto-merge #318`, `Auto-fix`, `Auto-review` — and nothing
+  else: no reason notes, no action rows. A menu that repeats a paragraph is why this tab exists. Each surface
   owns its own write: a pending write or its error shows only on the control
   that sent it.
 
@@ -1565,6 +1568,80 @@ never disagree about which rows are on screen.
 
 The gallery's *Subtasks* section draws the nesting, both rollup rules, the
 archive's nesting, both family-confirm steps and a report turn.
+
+## 5n. The summary card — where the task stands, at a glance
+
+`task-summary-card.tsx` (the card), `task-summary-chip.tsx` (its folded
+form), `hooks/useTaskSummary.tsx` (the model), `hooks/useSummaryCard.ts`
+(the fold point and the remembered choices). The pointer shell only; the
+phone keeps its banded header (§6b).
+
+**Two quiet boxes in the centre pane's right gutter.** 240px, `bg-surface`,
+a hairline, no shadow: it sits beside the reading column, not over it. It is
+its own column of the pane's flex row (258px with its margin), so it can
+never cover the transcript or the composer, and the reading column centres
+in what is left. Box one is where the task stands, box two is the session:
+
+| Row | Says | Opens to |
+|---|---|---|
+| State (lead) | `● Running 1m 07s`, `Done 4 min ago`, `Exited 1`; amber `Waiting for you · 1 question` | nothing; a waiting question makes it a button that brings the question on screen (`focusStream`) |
+| Pull request | toned PR icon, `#318 · Open` (`None yet`, `Unavailable`; no row without a forge) | title, CI · review, merge state, *Open on GitHub* |
+| Autopilot | the live reason in the rail's tone, or `Off` | the Automation section's own `Switches`, then *Open Autopilot ›* (history, rounds) |
+| Subtasks | `● 1 running · 2` (amber `n waiting` first) | the children, each opens; *Open Subtasks ›* |
+| Context | `84.0k` | the `/tokens` report |
+
+There is no gauge beside the context number: Wisp does not know a model's
+window, and a bar against a guessed one would be a lie. Box two is dropped
+when it has no row.
+
+**One read per fact, no new polling.** The model reads what the app already
+reads: the task row (state, autopilot, context), the selected PR status the
+sidebar shares (`usePullRequests`), the live task list for the children
+(`useSubtaskChildren`, no request), and `GET /api/tasks/:id/usage` only while
+Context is open, on the key the composer's `/tokens` uses (`useTokensReport`).
+The words are shared too: `pullRequestWords`, `autopilotReason` and
+`autopilotTint`, `outcomeWord`.
+
+**Rows open in place**, a base-ui Collapsible each. Which rows are open is
+remembered per row for every task in this browser (`wisp_summary_card_open`),
+so a row you keep open stays open as you switch tasks. The lead row's clock
+ticks by the second only while a turn runs; a settled task's "4 min ago" moves
+by the minute (`useMinuteTick`). The card stays mounted across a task switch,
+so a pending or refused autopilot write shows only on the task that sent it.
+
+**The fold point is the pane, not the window.** A ResizeObserver on the
+centre pane (`usePaneFitsCard`) keeps the card from 1000px
+(`SUMMARY_CARD_MIN_PANE`: the 680px measure plus the gutter, and room to
+breathe) and folds it below: 999px is the chip, 1001px the card. Opening a
+tool is the common way across the line, and it never changes the window. The
+first read happens before paint, so a wide pane never flashes the chip.
+
+**The chip** is `● Running · ⎇ #318 ⌄` right after the title, and the
+title's own dot moves into it: each fact has one quick look on screen, card
+or chip, never both. It is a base-ui Popover (`POPOVER_SURFACE`,
+`--z-menu`) holding the same card, grown from the chip by the shared rule.
+It hangs from the top bar, so it never flips above it: it keeps its side
+and is capped at base-ui's `--available-height`, scrolling inside, so a long
+`/tokens` report or many children never push a row or its footer off screen.
+A pointer focuses the popup itself and the keyboard the first row. A row that
+acts (a question, a child, a panel) closes it.
+
+**Owner decisions.** The card shows by default where there is room and folds
+otherwise. A person can fold it on purpose (the card's `⌃`); the choice is
+remembered (`wisp_summary_card_folded`, global like the panel's width), and
+the chip's popover offers *Show beside the conversation* where it would fit.
+Nothing opens by itself: a task that needs you changes its dot, the lead row
+and the notification, never the layout.
+
+**Motion.** The card eases up from 97% as it comes back (`--dur-in`,
+`--ease-out`, no spring: a surface); a row's panel grows to base-ui's
+`--collapsible-panel-height` on `--dur-size` / `--ease-glide` and closes on
+`--dur-out`; the chevron turns. All of it is in index.css's Motion block
+and instant under `prefers-reduced-motion`.
+
+The gallery's *Summary card* section draws five states, open rows, the chip's
+popover and the 999px / 1001px panes from the real components, one
+`data-frame` each.
 
 ## 6. Panes and dividers
 

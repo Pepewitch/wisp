@@ -6,10 +6,9 @@ import { Meta, StateDot } from "@/components/primitives"
 import { ProbePanel } from "@/components/probe-panel"
 import { SlashPalette } from "@/components/slash-palette"
 import { TokensPanel } from "@/components/tokens-panel"
-import { useTaskUsage } from "@/hooks/queries"
 import type { ReportState, SteerNote } from "@/hooks/useSteerCommands"
+import { useTokensReport } from "@/hooks/useTokensReport"
 import { useTick } from "@/hooks/useTick"
-import { ApiError } from "@/lib/api"
 import { elapsed } from "@/lib/state"
 import type { ApiTask, Turn } from "@/lib/types"
 import type { SlashEntry, SlashGroup, SlashToken } from "@/lib/slash"
@@ -43,8 +42,7 @@ export function SteerOverlays({
   note: SteerNote | null
 }) {
   const tokensOpen = shownReport?.kind === "tokens" && task !== null
-  const taskUsage = useTaskUsage(task?.id ?? null, tokensOpen)
-  const legacyUsage = taskUsage.error instanceof ApiError && taskUsage.error.status === 404
+  const tokens = useTokensReport(task, turns, tokensOpen)
   return (
     <>
       {shownReport?.kind === "probe" && task && (
@@ -56,15 +54,9 @@ export function SteerOverlays({
           className="absolute inset-x-0 bottom-full z-(--z-menu) mb-1.5"
         />
       )}
-      {shownReport?.kind === "tokens" && task && (
+      {shownReport?.kind === "tokens" && tokens && (
         <TokensPanel
-          harness={task.harness}
-          turns={taskUsage.data?.turns ?? (legacyUsage ? turns : undefined)}
-          total={taskUsage.data?.total}
-          reportingTurns={taskUsage.data?.reporting_turns}
-          hasOlderTurns={taskUsage.data?.has_older_turns}
-          loading={taskUsage.isPending}
-          error={legacyUsage ? null : taskUsage.error}
+          {...tokens}
           onClose={onDismissReport}
           className="absolute inset-x-0 bottom-full z-(--z-menu) mb-1.5"
         />

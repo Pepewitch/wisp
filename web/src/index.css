@@ -634,6 +634,42 @@
   transition-timing-function: var(--ease-out);
 }
 
+/* The summary card (task-summary-card.tsx). Coming back into the gutter it
+   eases up from just under full size, a surface, so no spring. A row opens
+   in place: its panel grows to its own height (base-ui's
+   --collapsible-panel-height) and closes quicker, and its chevron turns. */
+.wisp-summary-card {
+  transform-origin: top;
+  transition:
+    opacity var(--dur-in) var(--ease-out),
+    scale var(--dur-in) var(--ease-out);
+}
+@starting-style {
+  .wisp-summary-card {
+    opacity: 0;
+    scale: 0.97;
+  }
+}
+.wisp-unfold {
+  overflow: hidden;
+  height: var(--collapsible-panel-height);
+  transition:
+    height var(--dur-size) var(--ease-glide),
+    opacity var(--dur-size) var(--ease-out);
+}
+.wisp-unfold[data-starting-style],
+.wisp-unfold[data-ending-style] {
+  height: 0;
+  opacity: 0;
+}
+.wisp-unfold[data-ending-style] {
+  transition-duration: var(--dur-out);
+  transition-timing-function: var(--ease-out);
+}
+.wisp-turn {
+  transition: rotate var(--dur-in) var(--ease-out);
+}
+
 /* Wisp's own tooltip (lib/title-tips.ts) stands in for every `title` in the
    app. It opens as a hairline from the side that faces what you point at,
    then unfolds to its height with the small spring. The box is a ::before,
@@ -727,7 +763,10 @@
   [role="dialog"].wisp-zoom:not([data-side]):not([data-swipe-direction]),
   [role="alertdialog"],
   .bg-scrim,
-  [data-glide] > [data-panel] {
+  [data-glide] > [data-panel],
+  .wisp-summary-card,
+  .wisp-unfold,
+  .wisp-turn {
     transition: none;
   }
   .wisp-tip[data-state]::before,

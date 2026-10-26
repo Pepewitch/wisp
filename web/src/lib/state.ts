@@ -72,10 +72,15 @@ export function pausedOnNetwork(task: ApiTask): boolean {
  */
 export function stateWord(task: ApiTask): string {
   const background = backgroundLabel(task.background);
-  const outcome = pausedOnNetwork(task) ? NETWORK_PAUSED_LABEL
+  const outcome = outcomeWord(task)
+  return background ? `${outcome} · ${background}` : outcome
+}
+
+/** The state word alone, without the background work that may follow it. */
+export function outcomeWord(task: ApiTask): string {
+  return pausedOnNetwork(task) ? NETWORK_PAUSED_LABEL
     : task.state === "failed" && task.latest_turn_has_result && task.latest_turn_exit_code
       ? `Exited ${task.latest_turn_exit_code}` : STATE_LABEL[task.state]
-  return background ? `${outcome} · ${background}` : outcome
 }
 
 /** The state line's tone: a network pause needs nobody, so it stays gray. */
