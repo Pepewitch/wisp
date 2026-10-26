@@ -22,8 +22,6 @@ interface TaskTools {
 }
 
 const STORAGE_NAME = "tool_panel"
-// never written before connection-scoped storage: nothing to adopt
-const NO_LEGACY_KEY = "wisp_tool_panel"
 /** Enough tasks for anyone's week; the least recently touched go first. */
 const KEEP = 200
 
@@ -39,7 +37,7 @@ function layoutOf(value: unknown): ToolLayout | null {
 function readMemory(connectionId: string): Map<string, TaskTools> {
   const memory = new Map<string, TaskTools>()
   try {
-    const value: unknown = JSON.parse(readConnectionStorage(connectionId, STORAGE_NAME, NO_LEGACY_KEY) ?? "[]")
+    const value: unknown = JSON.parse(readConnectionStorage(connectionId, STORAGE_NAME, null) ?? "[]")
     if (!Array.isArray(value)) return memory
     for (const entry of value) {
       if (!Array.isArray(entry) || typeof entry[0] !== "string") continue
@@ -50,6 +48,14 @@ function readMemory(connectionId: string): Map<string, TaskTools> {
     // an unreadable record costs only the memory, never the panel
   }
   return memory
+}
+
+/** Re-inserted, so a Map's order is least-recently-touched first. */
+function remember(memory: Map<string, TaskTools>, taskId: string, entry: TaskTools): Map<string, TaskTools> {
+  const next = new Map(memory)
+  next.delete(taskId)
+  next.set(taskId, entry)
+  return next
 }
 
 /**
@@ -112,15 +118,6 @@ export function useToolPanel({
     terminalFocus.current = false
   }, [connectionId, taskId])
 
-  useEffect(() => {
-    writeConnectionStorage(
-      connectionId,
-      STORAGE_NAME,
-      NO_LEGACY_KEY,
-      JSON.stringify([...memory].slice(-KEEP)),
-    )
-  }, [connectionId, memory])
-
   const remembered = taskId === null ? undefined : memory.get(taskId)
   const layout = useMemo(
     () => availableLayout(remembered?.open ?? CLOSED, available),
@@ -138,11 +135,17 @@ export function useToolPanel({
       if (open.tool === current.open.tool && open.terminal === current.open.terminal) return
       blurLeaving(current.open, open, connectionId)
       terminalFocus.current = open.terminal && !current.open.terminal
-      const next = new Map(memory)
-      // re-inserted, so the Map's order is least-recently-touched first
-      next.delete(taskId)
-      next.set(taskId, { open, last: isOpen(open) ? open : current.open })
-      setMemory(next)
+      const entry = { open, last: isOpen(open) ? open : current.open }
+      setMemory(remember(memory, taskId, entry))
+      // Saved by merging this one task into what is stored now, not by writing
+      // this window's whole map: another window on the same daemon remembers
+      // its own tasks, and the last writer must not erase them.
+      writeConnectionStorage(
+        connectionId,
+        STORAGE_NAME,
+        null,
+        JSON.stringify([...remember(readMemory(connectionId), taskId, entry)].slice(-KEEP)),
+      )
     },
     [connectionId, memory, taskId],
   )

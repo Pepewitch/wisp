@@ -192,6 +192,7 @@ export function ToolPanel({
   toolOpen,
   terminalOpen,
   onCloseTool,
+  onCloseTerminal,
 }: {
   tool: ReactNode
   terminal: ReactNode
@@ -200,6 +201,7 @@ export function ToolPanel({
   toolOpen: boolean
   terminalOpen: boolean
   onCloseTool: () => void
+  onCloseTerminal: () => void
 }) {
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: DOCK_LAYOUT_ID })
   const toolRef = usePanelRef()
@@ -244,9 +246,18 @@ export function ToolPanel({
     <Resizable.Group
       orientation="vertical"
       defaultLayout={defaultLayout}
-      // only the docked split is worth remembering; a collapsed half is a mode, not a size
       onLayoutChanged={(layout, meta) => {
-        if ((layout.tool ?? 0) > 0 && (layout.terminal ?? 0) > 0) onLayoutChanged(layout, meta)
+        const toolShut = (layout.tool ?? 0) === 0
+        const terminalShut = (layout.terminal ?? 0) === 0
+        // only the docked split is worth remembering; a collapsed half is a mode, not a size
+        if (!toolShut && !terminalShut) onLayoutChanged(layout, meta)
+        // A person who drags (or Home/End-keys) the divider to an end has
+        // closed that half, so the top bar and the next pick must agree: a
+        // tool still counted open while it has no height would leave the
+        // next tool selected with no height either.
+        if (!meta.isUserInteraction || !docked) return
+        if (toolShut) onCloseTool()
+        else if (terminalShut) onCloseTerminal()
       }}
       className="flex min-h-0 flex-1 flex-col bg-sidebar"
     >

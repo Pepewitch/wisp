@@ -61,6 +61,18 @@ describe("the tool panel's per-task memory", () => {
     expect(panel("t1", ALL, "remote").result.current.layout).toEqual(CLOSED)
   })
 
+  it("two windows on one daemon keep each other's tasks when they save", () => {
+    const first = panel("t1")
+    const second = panel("t2")
+    act(() => first.result.current.toggle("changes"))
+    // the second window read storage before the first saved t1
+    act(() => second.result.current.toggle("terminal"))
+    const stored = localStorage.getItem(connectionStorageKey("conn", "tool_panel"))!
+    expect(stored).toContain('"t1"')
+    expect(stored).toContain('"t2"')
+    expect(panel("t1").result.current.layout).toEqual({ tool: "changes", terminal: false })
+  })
+
   it("⌘\\ closes everything, then reopens what the task last had", () => {
     const { result } = panel("t1")
     act(() => result.current.toggle("changes"))

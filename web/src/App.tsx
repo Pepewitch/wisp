@@ -569,6 +569,7 @@ function AppShell({
               onCloseTool={() => {
                 if (tools.layout.tool) tools.close(tools.layout.tool)
               }}
+              onCloseTerminal={() => tools.close("terminal")}
             />
           }
           // the stored layout, not the task row: the row arrives a beat after a
