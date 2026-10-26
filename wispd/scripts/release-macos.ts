@@ -18,6 +18,7 @@ import { fileURLToPath } from "node:url";
 import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
 import { buildBinary, sourceIdentity, type SourceIdentity } from "./build-binary";
 import { sha256File } from "./release-linux";
+import { validateStapled } from "./stapler";
 
 const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const MACOS_TARGET = "darwin-arm64";
@@ -414,7 +415,7 @@ function verifyMacApp(
     }
     signing = developerIdSigningMetadata(signature, requirement, notarized);
     if (notarized) {
-      run(["/usr/bin/xcrun", "stapler", "validate", app]);
+      validateStapled(app);
       run(["/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", app]);
     }
   } else {

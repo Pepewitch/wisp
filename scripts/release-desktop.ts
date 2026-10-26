@@ -18,6 +18,7 @@ import { VERSION } from "../wispd/src/version";
 import { sourceIdentity, type SourceIdentity } from "../wispd/scripts/build-binary";
 import { sha256File } from "../wispd/scripts/release-linux";
 import { assertMacReleaseSource } from "../wispd/scripts/release-macos";
+import { validateStapled } from "../wispd/scripts/stapler";
 
 const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const DESKTOP_TARGET = "darwin-arm64";
@@ -271,7 +272,7 @@ function verifyDesktopApp(app: string, signed: boolean): VerifiedSigning {
     if (!/^CodeDirectory .*flags=.*\(runtime\)/m.test(signature)) {
       throw new Error("desktop application does not enable the hardened runtime");
     }
-    run(["/usr/bin/xcrun", "stapler", "validate", app]);
+    validateStapled(app);
     run(["/usr/sbin/spctl", "--assess", "--type", "execute", "--verbose=4", app]);
     signing = {
       kind: "developer-id",

@@ -8,6 +8,7 @@ import {
   macosArchiveRoot,
   MACOS_APP_DIRECTORY,
 } from "../wispd/scripts/release-macos";
+import { validateStapled } from "../wispd/scripts/stapler";
 import type { AnyMacReleaseManifest } from "./render-homebrew-formula";
 import {
   assertDisposableAuditHost,
@@ -270,7 +271,7 @@ function verifyPublicAssets(root: string, directory: string, version: string): v
   run(["tar", "-xzf", desktop, "-C", extracted]);
   const app = join(extracted, "Wisp.app");
   run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", app]);
-  run(["xcrun", "stapler", "validate", app]);
+  validateStapled(app, "xcrun");
   run(["spctl", "--assess", "--type", "execute", "--verbose=4", app]);
 
   const macManifest = JSON.parse(
@@ -294,7 +295,7 @@ function verifyPublicAssets(root: string, directory: string, version: string): v
         : join(daemonExtracted, MACOS_APP_DIRECTORY);
     const daemon = join(app, "Contents/MacOS/wisp");
     run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", app]);
-    run(["xcrun", "stapler", "validate", app]);
+    validateStapled(app, "xcrun");
     const signatureResult = command(
       ["codesign", "--display", "--verbose=4", daemon],
       { quiet: true },
