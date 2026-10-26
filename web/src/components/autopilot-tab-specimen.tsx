@@ -288,16 +288,6 @@ const MERGED_LINKS: HistoryLinks = { ...LINKS, pullRequest: { number: 318, lifec
 
 /* ── frames ─────────────────────────────────────────────────────────────── */
 
-function Strip() {
-  return (
-    <div role="tablist" aria-label="Task panel" className="flex items-center gap-0.5">
-      <Tab role="tab" active aria-selected>Autopilot</Tab>
-      <Tab role="tab" count={3}>Changes</Tab>
-      <Tab role="tab">Workflows</Tab>
-    </div>
-  )
-}
-
 /** The mobile shell's strip, which names the surface on touch (the pane draws no header of its own there). */
 function TouchStrip() {
   return (
@@ -360,7 +350,8 @@ function TabPane({
 }) {
   return (
     <AutopilotView
-      header={touch ? undefined : <Strip />}
+      // the tool panel's close control, so the header reads as it does in the app
+      onClose={touch ? undefined : noop}
       touch={touch}
       now={NOW}
       automation={automation}

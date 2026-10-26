@@ -11,6 +11,7 @@ import {
   TIER1_ENTRIES,
   tier2Entries,
   tier3Entries,
+  toolEntries,
 } from "./slash"
 
 describe("slashTokenAt (the trigger law)", () => {
@@ -226,5 +227,20 @@ describe("slashScore (what the row under the cursor answers to)", () => {
     expect(slashName("probe:context")).toBe("context")
     expect(slashName("command:release")).toBe("release")
     expect(slashName("fresh")).toBe("fresh")
+  })
+})
+
+describe("the tool panel's entries", () => {
+  it("are offered by what the daemon has, Terminal and Changes while that is unknown", () => {
+    expect(toolEntries(null).map((entry) => entry.name)).toEqual(["terminal", "changes"])
+    expect(toolEntries(["terminal", "changes", "workflows"]).map((entry) => entry.name)).toEqual(["terminal", "changes", "workflows"])
+  })
+
+  it("keep their own row value, so a skill of the same name is a different row", () => {
+    const [terminal] = toolEntries(["terminal"])
+    expect(slashValue(terminal!)).toBe("tool:terminal")
+    expect(slashName("tool:terminal")).toBe("terminal")
+    // typing the name ranks it as the name, not as its alias
+    expect(slashScore(slashValue(terminal!), "terminal", terminal!.keywords)).toBe(1)
   })
 })

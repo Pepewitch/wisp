@@ -1,7 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 
 import type { Workflow, WorkflowDefinition, WorkflowDetail } from "../../../shared/workflows"
-import { Tab } from "@/components/primitives"
 import { WorkflowsPane } from "@/components/workflows-pane"
 import { TASKS } from "@/lib/fixtures"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
@@ -111,21 +110,9 @@ function Framed({ id, items }: { id: string; items: Workflow[] }) {
     <div className="h-[340px] overflow-hidden rounded-lg border border-border bg-sidebar">
       <QueryClientProvider client={client}>
         <DaemonRuntimeProvider transport={specimenTransport(id, items)}>
-          <WorkflowsPane task={TASKS[0]!} header={<Strip workflows={items.filter((w) => w.state !== "completed").length} />} />
+          <WorkflowsPane task={TASKS[0]!} onClose={() => {}} />
         </DaemonRuntimeProvider>
       </QueryClientProvider>
-    </div>
-  )
-}
-
-/** The right column's real strip, so the pane is never shown without its tab. */
-function Strip({ workflows }: { workflows: number }) {
-  return (
-    <div className="flex items-center gap-0.5">
-      <Tab count={6}>Changes</Tab>
-      <Tab active count={workflows || undefined}>
-        Workflows
-      </Tab>
     </div>
   )
 }

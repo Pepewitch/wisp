@@ -7,6 +7,7 @@ import type { DaemonRequestOptions, DaemonTransport } from "@/lib/transport"
 import type { ApiTask, StatusEntry, TaskSkills, TaskUsage, Turn } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
+import { ToolPanelContext, type ToolPanelControls } from "@/hooks/useToolPanel"
 import { SteerBox } from "./steer-box"
 
 /** claude's registry as the daemon answers it (A4) — fixture, not hardcoded UI */
@@ -269,6 +270,42 @@ describe("keyboard and picking", () => {
     expect(await screen.findByTestId("steer-note")).toHaveTextContent(
       "done · turn 3 · claude · claude-sonnet-4-6 · wisp/tk9zdy-steer · 2 dirty ↑1 unpushed",
     )
+  })
+
+  it("names the tool panel's tools, and a pick opens one without sending anything", async () => {
+    const onSend = vi.fn(async () => {})
+    const show = vi.fn()
+    const tools = {
+      layout: { tool: null, terminal: false },
+      open: false,
+      available: ["terminal", "changes"],
+      toggle: vi.fn(),
+      show,
+      close: vi.fn(),
+      togglePanel: vi.fn(),
+      closePanel: vi.fn(),
+    claimTerminalFocus: () => false,
+    } satisfies ToolPanelControls
+    mount(
+      <ToolPanelContext.Provider value={tools}>
+        <SteerBox task={task()} onSend={onSend} />
+      </ToolPanelContext.Provider>,
+    )
+    type("look /chan")
+    await screen.findByTestId("slash-palette")
+    // a daemon without workflows is offered no /workflows
+    expect(screen.queryByTestId("slash-tool:workflows")).toBeNull()
+    fireEvent.click(screen.getByTestId("slash-tool:changes"))
+    expect(show).toHaveBeenCalledWith("changes")
+    expect(box().value).toBe("look ")
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it("offers no tools where there is no tool panel (the phone's own tabs)", async () => {
+    mount(<SteerBox task={task()} onSend={async () => {}} />)
+    type("/term")
+    await screen.findByTestId("slash-palette")
+    expect(screen.queryByTestId("slash-tool:terminal")).toBeNull()
   })
 
   it("a Tier-3 pick prefills the draft and sends nothing at all", async () => {

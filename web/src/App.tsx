@@ -25,13 +25,11 @@ import { ProjectSettingsDialog, type ProjectSettingsTarget } from "@/components/
 import { SettingsDialog } from "@/components/settings-dialog"
 import { UsageLimitsControl } from "@/components/usage-limits-control"
 import { StartHere } from "@/components/start-here"
-import { Gear, WispMark } from "@/components/icons"
-import { RightColumn, Shell } from "@/components/panes"
-import { Button } from "@/components/primitives"
+import { Shell, ToolPanel } from "@/components/panes"
 import { Sidebar } from "@/components/sidebar"
 import { SteerBox } from "@/components/steer-box"
 import { TaskNotices } from "@/components/task-notices"
-import { TopBarLeft, TopBarTask } from "@/components/top-bar-task"
+import { TopBar } from "@/components/top-bar"
 import { headerTask } from "@/lib/header-task"
 import { buildTaskSurfaces, type TaskSurfaces } from "@/components/task-surfaces"
 import {
@@ -54,6 +52,7 @@ import { useDesktopTaskNavigation } from "@/hooks/useDesktopTaskNavigation"
 import { useSidebarTree } from "@/hooks/useSidebarTree"
 import { useIsMobile } from "@/hooks/useMediaQuery"
 import { useLogStream } from "@/hooks/useLogStream"
+import { ToolPanelContext, useTaskToolPanel, type ToolPanelControls } from "@/hooks/useToolPanel"
 import { connectionStore } from "@/lib/conn"
 import { connectionAttention } from "@/lib/connection-attention"
 import {
@@ -329,6 +328,8 @@ function MainView({
   })
 
   const isMobile = useIsMobile()
+  // the phone keeps its own tabs, so the chords are the pointer shell's
+  const tools = useTaskToolPanel(runtime.connectionId, selectedId, searchFeature, !isMobile && task !== null)
   // the base is NOT passed to the diff: only the daemon knows which commit it
   // actually diffed from (it resolves GitHub's base), and a local task diffs
   // against the working tree with no base at all
@@ -413,6 +414,7 @@ function MainView({
     taskId: selectedId,
     archived,
     onRefresh: refreshDiff,
+    tools,
   })
   // Replaces the whole centre column — including the "Select a task" band,
   // which had nothing to select and said so over a panel already saying it.
@@ -450,6 +452,7 @@ function MainView({
       sidebar={sidebarNode}
       conversation={conversationNode}
       surfaces={taskSurfaces}
+      tools={tools}
       composer={composerNode}
       firstRun={firstRunNode}
       taskNotices={
@@ -470,6 +473,7 @@ function AppShell({
   sidebar,
   conversation,
   surfaces,
+  tools,
   composer,
   taskNotices,
   updateControl,
@@ -488,6 +492,8 @@ function AppShell({
   conversation: ReactNode
   /** the task's surfaces beside the conversation (buildTaskSurfaces) */
   surfaces: TaskSurfaces
+  /** which tool the pointer shell's panel shows for this task (useToolPanel) */
+  tools: ToolPanelControls
   composer: ReactNode
   /** what the task asks you to act on, above its conversation (task-notices.tsx) */
   taskNotices: ReactNode
@@ -524,64 +530,56 @@ function AppShell({
     )
   }
 
-  const drag = desktop ? "" : undefined
   return (
-    <div className="flex h-dvh flex-col bg-background text-foreground">
-      <header
-        ref={barRef}
-        data-tauri-drag-region={drag}
-        className="flex h-9 shrink-0 items-center border-b border-border bg-surface pr-3"
-      >
-        <TopBarLeft desktop={desktop}>
-          {/* The mark is the browser's only left-end identity: no window chrome,
-              no tabs. Desktop drops it — the traffic lights own that corner and
-              the connection tabs already say which daemon is on screen. */}
-          {!desktop && (
-            <span role="img" aria-label="Wisp" className="shrink-0">
-              <WispMark className="pointer-events-none size-[17px]" />
-            </span>
-          )}
-          {desktop && <DesktopConnectionChrome />}
-        </TopBarLeft>
-        {/* The middle answers WHICH TASK: its title opens its menu. */}
-        <div data-tauri-drag-region={drag} className="flex h-full min-w-0 flex-1 items-center gap-2.5 pl-4.5">
-          {firstRun === null && <TopBarTask task={task} pullRequest={pullRequest} dragRegion={desktop} />}
-        </div>
-        {/* Everything you can do TO the app is ONE cluster at the right end,
-            4px apart against the header's 10px, so the three of them read as a
-            group rather than as three unrelated controls that happen to be
-            near each other. Usage limits lead: they are read the most. The
-            gear stays last: it is still the top-right corner (§5g). */}
-        <div data-tauri-drag-region={drag} className="flex h-full shrink-0 items-center gap-1 pl-2.5">
-          <UsageLimitsControl harness={task?.harness ?? null} onOpenSettings={onOpenSettings} />
-          {updateControl}
-          {desktop && <DesktopZoomControl />}
-          <Button size="sm" icon aria-label="Settings" onClick={onOpenSettings}>
-            <Gear />
-          </Button>
-        </div>
-      </header>
+    // the top bar's icons, the panel and the `/` palette all act on one task's tools
+    <ToolPanelContext.Provider value={tools}>
+      <div className="flex h-dvh flex-col bg-background text-foreground">
+        <TopBar
+          barRef={barRef}
+          desktop={desktop}
+          task={firstRun === null ? task : null}
+          pullRequest={pullRequest}
+          updateControl={updateControl}
+          onOpenSettings={onOpenSettings}
+        />
 
-      <Shell
-        sidebar={sidebar()}
-        // written to the bar's style rather than to state, so a divider drag
-        // does not re-render the app on every frame
-        onSidebarResize={(px) => barRef.current?.style.setProperty("--sidebar-width", `${px}px`)}
-        centre={
-          <main className="flex h-full min-w-0 flex-col bg-background">
-            {firstRun ?? (
-              <>
-                {taskNotices}
-                {conversation}
-                {composer}
-              </>
-            )}
-          </main>
-        }
-        right={<RightColumn changes={surfaces.changes} terminal={surfaces.terminal} />}
-      />
-      {dialogs}
-    </div>
+        <Shell
+          sidebar={sidebar()}
+          // written to the bar's style rather than to state, so a divider drag
+          // does not re-render the app on every frame
+          onSidebarResize={(px) => barRef.current?.style.setProperty("--sidebar-width", `${px}px`)}
+          centre={
+            <main className="flex h-full min-w-0 flex-col bg-background">
+              {firstRun ?? (
+                <>
+                  {taskNotices}
+                  {conversation}
+                  {composer}
+                </>
+              )}
+            </main>
+          }
+          panel={
+            <ToolPanel
+              tool={surfaces.changes}
+              terminal={surfaces.terminal}
+              terminalKey={task?.id ?? ""}
+              toolOpen={tools.layout.tool !== null}
+              terminalOpen={tools.layout.terminal}
+              onCloseTool={() => {
+                if (tools.layout.tool) tools.close(tools.layout.tool)
+              }}
+            />
+          }
+          // the stored layout, not the task row: the row arrives a beat after a
+          // reload, and a panel that waited for it would glide open instead of
+          // being restored (no task selected means nothing open)
+          panelOpen={tools.open}
+          onPanelDraggedShut={tools.closePanel}
+        />
+        {dialogs}
+      </div>
+    </ToolPanelContext.Provider>
   )
 }
 

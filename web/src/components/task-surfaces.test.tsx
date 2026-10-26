@@ -40,6 +40,7 @@ function surfaces(taskId: string | null, mobile = false) {
     taskId,
     archived: false,
     onRefresh: () => {},
+    tools: { layout: { tool: "changes", terminal: true }, close: () => {}, claimTerminalFocus: () => false },
   })
 }
 

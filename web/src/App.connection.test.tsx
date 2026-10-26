@@ -239,7 +239,7 @@ vi.mock("@/components/panes", () => ({
     mocks.renderShell()
     return <>{centre}</>
   },
-  RightColumn: () => null,
+  ToolPanel: () => null,
 }))
 vi.mock("@/components/project-settings-dialog", () => ({ ProjectSettingsDialog: () => null }))
 vi.mock("@/components/sidebar", () => ({ Sidebar: () => null }))
@@ -250,6 +250,7 @@ vi.mock("@/components/top-bar-task", async (importOriginal) => ({
   TopBarTask: () => null,
 }))
 vi.mock("@/components/terminal-pane", () => ({ TerminalSection: () => null }))
+vi.mock("@/components/top-bar-tools", () => ({ TopBarTools: () => null }))
 
 import App from "./App"
 

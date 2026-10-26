@@ -12,8 +12,9 @@ process and is not a durable scheduler. A harness or daemon restart can end it.
 Heartbeats and scheduled steers persist their intent in Wisp and resume
 checking after daemon recovery.
 
-**Workflows** is a tab in the right column, beside **Changes**, in the browser
-and in Desktop. It lists what is attached to the selected task: one row each,
+**Workflows** is a tool in the task's tool panel, in the browser and in
+Desktop: open it from the clock icon in the top bar, which counts the
+workflows still watching, or with `/workflows` (on a phone it is a tab). It lists what is attached to the selected task: one row each,
 carrying the workflow's state and the reason it is waiting. The list ends in
 **New workflow…** — choose a built-in, edit its parameters, open **Limits and
 permissions** if you need them, and select **Start**. Opening a row

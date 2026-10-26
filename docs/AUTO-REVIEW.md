@@ -15,8 +15,9 @@ wisp review show <task> --round 2 # one round in full: each reviewer's verdict, 
 wisp review rubric                # the rubric reviewers judge by, with this project's own rules
 ```
 
-In the app, **Auto-review** is a switch in the task's Autopilot tab, its `…`
-menu, and the new-task dialog's PR picker. The tab lists the rounds under the
+In the app, **Auto-review** is a switch in the task's Autopilot panel (the
+top bar's pull-request icon, or `/autopilot`; a tab on a phone), its `…`
+menu, and the new-task dialog's PR picker. The panel lists the rounds under the
 switches: each round's depth, and one line per reviewer that opens its task.
 
 ## The panel
@@ -65,7 +66,7 @@ needs you. The fallback starts its own time limit.
 
 The substitution is on record. The round's history says
 `Round 1: reviewer A (droid) failed on the network (…) — falling back to claude opus-5`.
-The reviewer's row in the Autopilot tab is marked *fallback*, with a line
+The reviewer's row in the Autopilot panel is marked *fallback*, with a line
 under it naming the failed agent and why; that line's title holds the failed
 task's own words. `wisp review show` prints
 `A claude opus-5 (fallback for droid: network): pass`, and `--round <n>` adds
@@ -112,7 +113,7 @@ is matched by both its old and its new path. Within one PR a tier only goes up.
    is open, neither reviewer can read the other's verdict: not its words, not
    even whether it passed (it shows as "Verdict in"), nor why A asked for a
    second reviewer. Wisp cannot tell a person from a reviewer, so the same holds
-   in the Autopilot tab: A's findings appear once B has ended too.
+   in the Autopilot panel: A's findings appear once B has ended too.
 5. **Wisp settles the round** once every reviewer has ended, and archives each
    reviewer once its turn ends, or five minutes after its verdict if the turn
    has not (its transcript stays readable under archived tasks). A reviewer
@@ -213,7 +214,7 @@ A new PR after a merge starts at round 1 again. Expect up to two reviewer tasks
 a round.
 
 **Ask again without a push.** When a rejection needs you, **Resume** (in the
-Autopilot tab, or `wisp pr <task> resume`) re-runs the reviewers that did not
+Autopilot panel, or `wisp pr <task> resume`) re-runs the reviewers that did not
 pass, on the same head, without spending a round; a reviewer that passed is
 kept.
 
@@ -364,7 +365,7 @@ autopilot on itself.
 
 ## History
 
-`wisp pr <task> history` and the Autopilot tab record each round as `review`
+`wisp pr <task> history` and the Autopilot panel record each round as `review`
 entries (started, a reviewer gave its verdict, the round's outcome with what
 the reviewers said, superseded, no verdict; a reviewer's words reach history
 only once the round settles) and a held recipe as

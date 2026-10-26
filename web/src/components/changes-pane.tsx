@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useState } from "react"
 
 import { Refresh } from "@/components/icons"
 import { Button, DiffStat, PaneHeader } from "@/components/primitives"
@@ -12,28 +12,26 @@ import { useWorktreeFileOpener } from "@/lib/worktree-files"
  * muted and basename lit, the +adds/−dels pair the only thing on the right
  * edge. A full-branch wall of diff is never the entry point.
  *
- * "Changes" keeps a tab's shape because it now HAS a sibling: the right
- * column's strip is Autopilot · Changes · Workflows, and `header` is where that
- * strip arrives. Without one the pane draws its own label, which is what a
- * daemon with neither autopilot nor workflows still sees — a label, no underline,
- * no hue.
+ * The pane names itself — a label and its file count, no underline, no hue —
+ * because the top bar's icons are what switch the tool panel between it and
+ * its siblings.
  */
 export function ChangesPane({
   taskId,
   archived,
   onRefresh,
-  header,
   hidden = false,
   touch = false,
+  onClose,
 }: {
   taskId: string | null
   archived: boolean
   onRefresh?: () => void
-  /** the right column's tab strip, in place of this pane's own label */
-  header?: ReactNode
-  /** kept mounted while another tab is shown, so the open diff survives */
+  /** kept mounted while another tool is shown, so the open diff survives */
   hidden?: boolean
   touch?: boolean
+  /** the tool panel's close control */
+  onClose?: () => void
 }) {
   const query = useDiff(taskId, archived)
   const [selected, setSelected] = useState<string | null>(null)
@@ -57,8 +55,8 @@ export function ChangesPane({
         count={counted(query.data)}
         onRefresh={onRefresh}
         disabled={taskId === null || archived}
-        header={header}
         touch={touch}
+        onClose={onClose}
       />
       <Body
         taskId={taskId}
@@ -82,23 +80,19 @@ function Header({
   count,
   onRefresh,
   disabled,
-  header,
   touch,
+  onClose,
 }: {
   count: number | null
   onRefresh?: () => void
   disabled: boolean
-  header?: ReactNode
   touch?: boolean
+  onClose?: () => void
 }) {
   return (
-    <PaneHeader touch={touch} className={header ? "pl-2" : undefined}>
-      {header ?? (
-        <>
-          <span className="text-[12.5px] font-medium text-foreground">Changes</span>
-          {count !== null && <span className="font-mono text-[10.5px] text-muted-foreground">{count}</span>}
-        </>
-      )}
+    <PaneHeader touch={touch} onClose={onClose} closeLabel="Changes">
+      <span className="text-[12.5px] font-medium text-foreground">Changes</span>
+      {count !== null && <span className="font-mono text-[10.5px] text-muted-foreground">{count}</span>}
       <span className="flex-1" />
       <Button size={touch ? "touch" : "sm"} icon aria-label="Refresh diff" onClick={onRefresh} disabled={disabled}>
         <Refresh />

@@ -98,6 +98,31 @@ export function isFindChord(event: ChordEvent, apple: boolean): boolean {
   return event.ctrlKey && event.altKey && !event.metaKey && event.code === "KeyF";
 }
 
+/**
+ * ⌃` toggles the Terminal panel — VS Code's chord, Ctrl on every platform,
+ * ⌘ included. `code` as well as `key`, so it is the key left of 1 on any
+ * layout, including the ones where that key types a dead accent.
+ *
+ * The terminal passes it THROUGH rather than handling it: xterm would send
+ * it to the shell as NUL and stop it there, so the window never heard it and
+ * the panel could not be closed from inside the shell it is showing.
+ */
+export function isTerminalToggleChord(event: ChordEvent): boolean {
+  if (!event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return false;
+  return event.code === "Backquote" || event.key === "`";
+}
+
+/**
+ * ⌘\ toggles the whole tool panel on Apple platforms, Ctrl+\ elsewhere.
+ * The terminal passes ⌘\ through; Ctrl+\ off Apple is SIGQUIT, the shell's,
+ * so a focused terminal keeps it (`useToolPanelShortcuts`).
+ */
+export function isPanelChord(event: ChordEvent, apple: boolean): boolean {
+  if (event.altKey || event.shiftKey) return false;
+  if (apple ? !event.metaKey || event.ctrlKey : !event.ctrlKey || event.metaKey) return false;
+  return event.code === "Backslash" || event.key === "\\";
+}
+
 /** ⌘K clears the terminal on Apple platforms. Elsewhere Ctrl+K is readline's kill-line, so it stays the shell's. */
 export function isClearChord(event: ChordEvent, apple: boolean): boolean {
   return apple && event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && (event.key === "k" || event.key === "K");

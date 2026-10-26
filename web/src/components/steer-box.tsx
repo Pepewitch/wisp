@@ -28,6 +28,7 @@ import { useAutosizeTextarea } from "@/hooks/useAutosizeTextarea"
 import { useSteerDelivery, type QueueToggleState } from "@/hooks/useSteerDelivery"
 import { hasCoarsePointer } from "@/hooks/useMediaQuery"
 import { useTaskAgentSelection } from "@/hooks/useTaskAgentSelection"
+import { useToolPanelControls, type ToolPanelControls } from "@/hooks/useToolPanel"
 import {
   useDesktopPendingAttachments,
   useRememberedDraft,
@@ -53,6 +54,7 @@ import {
   TIER1_ENTRIES,
   tier2Entries,
   tier3Entries,
+  toolEntries,
   type SlashEntry,
   type SlashGroup,
   type SlashToken,
@@ -215,6 +217,7 @@ export function SteerBox({
     imageNote: agent.selectedHarness?.imageNote ?? imageNote,
   })
   const commands = useSteerCommands({ task, status, setNote, setReport, setCompactingTaskId })
+  const tools = useToolPanelControls()
   const archive = commands.archive
   useCaretRestore(box, caret)
   useComposerFocusRequests(box)
@@ -266,12 +269,12 @@ export function SteerBox({
     setPalette(null)
     if (!token || !task) return
     const tier1Command = isTier1Command(entry.name) ? entry.name : null
-    if (tier1Command || entry.probe || entry.compact || entry.externalHref) {
+    if (tier1Command || entry.probe || entry.compact || entry.externalHref || entry.tool) {
       // Local actions consume the token without sending it to the harness.
       setValue(value.slice(0, token.start) + value.slice(token.end))
       caret.current = token.start
       suppressed.current = null
-      runLocalSlashAction(entry, tier1Command, commands)
+      runLocalSlashAction(entry, tier1Command, commands, tools)
       return
     }
     // Tier 3 is prompt text the harness honors, and a skill may take arguments:
@@ -284,7 +287,7 @@ export function SteerBox({
     suppressed.current = token.start
   }
 
-  const groups = slashGroups(task, probeCommands, skills, compact)
+  const groups = slashGroups(task, probeCommands, skills, compact, tools)
   const shownReport =
     report && task && report.taskId === task.id ? report : null
   const runtimeStatus = composerStatus(task, delivery.action, compacting, choice)
@@ -381,9 +384,11 @@ export function SteerBox({
 function runLocalSlashAction(
   entry: SlashEntry,
   tier1Command: Tier1CommandName | null,
-  commands: ReturnType<typeof useSteerCommands>
+  commands: ReturnType<typeof useSteerCommands>,
+  tools: ToolPanelControls | null
 ): void {
-  if (entry.probe) commands.probe(entry.probe)
+  if (entry.tool) tools?.show(entry.tool)
+  else if (entry.probe) commands.probe(entry.probe)
   else if (entry.compact) commands.compact()
   else if (entry.externalHref) openExternalLink(entry.externalHref)
   else if (tier1Command) commands.dispatch(tier1Command)
@@ -452,9 +457,11 @@ function slashGroups(
   task: ApiTask | null,
   probeCommands: ProbeCommandName[] | undefined,
   skills: TaskSkills | undefined,
-  compact: HarnessCompact | null | undefined
+  compact: HarnessCompact | null | undefined,
+  tools: ToolPanelControls | null
 ): SlashGroup[] {
-  const groups: SlashGroup[] = [{ label: "Wisp", entries: TIER1_ENTRIES }]
+  // Tools exist on the pointer shell's panel only: the phone has its own tabs
+  const groups: SlashGroup[] = [{ label: "Wisp", entries: TIER1_ENTRIES }, ...(tools && task ? [{ label: "Tools", entries: toolEntries(tools.available) }] : [])]
   if (task) {
     groups.push({
       label: task.harness,

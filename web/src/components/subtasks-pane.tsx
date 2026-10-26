@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react"
+import { useState } from "react"
 
 import { Plus } from "@/components/icons"
 import { NewSubtaskDialog } from "@/components/new-subtask-dialog"
@@ -71,12 +71,12 @@ function SubtaskItem({ subtask, onOpen, touch }: { subtask: ApiSubtask; onOpen: 
  * is here, beside what it adds to; a subtask itself cannot have one, and an
  * archived task takes none.
  */
-export function SubtasksPane({ task, header, hidden = false, touch = false }: {
+export function SubtasksPane({ task, hidden = false, touch = false, onClose }: {
   task: ApiTask | null
-  /** the right column's tab strip, when this is the visible pane */
-  header?: ReactNode
   hidden?: boolean
   touch?: boolean
+  /** the tool panel's close control */
+  onClose?: () => void
 }) {
   const { connectionId } = useDaemonRuntime()
   const [creating, setCreating] = useState(false)
@@ -86,9 +86,9 @@ export function SubtasksPane({ task, header, hidden = false, touch = false }: {
 
   return (
     <div className={cn("h-full min-h-0 flex-1 flex-col", hidden ? "hidden" : "flex")} aria-hidden={hidden || undefined}>
-      {(!touch || header) && (
-        <PaneHeader touch={touch} className={header ? "pl-2" : undefined}>
-          {header ?? <span className="text-[12.5px] font-medium text-foreground">Subtasks</span>}
+      {!touch && (
+        <PaneHeader onClose={onClose} closeLabel="Subtasks">
+          <span className="text-[12.5px] font-medium text-foreground">Subtasks</span>
         </PaneHeader>
       )}
       <div className="scroll-slim min-h-0 flex-1 overflow-y-auto px-1.5 py-2">

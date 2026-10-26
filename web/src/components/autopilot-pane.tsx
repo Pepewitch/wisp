@@ -67,23 +67,23 @@ const NO_LINKS: HistoryLinks = { repository: null, pullRequest: null }
  * menu note. A paragraph in a menu is why this tab exists: the menu keeps the
  * switches as shortcuts and nothing else.
  *
- * Kept mounted while another tab shows (`hidden`), like its siblings, so the
+ * Kept mounted while another tool shows (`hidden`), like its siblings, so the
  * scroll position, an open comparison and the log survive a look at the diff.
  */
 export function AutopilotPane({
   task,
-  header,
   hidden = false,
   touch = false,
   onShowConversation,
+  onClose,
 }: {
   task: ApiTask | null
-  /** the panel's tab strip; without one the pane names itself */
-  header?: ReactNode
   hidden?: boolean
   touch?: boolean
   /** Bring the transcript on screen before a message reveal runs against it (touch, where it is another tab). */
   onShowConversation?: () => void
+  /** the tool panel's close control */
+  onClose?: () => void
 }) {
   const { connectionId } = useDaemonRuntime()
   const features = useHarnessFeatures()
@@ -125,7 +125,7 @@ export function AutopilotPane({
 
   return (
     <AutopilotView
-      header={header}
+      onClose={onClose}
       hidden={hidden}
       touch={touch}
       now={now}
@@ -165,7 +165,7 @@ function useReviewsModel(
  * owns only view state: which of its two views shows, and the log's toggles.
  */
 export function AutopilotView({
-  header,
+  onClose,
   hidden = false,
   touch = false,
   now,
@@ -174,7 +174,7 @@ export function AutopilotView({
   links = NO_LINKS,
   initialView = "overview",
 }: {
-  header?: ReactNode
+  onClose?: () => void
   hidden?: boolean
   touch?: boolean
   now: number
@@ -193,9 +193,10 @@ export function AutopilotView({
 
   return (
     <div className={cn("h-full min-h-0 flex-1 flex-col", hidden ? "hidden" : "flex")} aria-hidden={hidden || undefined}>
-      {(!touch || header) && (
-        <PaneHeader touch={touch} className={header ? "pl-2" : undefined}>
-          {header ?? <span className="text-[12.5px] font-medium text-foreground">Autopilot</span>}
+      {/* on touch the surface tab already names it */}
+      {!touch && (
+        <PaneHeader onClose={onClose} closeLabel="Autopilot">
+          <span className="text-[12.5px] font-medium text-foreground">Autopilot</span>
         </PaneHeader>
       )}
       {log && (
