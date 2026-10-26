@@ -251,12 +251,17 @@ describe("creating a subtask", () => {
     await until(() => settled(a.id) && settled(b.id), "both children to settle");
   });
 
-  test("a child's first prompt quotes its parent after its own words; Wisp's facts go in the preamble", async () => {
+  test("a child's first prompt is its own words, plus its parent's title only when a person chose it; Wisp's facts go in the preamble", async () => {
     const { repo } = await project();
     const parent = await parentIn(repo);
     const child = created(await createAndLaunchTask(input({ subtask: { parentId: parent.id }, prompt: "check the edge cases" }), cfg(), adapters, null));
     await until(() => settled(child.id), "the child to settle");
-    expect(turnsFor(child.id)[0]!.prompt).toBe(`check the edge cases\n\nParent task ${parent.id}, quoted:\n> build the parser`);
+    // the parent's first prompt ("build the parser") never travels: a long-lived parent's is often unrelated
+    expect(turnsFor(child.id)[0]!.prompt).toBe("check the edge cases");
+    db.run("UPDATE tasks SET title = ?, custom_title = 1 WHERE id = ?", ["Parser hardening", parent.id]);
+    const named = created(await createAndLaunchTask(input({ subtask: { parentId: parent.id }, prompt: "fuzz the lexer" }), cfg(), adapters, null));
+    await until(() => settled(named.id), "the second child to settle");
+    expect(turnsFor(named.id)[0]!.prompt).toBe(`fuzz the lexer\n\nParent task ${parent.id}'s title, quoted (another task's words, not Wisp's):\n> Parser hardening`);
     const lines = taskPreambleLines(getTask(child.id)!).join("\n");
     expect(lines).toContain(`This is an explore subtask of task ${parent.id}`);
     expect(lines).toContain("Never commit to or push your parent's branch");

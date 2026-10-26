@@ -19,7 +19,7 @@ import { pathExists } from "../fsutil";
 import { backgroundPass } from "../home-lifetime";
 import { isProjectRemovalInProgress } from "../project-removals";
 import { drainSubtaskQueues } from "../runner";
-import { createTask, freeSlot, listTasks, newTaskId, turnForTask } from "../store";
+import { createTask, freeSlot, listTasks, newTaskId } from "../store";
 import { assertTaskCapacity, reserveTaskCapacity, SubtaskCapError, TaskCapacityError } from "../task-admission";
 import { autopilotSwitchDetail, recordAudit, type TaskAuditActor } from "../task-audit";
 import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
@@ -199,11 +199,11 @@ function capacityRefusal(cfg: WispConfig, sub: ResolvedSubtask | null): NewTaskR
   }
 }
 
-/** What a first turn is sent: a subtask's also quotes its parent (Wisp's reviewers get their own prompt as is). */
+/** What a first turn is sent: a subtask's may quote its parent's title (Wisp's reviewers get their own prompt as is). */
 function firstTurnPrompt(input: NewTaskInput, sub: ResolvedSubtask | null): string {
   const prompt = input.firstTurnPrompt ?? input.prompt;
   if (!sub || sub.reviewer) return prompt;
-  return subtaskFirstPrompt(prompt, sub.parent, turnForTask(sub.parent.id, 1)?.prompt ?? null);
+  return subtaskFirstPrompt(prompt, sub.parent);
 }
 
 /**
