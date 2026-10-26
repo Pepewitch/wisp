@@ -158,6 +158,9 @@ export function ConnectionPicker({
   )
 
   const step = (event: KeyboardEvent<HTMLSpanElement>) => {
+    // React bubbles the open menu's keys here through its portal; there ←/→
+    // belong to the menu, and must never swap the daemon under a person
+    if (!event.currentTarget.contains(event.target as Node)) return
     const index = connections.indexOf(active)
     const last = connections.length - 1
     const next =

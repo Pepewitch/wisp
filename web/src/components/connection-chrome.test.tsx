@@ -718,6 +718,21 @@ describe("desktop connection chrome", () => {
     expect(screen.queryByRole("tablist")).toBeNull()
   })
 
+  it("retries a remote from the touch shell's ⋯, as the picker does, without the Edit dialog", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    const reconnectConnection = vi.fn(async () => REMOTE)
+    renderChrome(bootstrap([LOCAL, REMOTE]), bridge({ reconnectConnection }), true)
+
+    fireEvent.click(screen.getByRole("button", { name: "Local" }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: /^Remote one/ }))
+    fireEvent.click(screen.getByRole("button", { name: "Manage Remote one" }))
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Reconnect" }))
+    await waitFor(() =>
+      expect(reconnectConnection).toHaveBeenCalledWith({ connectionId: REMOTE.id })
+    )
+    expect(screen.queryByLabelText("Daemon URL")).toBeNull()
+  })
+
   it("disables Add after eight total connections", async () => {
     class EventSourceStub {
       onopen: (() => void) | null = null
@@ -802,6 +817,22 @@ describe("the connection picker in the top bar's left end", () => {
     expect(picker(/^Connection: Local$/)).toBeInTheDocument()
     await waitFor(() => expect(selectConnection).toHaveBeenCalledTimes(5))
     expect(screen.queryByRole("menu")).toBeNull()
+  })
+
+  it("leaves the arrow keys to the open menu: they never switch from inside it", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]")))
+    const selectConnection = vi.fn(async () => undefined)
+    renderChrome(bootstrap([LOCAL, REMOTE]), bridge({ selectConnection }))
+
+    await openPicker()
+    for (const item of [
+      screen.getByRole("menuitemradio", { name: /^Local/ }),
+      screen.getByRole("menuitem", { name: "Rename" }),
+    ]) {
+      for (const key of ["ArrowRight", "ArrowLeft", "Home", "End"]) fireEvent.keyDown(item, { key })
+    }
+    expect(selectConnection).not.toHaveBeenCalled()
+    expect(picker(/^Connection: Local$/)).toBeInTheDocument()
   })
 
   it("acts on whichever connection is current", async () => {

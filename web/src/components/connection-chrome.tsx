@@ -206,18 +206,22 @@ function ActiveConnectionActions({
           Rename
         </span>
       </MenuItem>
+      {/* a retry for either kind, as the pointer shell's picker does; the
+          remote's probe-and-trust flow is Edit connection */}
+      <MenuItem
+        onClick={() => run(() => desktop.reconnect({ connectionId: active.id }))}
+      >
+        <span className="flex items-center gap-2 [&>svg]:size-3.5">
+          <Refresh />
+          Reconnect
+        </span>
+      </MenuItem>
       {active.kind === "remote" ? (
         <>
           <MenuItem onClick={() => onDialog("edit")}>
             <span className="flex items-center gap-2 [&>svg]:size-3.5">
               <Pencil />
               Edit connection
-            </span>
-          </MenuItem>
-          <MenuItem onClick={() => onDialog("edit")}>
-            <span className="flex items-center gap-2 [&>svg]:size-3.5">
-              <Refresh />
-              Reconnect
             </span>
           </MenuItem>
           <MenuItem onClick={() => onDialog("remove")}>
@@ -228,24 +232,12 @@ function ActiveConnectionActions({
           </MenuItem>
         </>
       ) : (
-        <>
-          <MenuItem
-            onClick={() =>
-              run(() => desktop.reconnect({ connectionId: active.id }))
-            }
-          >
-            <span className="flex items-center gap-2 [&>svg]:size-3.5">
-              <Refresh />
-              Reconnect
-            </span>
-          </MenuItem>
-          <MenuItem onClick={() => onDialog("local-setup")}>
-            <span className="flex items-center gap-2 [&>svg]:size-3.5">
-              <Local />
-              Diagnose local Wisp
-            </span>
-          </MenuItem>
-        </>
+        <MenuItem onClick={() => onDialog("local-setup")}>
+          <span className="flex items-center gap-2 [&>svg]:size-3.5">
+            <Local />
+            Diagnose local Wisp
+          </span>
+        </MenuItem>
       )}
       <MenuItem onClick={() => onDialog("reset")}>
         <span className="flex items-center gap-2 text-destructive [&>svg]:size-3.5">

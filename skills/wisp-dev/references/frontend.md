@@ -1116,9 +1116,12 @@ Remove connection for a remote or Diagnose local Wisp for Local. A last group
 holds a Reconnect for any other connection that is down (without switching to
 it), Add connection, and Reset desktop data. ←/→, Home and End on the focused
 picker step through the connections without opening the menu, as the tabs'
-arrow keys did. The trigger and its wrapper are controls, so they carry no
-`data-tauri-drag-region`; the rest of the left end does. The touch shell keeps
-its own connection menu and `⋯` (§6b). The gallery shows the bar at the
+arrow keys did; inside the open menu those keys are the menu's own, so the
+handler takes only keys from the trigger (the popup is portalled, but React
+bubbles its keys through the picker). The trigger and its wrapper are
+controls, so they carry no `data-tauri-drag-region`; the rest of the left end
+does. The touch shell keeps its own connection menu and `⋯` (§6b), whose
+Reconnect is the same direct retry for either kind. The gallery shows the bar at the
 window's width over a stand-in sidebar, with 1, 2 and 4 connections.
 
 The **middle** is *which task* (`top-bar-task.tsx`), and it is why there is no
