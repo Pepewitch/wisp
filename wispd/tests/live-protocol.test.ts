@@ -286,11 +286,27 @@ describe("Codex live terminal events", () => {
     await driver.close();
   });
 
-  test("a multi-call turn on a resumed thread records the turn's sum, and the last call as context", async () => {
-    // Shapes and numbers from a live 0.162.1 probe: `total` is cumulative per
-    // thread across resumes, and the resume replays the previous turn's update.
+  // Shapes and numbers from a live 0.162.1 probe: `total` is cumulative per
+  // thread across resumes, and the resume replays the previous turn's update.
+  const breakdown = (input: number, cached: number, output: number, reasoning: number) => ({
+    totalTokens: input + output,
+    inputTokens: input,
+    cachedInputTokens: cached,
+    cacheWriteInputTokens: 0,
+    outputTokens: output,
+    reasoningOutputTokens: reasoning,
+  });
+  const usageUpdate = (turnId: string, total: object, last: object) => ({
+    method: "thread/tokenUsage/updated",
+    params: { threadId: "existing-thread", turnId, tokenUsage: { total, last, modelContextWindow: 258_400 } },
+  });
+  const previousTotal = breakdown(72_465, 68_224, 174, 12);
+  const previousLast = breakdown(14_630, 14_336, 5, 0);
+  const firstCall = breakdown(16_058, 6_784, 61, 9);
+
+  /** A driver resumed onto turn-1, after the replay of the previous turn's update. */
+  async function resumedTurn(events: Record<string, any>[]) {
     const sink = new MemorySink();
-    const events: Record<string, any>[] = [];
     const driver = new CodexLiveDriver({
       sink,
       def: BUILTIN_ADAPTERS.codex!,
@@ -304,33 +320,30 @@ describe("Codex live terminal events", () => {
       emit: (event) => events.push(event),
       onTerminal: () => {},
     });
-    const breakdown = (input: number, cached: number, output: number, reasoning: number) => ({
-      totalTokens: input + output,
-      inputTokens: input,
-      cachedInputTokens: cached,
-      cacheWriteInputTokens: 0,
-      outputTokens: output,
-      reasoningOutputTokens: reasoning,
-    });
-    const usageUpdate = (turnId: string, total: object, last: object) => ({
-      method: "thread/tokenUsage/updated",
-      params: { threadId: "existing-thread", turnId, tokenUsage: { total, last, modelContextWindow: 258_400 } },
-    });
-
     const initialize = await requestAt(sink, 0);
     driver.handle({ id: initialize.id, result: {} });
     expect((await requestAt(sink, 1)).method).toBe("initialized");
     const resume = await requestAt(sink, 2);
-    driver.handle(usageUpdate("previous-turn", breakdown(72_465, 68_224, 174, 12), breakdown(14_630, 14_336, 5, 0)));
+    driver.handle(usageUpdate("previous-turn", previousTotal, previousLast));
     driver.handle({ id: resume.id, result: { thread: { id: "existing-thread", turns: [] } } });
     const startTurn = await requestAt(sink, 3);
     driver.handle({ id: startTurn.id, result: { turn: { id: "turn-1" } } });
     await driver.ready;
+    return driver;
+  }
 
-    driver.handle(usageUpdate("turn-1", breakdown(88_523, 75_008, 235, 21), breakdown(16_058, 6_784, 61, 9)));
+  const settle = (status: string) => ({
+    method: "turn/completed",
+    params: { threadId: "existing-thread", turn: { id: "turn-1", status } },
+  });
+
+  test("a multi-call turn on a resumed thread records the turn's sum, and the last call as context", async () => {
+    const events: Record<string, any>[] = [];
+    const driver = await resumedTurn(events);
+    driver.handle(usageUpdate("turn-1", breakdown(88_523, 75_008, 235, 21), firstCall));
     driver.handle(usageUpdate("turn-1", breakdown(104_669, 90_880, 285, 21), breakdown(16_146, 15_872, 50, 0)));
     driver.handle(usageUpdate("turn-1", breakdown(120_895, 106_880, 290, 21), breakdown(16_226, 16_000, 5, 0)));
-    driver.handle({ method: "turn/completed", params: { threadId: "existing-thread", turn: { id: "turn-1", status: "completed" } } });
+    driver.handle(settle("completed"));
 
     const completed = events.find((event) => event.type === "turn.completed")!;
     expect(completed.usage).toEqual({
@@ -344,6 +357,35 @@ describe("Codex live terminal events", () => {
     expect(completed.last_usage).toMatchObject({ input_tokens: 16_226, output_tokens: 5 });
     const parsed = parseOutput(BUILTIN_ADAPTERS.codex!, events.map((event) => JSON.stringify(event)).join("\n"));
     expect(parsed).toMatchObject({ usage: { output_tokens: 116 }, context: { usedTokens: 16_226 } });
+    await driver.close();
+  });
+
+  test("an unchanged count re-sent under the new turn adds nothing", async () => {
+    // codex 0.162.1 emits the existing count on rate-limit news, before (or
+    // instead of) a completed call.
+    const events: Record<string, any>[] = [];
+    const driver = await resumedTurn(events);
+    driver.handle(usageUpdate("turn-1", previousTotal, previousLast));
+    driver.handle(usageUpdate("turn-1", breakdown(88_523, 75_008, 235, 21), firstCall));
+    driver.handle(settle("completed"));
+
+    const completed = events.find((event) => event.type === "turn.completed")!;
+    expect(completed.usage).toMatchObject({ input_tokens: 16_058, output_tokens: 61 });
+    await driver.close();
+  });
+
+  test("a context-window overflow resets the total without subtracting from the turn", async () => {
+    // fill_to_context_window: total becomes the window with every other counter zeroed.
+    const events: Record<string, any>[] = [];
+    const driver = await resumedTurn(events);
+    driver.handle(usageUpdate("turn-1", breakdown(88_523, 75_008, 235, 21), firstCall));
+    const filled = { ...breakdown(0, 0, 0, 0), totalTokens: 258_400 };
+    driver.handle(usageUpdate("turn-1", filled, { ...breakdown(0, 0, 0, 0), totalTokens: 258_400 - 88_758 }));
+    driver.handle(settle("failed"));
+
+    const failed = events.find((event) => event.type === "turn.failed")!;
+    expect(failed.usage).toMatchObject({ input_tokens: 16_058, output_tokens: 61 });
+    expect(failed.last_usage).toMatchObject({ input_tokens: 0 });
     await driver.close();
   });
 

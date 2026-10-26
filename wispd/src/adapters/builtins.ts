@@ -257,8 +257,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // the captured fixture tests/fixtures/codex-first-turn.jsonl).
     parse: { format: "json", strategy: "codex-jsonl" },
     usageFormat: "codex-usage",
-    // turn.completed reports the FINAL call, not a sum — the one harness whose
-    // billing event happens to already be the context reading.
+    // turn.completed's usage is the turn's sum; the live driver also states the
+    // FINAL call as last_usage, and that prompt is the context reading.
     contextFormat: "codex-jsonl",
     events: "codex-jsonl",
     activity: "codex-jsonl",

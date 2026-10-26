@@ -172,6 +172,12 @@ function usageDelta(after: unknown, before: Record<string, number>): Record<stri
   return delta;
 }
 
+function addUsage(sum: Record<string, number>, more: Record<string, number>): Record<string, number> {
+  const added = { ...sum };
+  for (const [name, amount] of Object.entries(more)) added[name] = (added[name] ?? 0) + amount;
+  return added;
+}
+
 /**
  * Long-lived Codex app-server turn.
  *
@@ -196,14 +202,16 @@ export class CodexLiveDriver {
   private threadId: string | null;
   private turnId: string | null = null;
   private model: string | null;
-  private usage: Record<string, number> | null = null;
+  /** This turn's model calls, summed (camelCase, as the app-server reports them). */
+  private turnUsage: Record<string, number> | null = null;
   private lastUsage: Record<string, number> | null = null;
-  /** The thread's cumulative usage before this turn's first model call. */
-  private usageBefore: Record<string, number> | null = null;
+  /** The thread's cumulative `total` as of the latest update; unknown on a resume until it reports. */
+  private threadTotal: Record<string, number> | null;
   private readonly children = new Set<string>();
 
   constructor(private readonly options: CodexLiveOptions) {
     this.threadId = options.sessionId;
+    this.threadTotal = options.sessionId ? null : {};
     this.model = options.model;
     this.peer = new JsonRpcPeer({
       sink: options.sink,
@@ -286,6 +294,33 @@ export class CodexLiveDriver {
     return this.peer.notify(method);
   }
 
+  /**
+   * `total` is cumulative per THREAD, across resumes (live-probed on
+   * 0.162.1), and `last` is the call that just finished. The turn's usage
+   * is the total's growth, update by update; the last call alone goes
+   * out as `last_usage`, whose prompt is the context size.
+   */
+  private recordUsage(params: Record<string, any>): void {
+    const tokenUsage = record(params.tokenUsage);
+    const total = usageDelta(tokenUsage.total, {});
+    if (!this.turnId || params.turnId !== this.turnId) {
+      // A resume replays the previous turn's update before this turn has an id.
+      if (!this.turnId) this.threadTotal = total;
+      return;
+    }
+    // Resumed without that replay: the first update is taken to be a new call.
+    this.threadTotal ??= usageDelta(total, usageDelta(tokenUsage.last, {}));
+    const growth = usageDelta(total, this.threadTotal);
+    // Only a completed call adds prompt tokens. Codex also re-sends an
+    // unchanged count (on rate-limit news), and a context-window overflow
+    // refills `total` with zeroed counters, which is a reset, not usage.
+    if ((growth.inputTokens ?? 0) > 0 && Object.values(growth).every((amount) => amount >= 0)) {
+      this.turnUsage = addUsage(this.turnUsage ?? {}, growth);
+    }
+    this.threadTotal = total;
+    this.lastUsage = snakeUsage(tokenUsage.last);
+  }
+
   handle(frame: RpcFrame): void {
     if (this.peer.handle(frame)) return;
     if (typeof frame.method !== "string") return;
@@ -307,19 +342,9 @@ export class CodexLiveDriver {
         }
         return;
       }
-      case "thread/tokenUsage/updated": {
-        // `total` is cumulative per THREAD, across resumes (live-probed on
-        // 0.162.1), and `last` is the call that just finished. The turn's usage
-        // is how far the total grew during this turn; the last call alone goes
-        // out as `last_usage`, whose prompt is the context size. A resume
-        // replays the previous turn's update before this turn has an id.
-        if (!this.turnId || params.turnId !== this.turnId) return;
-        const tokenUsage = record(params.tokenUsage);
-        this.usageBefore ??= usageDelta(tokenUsage.total, usageDelta(tokenUsage.last, {}));
-        this.usage = snakeUsage(usageDelta(tokenUsage.total, this.usageBefore));
-        this.lastUsage = snakeUsage(tokenUsage.last);
+      case "thread/tokenUsage/updated":
+        this.recordUsage(params);
         return;
-      }
       case "turn/completed": {
         if (this.terminal) return;
         const turn = record(params.turn);
@@ -344,11 +369,11 @@ export class CodexLiveDriver {
             error: record(turn.error).message
               ? turn.error
               : { message: `Codex turn ${String(turn.status ?? "failed")}` },
-            usage: this.usage,
+            usage: snakeUsage(this.turnUsage),
             last_usage: this.lastUsage,
           });
         } else {
-          this.options.emit({ type: "turn.completed", usage: this.usage, last_usage: this.lastUsage });
+          this.options.emit({ type: "turn.completed", usage: snakeUsage(this.turnUsage), last_usage: this.lastUsage });
         }
         this.terminal = true;
         this.options.onTerminal();
