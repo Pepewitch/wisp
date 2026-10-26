@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { isTransientStaplerFailure, STAPLER_RETRY_DELAYS_MS, validateStapled, type StaplerDeps } from "../scripts/stapler";
+import { isTransientStaplerFailure, STAPLER_RETRY_DELAYS_MS, stapleTicket, validateStapled, type StaplerDeps } from "../scripts/stapler";
 
 // Shapes stapler printed on the 0.7.2 release runner, trimmed.
 const DROPPED = `Processing: /tmp/Wisp Daemon.app
@@ -61,5 +61,17 @@ describe("stapler validate", () => {
     expect(() => validateStapled("/tmp/Wisp Daemon.app", "xcrun", run.deps)).toThrow("Error 68");
     expect(run.calls).toHaveLength(attempts);
     expect(run.sleeps).toEqual([...STAPLER_RETRY_DELAYS_MS]);
+  });
+});
+
+describe("stapler staple", () => {
+  test("a dropped ticket download is retried like a dropped lookup", () => {
+    const run = scripted([
+      { exitCode: 65, stderr: DROPPED },
+      { exitCode: 0, stderr: "The staple and validate action worked!" },
+    ]);
+    expect(stapleTicket("/tmp/Wisp.app", "/usr/bin/xcrun", run.deps)).toContain("worked");
+    expect(run.calls[0]).toEqual(["/usr/bin/xcrun", "stapler", "staple", "/tmp/Wisp.app"]);
+    expect(run.sleeps).toEqual([STAPLER_RETRY_DELAYS_MS[0]]);
   });
 });

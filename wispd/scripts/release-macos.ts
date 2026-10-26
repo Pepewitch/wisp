@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { API_PROTOCOL_VERSION, VERSION } from "../src/version";
 import { buildBinary, sourceIdentity, type SourceIdentity } from "./build-binary";
 import { sha256File } from "./release-linux";
-import { validateStapled } from "./stapler";
+import { stapleTicket, validateStapled } from "./stapler";
 
 const SCRIPT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 export const MACOS_TARGET = "darwin-arm64";
@@ -477,7 +477,7 @@ function notarizeMacApp(app: string, temp: string): void {
     const detail = output(result.stderr) || stdout;
     throw new Error(`macOS daemon notarization failed${detail ? `: ${detail}` : ""}`);
   }
-  run(["/usr/bin/xcrun", "stapler", "staple", app]);
+  stapleTicket(app);
 }
 
 export function releaseMac(options: ReleaseMacOptions = {}): MacReleaseManifest {
