@@ -1,15 +1,13 @@
 import { ChevronDown, Local } from "@/components/icons"
 import { MenuItem, MenuSeparator } from "@/components/menu"
 import { StateDot } from "@/components/primitives"
-import { PullRequestStatusLink } from "@/components/pull-request-status"
 import { ParentCrumb } from "@/components/subtask-crumb"
 import { TaskActions } from "@/components/task-actions"
 import { writeClipboardText } from "@/lib/clipboard"
-import { formatTokens } from "@/lib/format"
 import { pausedOnNetwork, stateWord } from "@/lib/state"
 import { baseWords } from "@/lib/subtask-words"
 import { cn } from "@/lib/utils"
-import type { ApiTask, PullRequestStatus } from "@/lib/types"
+import type { ApiTask } from "@/lib/types"
 import type { ReactNode } from "react"
 
 /**
@@ -22,8 +20,8 @@ import type { ReactNode } from "react"
  * need in view (id, branch, harness · model · effort). A subtask leads with
  * `Parent ›`; Local and Archived follow as quiet words, only when true.
  *
- * The PR link and the context number ride here for now: the summary card
- * takes both over (proposal PR 4).
+ * Where the pane is too narrow for the summary card, its chip follows the
+ * title (`chip`), and the dot moves into it: one quick look per fact.
  *
  * On Desktop the bar is the window's drag region. Tauri drags only on an
  * element that carries `data-tauri-drag-region` itself, never on its children,
@@ -31,11 +29,12 @@ import type { ReactNode } from "react"
  */
 export function TopBarTask({
   task,
-  pullRequest,
+  chip,
   dragRegion,
 }: {
   task: ApiTask | null
-  pullRequest?: PullRequestStatus
+  /** the summary card folded into the bar (task-summary-chip.tsx), when the shell draws it */
+  chip?: ReactNode
   dragRegion: boolean
 }) {
   const drag = dragRegion ? "" : undefined
@@ -50,7 +49,7 @@ export function TopBarTask({
           title={{
             trigger: (
               <>
-                <StateDot state={task.state} background={task.background} pausedOnNetwork={pausedOnNetwork(task)} />
+                {!chip && <StateDot state={task.state} background={task.background} pausedOnNetwork={pausedOnNetwork(task)} />}
                 <span className="min-w-0 truncate">{task.title}</span>
                 {/* wrapped, so the trigger's `[&>svg]` sizing leaves the chevron alone */}
                 <span className="flex shrink-0 items-center">
@@ -64,6 +63,7 @@ export function TopBarTask({
           }}
         />
       </h1>
+      {chip}
       {task.mode === "local" && (
         // Worktree is the default and the wisp/… branch already says so; LOCAL
         // is the one worth the width, because this task edits your checkout.
@@ -75,28 +75,6 @@ export function TopBarTask({
       {task.archived && (
         <span data-tauri-drag-region={drag} className="shrink-0 text-[11.5px] text-muted-foreground">
           Archived
-        </span>
-      )}
-      {pullRequest?.kind === "found" && (
-        <PullRequestStatusLink
-          pullRequest={pullRequest.pullRequest}
-          others={pullRequest.others}
-          autoMerge={task.autopilot}
-          // the title keeps its words first: the link's own hover title has every fact
-          className="h-[26px] min-w-0 shrink-[2]"
-        />
-      )}
-      {/* Read off the turn stream, never asked for: on the harnesses that can
-          answer `/context`, asking writes the report INTO the session and grows
-          the number it came to read. Absent stays absent — a harness that
-          reports only per-turn billing has no honest number here. */}
-      {typeof task.context_tokens === "number" && (
-        <span
-          data-tauri-drag-region={drag}
-          className="shrink-0 text-[11.5px] text-muted-foreground tabular-nums"
-          title="conversation the model is carrying, as of its last call"
-        >
-          {formatTokens(task.context_tokens)} context
         </span>
       )}
       <span data-tauri-drag-region={drag} className="h-full min-w-4 flex-1" />

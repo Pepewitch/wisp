@@ -4,11 +4,11 @@ import { TopBarLeft, TopBarTask } from "@/components/top-bar-task"
 import { UpdateCenter, WispUpdateControl } from "@/components/update-control"
 import { UsageRing } from "@/components/usage-limits-control"
 import { Button, Eyebrow, Rule } from "@/components/primitives"
-import { PR_SPECIMEN, UPDATE_SPECIMEN } from "@/components/gallery-fixtures"
+import { UPDATE_SPECIMEN } from "@/components/gallery-fixtures"
 import type { DesktopConnectionMetadata } from "@/lib/desktop-bridge"
 import type { DesktopUpdaterContextValue } from "@/lib/desktop-updater"
 import { TASKS } from "@/lib/fixtures"
-import type { ApiTask, PullRequestStatus, UpdateStatus } from "@/lib/types"
+import type { ApiTask, UpdateStatus } from "@/lib/types"
 import type { CSSProperties } from "react"
 
 const DESKTOP: DesktopUpdaterContextValue = {
@@ -173,10 +173,8 @@ export function HeaderClusterSpecimen() {
   )
 }
 
-const BAR_PR: PullRequestStatus = { kind: "found", provider: "github", pullRequest: PR_SPECIMEN }
-const BAR_TASK = { ...TASKS[0]!, context_tokens: 84_000 }
-const BAR_READINGS: { label: string; task: ApiTask; pullRequest?: PullRequestStatus }[] = [
-  { label: "Running, with a PR", task: BAR_TASK, pullRequest: BAR_PR },
+const BAR_READINGS: { label: string; task: ApiTask }[] = [
+  { label: "Running", task: TASKS[0]! },
   { label: "Idle", task: TASKS[2]! },
   {
     label: "A subtask · Parent › Child",
@@ -221,7 +219,7 @@ export function TopBarTaskSpecimen() {
                 <WispMark className="size-[17px]" />
               </TopBarLeft>
               <div className="flex h-full min-w-0 flex-1 items-center pl-4.5">
-                <TopBarTask task={reading.task} pullRequest={reading.pullRequest} dragRegion={false} />
+                <TopBarTask task={reading.task} dragRegion={false} />
               </div>
               <WispUpdateControl status={DAEMON_IDLE} updating={false} error={null} onUpdate={() => undefined} />
             </div>
@@ -246,8 +244,8 @@ export function TopBarTaskSpecimen() {
         model that are rarely needed. It sits in the top bar now, where the left end is the sidebar&apos;s width so
         the title starts over the column it names. The dot, the title and the chevron are one control: the menu
         holds the id, the branch and harness · model · effort, then the task&apos;s verbs. A subtask leads with its
-        parent, which gives way first when the bar is narrow. The PR link and the context reading ride here until
-        the summary card takes them. In the browser, the Updates control is a glyph whose popover names the daemon&apos;s
+        parent, which gives way first when the bar is narrow. The PR and the context reading are the summary
+        card&apos;s, which folds into a chip here when the centre is narrow (see Summary card). In the browser, the Updates control is a glyph whose popover names the daemon&apos;s
         version; the label is gone.
       </p>
     </section>

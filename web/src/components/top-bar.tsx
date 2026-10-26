@@ -20,6 +20,7 @@ export function TopBar({
   desktop,
   task,
   pullRequest,
+  chip,
   updateControl,
   onOpenSettings,
 }: {
@@ -29,6 +30,8 @@ export function TopBar({
   /** null while no task is open, or while first run owns the centre */
   task: ApiTask | null
   pullRequest?: PullRequestStatus
+  /** the summary card folded beside the title, while the centre has no room for the card (or a person folded it) */
+  chip?: ReactNode
   updateControl: ReactNode
   onOpenSettings: () => void
 }) {
@@ -52,7 +55,7 @@ export function TopBar({
       </TopBarLeft>
       {/* The middle answers WHICH TASK: its title opens its menu. */}
       <div data-tauri-drag-region={drag} className="flex h-full min-w-0 flex-1 items-center gap-2.5 pl-4.5">
-        <TopBarTask task={task} pullRequest={pullRequest} dragRegion={desktop} />
+        <TopBarTask task={task} chip={chip} dragRegion={desktop} />
       </div>
       {/* Then WHAT YOU CAN OPEN for it: the tools, beside the task they act on
           and apart from the app's own cluster. */}

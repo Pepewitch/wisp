@@ -26,6 +26,7 @@ import { VerificationSpecimen } from "@/components/verification-specimen"
 import { AutopilotRailSpecimen } from "@/components/autopilot-rail-specimen"
 import { AutopilotTabSpecimen } from "@/components/autopilot-tab-specimen"
 import { SubtasksSpecimen } from "@/components/subtasks-specimen"
+import { SummaryCardSpecimen } from "@/components/summary-card-specimen"
 import { MetricRow, Section, Specimen, TextRow } from "@/components/gallery-chrome"
 import { ModelVisibilitySpecimen } from "@/components/model-visibility-specimen"
 import { SettingsSpecimen } from "@/components/settings-dialog"
@@ -120,6 +121,8 @@ export function Gallery() {
         <AutopilotRailSpecimen />
 
         <AutopilotTabSpecimen />
+
+        <SummaryCardSpecimen />
 
         <SubtasksSpecimen />
 

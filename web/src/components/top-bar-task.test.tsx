@@ -5,10 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { api } from "@/lib/api"
 import { createConnectionQueryKeys } from "@/lib/query"
-import type { ApiTask, PullRequestStatus } from "@/lib/types"
+import type { ApiTask } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
-import { PR_SPECIMEN } from "./gallery-fixtures"
 import { TopBarTask } from "./top-bar-task"
 
 /**
@@ -117,10 +116,13 @@ describe("the top bar's task", () => {
     expect(screen.getByText("a deleted task")).toBeInTheDocument()
   })
 
-  it("keeps the PR link in the bar until the summary card takes it", () => {
-    const found: PullRequestStatus = { kind: "found", provider: "github", pullRequest: PR_SPECIMEN }
-    mount(<TopBarTask task={TASK} pullRequest={found} dragRegion={false} />)
-    expect(screen.getByTestId("pull-request-status")).toHaveTextContent(`PR #${PR_SPECIMEN.number}`)
+  it("leaves the PR and the context to the summary card, and hands its dot to the chip", () => {
+    const { container } = mount(<TopBarTask task={{ ...TASK, context_tokens: 84_000 }} chip={<span data-testid="chip" />} dragRegion={false} />)
+    expect(screen.queryByTestId("pull-request-status")).toBeNull()
+    expect(container).not.toHaveTextContent("context")
+    expect(screen.getByTestId("chip")).toBeInTheDocument()
+    // one quick look per fact: the chip carries the state, so the title does not
+    expect(within(titleButton()).queryByRole("img")).toBeNull()
   })
 })
 
@@ -157,10 +159,11 @@ describe("the title menu", () => {
     daemon()
     mount(<TopBarTask task={TASK} dragRegion={false} />)
     fireEvent.click(titleButton())
-    await screen.findByRole("menuitemcheckbox", { name: /Auto-merge/ })
+    await screen.findByRole("menuitem", { name: "New subtask…" })
     const items = screen.getAllByRole("menuitem").map((el) => el.textContent)
     expect(items).toEqual(["Find in task⌘F", "Rename", "New subtask…", "Archive", "Copy task id", "Copy branch name"])
-    expect(screen.getAllByRole("menuitemcheckbox").map((el) => el.textContent)).toEqual(["Auto-merge", "Auto-fix", "Auto-review"])
+    // the autopilot switches are the summary card's now (its Autopilot row)
+    expect(screen.queryAllByRole("menuitemcheckbox")).toEqual([])
   })
 
   it("opens from the keyboard", async () => {
@@ -200,7 +203,7 @@ describe("the window drag region on Desktop", () => {
   // attribute itself, and never on a button: the empty stretch must carry it,
   // and every control must not.
   it("marks the empty stretch and the quiet words, never a control", () => {
-    const { container } = mount(<TopBarTask task={{ ...CHILD, mode: "local", context_tokens: 84_000 }} dragRegion />, [PARENT, CHILD])
+    const { container } = mount(<TopBarTask task={{ ...CHILD, mode: "local" }} dragRegion />, [PARENT, CHILD])
     const regions = [...container.querySelectorAll("[data-tauri-drag-region]")]
     expect(regions.length).toBeGreaterThanOrEqual(4)
     expect(container.querySelectorAll("button[data-tauri-drag-region]")).toHaveLength(0)
@@ -212,7 +215,6 @@ describe("the window drag region on Desktop", () => {
     const crumb = container.querySelector("[data-subtask-crumb]")!
     expect(crumb).toHaveAttribute("data-tauri-drag-region", "")
     expect(screen.getByText("›")).toHaveAttribute("data-tauri-drag-region", "")
-    expect(screen.getByText("84.0k context")).toHaveAttribute("data-tauri-drag-region", "")
   })
 
   it("adds nothing in the browser", () => {

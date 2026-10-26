@@ -201,7 +201,7 @@ describe("the overflow menu", () => {
   })
 })
 
-describe("auto-merge in the overflow menu", () => {
+describe("auto-merge in the phone's overflow menu", () => {
   const armed = (over: Partial<NonNullable<ApiTask["autopilot"]>> = {}): ApiTask => ({
     ...TASK,
     autopilot: { autoMerge: true, autoFix: false, pr: 7, state: "waiting", reason: "Waiting for checks (2 running)", about: "pr", by: "auto-merge", mergedByWisp: false, lastMerged: null, pendingFix: null, fixRounds: 0, done: false, updatedAt: null, ...over },

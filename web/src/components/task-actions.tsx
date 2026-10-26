@@ -17,9 +17,11 @@ import { uiIntentsFor } from "@/lib/ui-intents"
 
 /**
  * The task verbs that are not worth a permanent button: find, rename, a new
- * subtask and archive — and the auto-merge, auto-fix and auto-review switches, as
- * shortcuts. On the pointer shell the task's title in the top bar is the
- * trigger (`top-bar-task.tsx` passes `title`); the phone keeps the `⋯`.
+ * subtask and archive. On the pointer shell the task's title in the top bar is
+ * the trigger (`top-bar-task.tsx` passes `title`); the phone keeps the `⋯`,
+ * which also carries the auto-merge, auto-fix and auto-review switches as
+ * shortcuts. The pointer shell's switches are the summary card's (its
+ * Autopilot row, task-summary-card.tsx), so its menu leaves them out.
  * What those switches are doing (the reason, the round waiting to send, the
  * pause to resume) lives in the Autopilot tab, which has the room for it.
  * Stop/steer lives in the composer; Push stays in the header because it has a
@@ -107,7 +109,7 @@ export function TaskActions({
             Export or delete task data…
           </MenuItem>
         )}
-        <AutoMergeItems task={task} />
+        {!title && <AutoMergeItems task={task} />}
         {title?.after}
       </Menu>
 

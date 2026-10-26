@@ -9,7 +9,6 @@ import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { MobileShell } from "./mobile-shell"
 import { PullRequestStatusLink } from "./pull-request-status"
-import { TopBarTask } from "./top-bar-task"
 
 const FOUND: PullRequestStatus = {
   kind: "found",
@@ -120,23 +119,7 @@ describe("PullRequestStatusLink", () => {
   })
 })
 
-describe("PR status in the top bar and the phone header", () => {
-  it("shows the PR link in the top bar only when a PR was found", () => {
-    withClient(<TopBarTask task={TASKS[0]!} pullRequest={FOUND} dragRegion={false} />)
-    expect(screen.getByTestId("pull-request-status")).toBeInTheDocument()
-    expect(screen.queryByRole("button", { name: /push/i })).toBeNull()
-  })
-
-  it.each([
-    { kind: "none", provider: "github" } as const,
-    { kind: "unsupported", provider: null } as const,
-    { kind: "unavailable", provider: "github" } as const,
-  ])("shows nothing for $kind", (pullRequest) => {
-    const { container } = withClient(<TopBarTask task={TASKS[0]!} pullRequest={pullRequest} dragRegion={false} />)
-    expect(screen.queryByTestId("pull-request-status")).toBeNull()
-    expect(container.textContent).not.toContain("Push")
-  })
-
+describe("PR status in the phone header", () => {
   it("replaces the mobile Push button with the compact PR link", () => {
     withClient(
       <MobileShell

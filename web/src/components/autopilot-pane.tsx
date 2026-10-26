@@ -220,7 +220,7 @@ export function AutopilotView({
               <div className={cn("flex items-center px-3.5", touch ? "min-h-12" : "h-10")}>
                 <h2 id={headingId} className="text-[12.5px] font-semibold text-foreground">Automation</h2>
               </div>
-              <Switches automation={automation} touch={touch} now={now} links={links} />
+              <Switches automation={automation} reviewable={automation.reviews != null} touch={touch} now={now} links={links} />
               {automation.reviews && automation.status?.autoReview && (
                 <Reviews reviews={automation.reviews} pr={automation.status.pr} touch={touch} now={now} />
               )}
@@ -245,12 +245,26 @@ function TintDot({ tint, className }: { tint: "needs-you" | "done" | "on" | "off
 
 /* ── the switches ───────────────────────────────────────────────────────── */
 
-function Switches({ automation, touch, now, links }: { automation: AutomationModel; touch: boolean; now: number; links: HistoryLinks }) {
+/** What the switches need: the Automation section's model without its history and rounds. */
+export type SwitchesModel = Pick<AutomationModel, "status" | "locked" | "pending" | "error" | "onSet" | "onAct">
+
+/**
+ * The three switches, each with the line under it and the one action the
+ * state asks for. The Automation section draws them, and so does the summary
+ * card's Autopilot row when it is open (task-summary-card.tsx).
+ */
+export function Switches({ automation, reviewable, touch, now, links }: {
+  automation: SwitchesModel
+  /** the daemon has auto-review: a third switch */
+  reviewable: boolean
+  touch: boolean
+  now: number
+  links: HistoryLinks
+}) {
   const status = automation.status ?? OFF
   const speaker = autopilotSpeaker(status)
   const disabled = automation.locked !== null || automation.pending
   const action = autopilotAction(automation.status)
-  const reviewable = automation.reviews != null
   const review = status.autoReview === true
   // a round belongs to auto-fix; a pause or a hold to whichever switch speaks
   const actsOn = action === "round" ? "auto-fix" : speaker

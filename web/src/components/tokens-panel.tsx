@@ -2,14 +2,30 @@ import { memo, useMemo } from "react"
 
 import { Eyebrow } from "@/components/primitives"
 import { ReportPanel } from "@/components/report-panel"
-import type { Turn, UsageSummary } from "@/lib/types"
+import { useTokensReport, type TokensReportProps } from "@/hooks/useTokensReport"
+import type { ApiTask, Turn } from "@/lib/types"
 import { reportedUsageTurns, totalUsage, usageParts } from "@/lib/usage"
 
 /**
  * Wisp's /tokens answer: token telemetry captured from this task's settled
  * turns. It is intentionally distinct from a harness account-usage probe.
  */
-function TokensPanelView({
+function TokensPanelView({ onClose, className, ...report }: TokensReportProps & { onClose: () => void; className?: string }) {
+  return (
+    <ReportPanel
+      testId="tokens-panel"
+      title="/tokens"
+      source={`Wisp · ${report.harness}`}
+      onClose={onClose}
+      className={className}
+    >
+      <TokensReport {...report} />
+    </ReportPanel>
+  )
+}
+
+/** The report's body, without the panel around it: the summary card's Context row draws it in place. */
+export function TokensReport({
   harness,
   turns,
   total: taskTotal,
@@ -17,33 +33,14 @@ function TokensPanelView({
   hasOlderTurns = false,
   loading = false,
   error = null,
-  onClose,
-  className,
-}: {
-  harness: string
-  /** GET /api/tasks/:id/usage's turns, or a legacy daemon's conversation turns (usage may be null). */
-  turns: Pick<Turn, "id" | "n" | "usage">[] | undefined
-  total?: UsageSummary
-  reportingTurns?: number
-  hasOlderTurns?: boolean
-  loading?: boolean
-  error?: unknown
-  onClose: () => void
-  className?: string
-}) {
+}: TokensReportProps) {
   const reported = useMemo(() => reportedUsageTurns(turns), [turns])
   const visibleTotal = useMemo(() => totalUsage(reported.map((turn) => turn.usage)), [reported])
   const total = taskTotal ?? visibleTotal
   const reportCount = reportingTurns ?? reported.length
 
   return (
-    <ReportPanel
-      testId="tokens-panel"
-      title="/tokens"
-      source={`Wisp · ${harness}`}
-      onClose={onClose}
-      className={className}
-    >
+    <>
       {loading ? (
         <p className="text-[11.5px] text-muted-foreground">Loading task token usage…</p>
       ) : error instanceof Error ? (
@@ -91,8 +88,14 @@ function TokensPanelView({
         Task-level tokens reported by settled {harness} turns. This is not an account subscription, quota, or cost
         gauge.
       </p>
-    </ReportPanel>
+    </>
   )
 }
 
 export const TokensPanel = memo(TokensPanelView)
+
+/** The report for one task, asked for while it is mounted: the summary card's Context row, open. */
+export function TaskTokensReport({ task, turns }: { task: ApiTask; turns: Turn[] | undefined }) {
+  const report = useTokensReport(task, turns, true)
+  return report ? <TokensReport {...report} /> : null
+}
