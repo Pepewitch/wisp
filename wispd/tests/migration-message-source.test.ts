@@ -54,6 +54,16 @@ test("a schema-27 profile gains task_messages.source_json, backfilled from workf
   db.run(`INSERT INTO round_reviews (id, round_id, role, reviewer_task_id, harness, token, state, created_at)
     VALUES ('v1', 'rd1', 'primary', 'treviewer', 'droid', 'tok', 'pass', ?)`, [AT]);
   message("mnudge", "workflow", "Your review is still open.", "treviewer");
+  // turns from before migration 26, without source_message_id: turn 1 started by the round,
+  // turn 2 by two messages (ambiguous), turn 3 a background call (no message started it)
+  const turn = (n: number, origin: string | null) => db.run(`INSERT INTO turns (task_id, n, prompt, origin, status, log_file, started_at)
+    VALUES ('told', ?, 'p', ?, 'done', '/fixture/log', ?)`, [n, origin, AT]);
+  db.run("UPDATE task_messages SET delivery = 'started', turn_n = 1 WHERE id = 'mfix'");
+  db.run("UPDATE task_messages SET delivery = 'started', turn_n = 2 WHERE id IN ('mbeat', 'mhuman')");
+  db.run("UPDATE task_messages SET delivery = 'started', turn_n = 3 WHERE id = 'mlost'");
+  turn(1, null);
+  turn(2, null);
+  turn(3, "background");
 
   expect(migrate(db).applied.filter((id) => id <= 28)).toEqual([28]);
   const sources = Object.fromEntries((db.query("SELECT id, source_json FROM task_messages").all() as { id: string; source_json: string | null }[])
@@ -70,5 +80,9 @@ test("a schema-27 profile gains task_messages.source_json, backfilled from workf
     mhuman: null,
     mnudge: { by: "autopilot", kind: "review-nudge", pr: 12, round: 2, rounds: null },
   });
+  expect(db.query("SELECT n, source_message_id FROM turns WHERE task_id = 'told' ORDER BY n").all())
+    .toEqual([{ n: 1, source_message_id: "mfix" }, { n: 2, source_message_id: null }, { n: 3, source_message_id: null }]);
+  // the backfill's own indexes are gone again
+  expect(db.query("SELECT name FROM sqlite_master WHERE name LIKE 'message_source_%'").all()).toEqual([]);
   expect(migrate(db).applied).toEqual([]);
 });

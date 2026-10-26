@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react"
 
 import { CopyButton } from "@/components/copy-button"
 import { BranchRequest, Clock, Console, type FluentIcon } from "@/components/icons"
 import { BUBBLE_ACTION, BubbleTimestamp } from "@/components/person-bubble"
-import { centerMatch, FIND_REVEAL_EVENT } from "@/lib/find"
+import { FIND_REVEAL_EVENT, revealElement } from "@/lib/find"
 import type { SourceLabel } from "@/lib/turn-source"
 import type { TurnSource } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -75,10 +75,11 @@ function isLong(text: string): boolean {
  */
 export function SystemTurn({ source, label, text, at }: { source: TurnSource; label: SourceLabel; text: string; at: string }) {
   const long = isLong(text)
+  const lines = useMemo(() => text.split("\n"), [text])
   const [open, setOpen] = useState(false)
   const body = useRef<HTMLDivElement>(null)
-  // the find match that asked a collapsed block to open, centred again once it has
-  const revealing = useRef<Range | null>(null)
+  // the find match's element that asked a collapsed block to open, revealed again once it has
+  const revealing = useRef<Element | null>(null)
 
   useEffect(() => {
     const node = body.current
@@ -87,8 +88,8 @@ export function SystemTurn({ source, label, text, at }: { source: TurnSource; la
     // effect, where no update can commit first. So the block opens in state,
     // and the layout effect below scrolls to the match once it is open.
     const reveal = (event: Event) => {
-      if (node.dataset.systemText !== "collapsed" || !(event instanceof CustomEvent) || !(event.detail instanceof Range)) return
-      revealing.current = event.detail
+      if (node.dataset.systemText !== "collapsed" || !(event.target instanceof Element)) return
+      revealing.current = event.target
       setOpen(true)
     }
     node.addEventListener(FIND_REVEAL_EVENT, reveal)
@@ -99,7 +100,7 @@ export function SystemTurn({ source, label, text, at }: { source: TurnSource; la
     const target = revealing.current
     if (!open || !target) return
     revealing.current = null
-    centerMatch(target)
+    revealElement(target)
   }, [open])
 
   return (
@@ -118,7 +119,13 @@ export function SystemTurn({ source, label, text, at }: { source: TurnSource; la
           long && !open && "line-clamp-4",
         )}
       >
-        {text}
+        {/* a line each, so find reveals the matching line, not the whole block */}
+        {lines.map((line, index) => (
+          <Fragment key={index}>
+            {index > 0 && "\n"}
+            <span>{line}</span>
+          </Fragment>
+        ))}
       </div>
       {long && (
         <button

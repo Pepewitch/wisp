@@ -490,12 +490,14 @@ Never pattern-match a prompt to decide whose it is.
 A long one (over 4 lines or 360 characters) opens on `line-clamp-4` with
 **Show all**. The clamp clips, it does not cut: the whole text stays in the
 DOM, so find-in-task counts it, and `revealMatch` sends `FIND_REVEAL_EVENT`
-from the match first, with its range: the block opens in state and centres
-the match again from a layout effect once it has committed. Never `flushSync`
-there: find reveals from its own effect, where nothing can commit first. Both
-scrolls go through `centerMatch`, which centres the match's own range in its
-scroller rather than its element: a long prompt is one text node, and
-centring that node can leave the match a screen away. Copy always takes the whole text. The gallery's
+from the match's element first: the block opens in state and, from a layout
+effect once it has committed, reveals that element again with the same
+`revealElement` every find hit gets (`scrollIntoView`, centred, nearest edge
+sideways, so a match in a table or code fence that scrolls on its own still
+comes into view). Never `flushSync` there: find reveals from its own effect,
+where nothing can commit first. The block renders its text a line per span,
+so the element find reveals is the matching line, not a whole block taller
+than the pane. Copy always takes the whole text. The gallery's
 prompt-bubble section draws all three beside a person's bubble.
 
 The stream starts at byte zero. Its first read is budgeted to 1 MB so opening a

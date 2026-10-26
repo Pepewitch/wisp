@@ -109,9 +109,7 @@ describe("a turn Wisp or the harness started", () => {
     expect(text).toHaveAttribute("data-system-text", "collapsed")
 
     // a find match inside opens it before it is scrolled to
-    const match = document.createRange()
-    match.selectNodeContents(text)
-    act(() => { text.dispatchEvent(new CustomEvent(FIND_REVEAL_EVENT, { bubbles: true, detail: match })) })
+    act(() => { text.lastElementChild!.dispatchEvent(new Event(FIND_REVEAL_EVENT, { bubbles: true })) })
     expect(text).toHaveAttribute("data-system-text", "open")
 
     const { writeClipboardText } = await import("@/lib/clipboard")
@@ -125,16 +123,18 @@ describe("a turn Wisp or the harness started", () => {
     const viewport = showOn("system-find", turn(1, lines.join("\n"), { by: "workflow", kind: "heartbeat" }))
     const text = block(viewport, 1)!.querySelector("[data-system-text]")!
     expect(text).toHaveAttribute("data-system-text", "collapsed")
-    // what each scroll saw: the block's state at the moment it measured
-    const seen: (string | null)[] = []
-    const scroll = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element) {
-      if (this.closest("[data-system-turn]")) seen.push(text.getAttribute("data-system-text"))
+    // what each scroll saw: the block's state at the moment it measured, the element it revealed and how
+    const seen: { state: string | null; element: string | null; options: unknown }[] = []
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (this: Element, options?: unknown) {
+      if (this.closest("[data-system-turn]")) seen.push({ state: text.getAttribute("data-system-text"), element: this.textContent, options })
     })
     try {
       act(() => uiIntentsFor("system-find").openFind("FINAL-LINE-MARKER"))
       await waitFor(() => expect(text).toHaveAttribute("data-system-text", "open"))
       // find's own scroll may land on the closed box; the last one is taken on the open block
-      await waitFor(() => expect(seen.at(-1)).toBe("open"))
+      await waitFor(() => expect(seen.at(-1)?.state).toBe("open"))
+      // the matching line, not the whole 91-line block, and the same reveal every find hit gets
+      expect(seen.at(-1)).toEqual({ state: "open", element: lines.at(-1), options: { block: "center", inline: "nearest" } })
     } finally {
       scroll.mockRestore()
     }

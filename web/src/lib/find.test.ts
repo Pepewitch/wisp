@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { canPaintMatches, centerMatch, findRanges, matchPosition, snippetParts } from "./find"
+import { canPaintMatches, findRanges, matchPosition, revealMatch, snippetParts } from "./find"
 
 /**
  * The haystack is the DOM on purpose (see lib/find.ts), so these tests build
@@ -96,28 +96,16 @@ describe("snippetParts", () => {
   })
 })
 
-describe("centerMatch", () => {
-  it("centres the match itself in its pane, not the long text node that holds it", () => {
-    // a pane 400px tall at the top of the window, scrolled to 1000
-    const pane = document.createElement("div")
-    pane.style.overflowY = "auto"
-    Object.defineProperty(pane, "scrollHeight", { value: 5000 })
-    Object.defineProperty(pane, "clientHeight", { value: 400 })
-    pane.getBoundingClientRect = () => ({ top: 0, height: 400 }) as DOMRect
-    pane.scrollTop = 1000
-    const text = document.createElement("div")
-    text.textContent = "one long block of text whose last line holds the match"
-    pane.append(text)
-    document.body.append(pane)
-    const match = document.createRange()
-    match.setStart(text.firstChild!, 0)
-    match.setEnd(text.firstChild!, 3)
-    // the match sits 900px down the pane, 20px tall: its middle is 710px below the pane's
-    match.getBoundingClientRect = () => ({ top: 900, height: 20 }) as DOMRect
-    const element = vi.spyOn(text, "scrollIntoView")
-    centerMatch(match)
-    expect(pane.scrollTop).toBe(1710)
-    expect(element).not.toHaveBeenCalled()
-    pane.remove()
+describe("revealMatch", () => {
+  it("reveals a match sideways as well: a table cell clipped by its own horizontal scroller", () => {
+    // a 400px-wide table box inside the conversation, the matching cell 900px to its right
+    const root = transcript('<div style="overflow-x: auto; width: 400px"><table><tr><td>left</td><td>far right cell holds reducer</td></tr></table></div>')
+    const [match] = findRanges(root, "reducer")
+    const cell = root.querySelectorAll("td")[1]!
+    const scroll = vi.fn()
+    cell.scrollIntoView = scroll
+    revealMatch(match)
+    // the browser's own reveal scrolls every scrolling ancestor, the table's box included
+    expect(scroll).toHaveBeenCalledWith({ block: "center", inline: "nearest" })
   })
 })

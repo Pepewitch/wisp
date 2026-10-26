@@ -21,7 +21,22 @@ export const MESSAGE_SOURCE: Migration = {
     // or an auto-review round's id in its wake key. What an old auto-fix row
     // cannot say is its round, so that stays null. A row with no link keeps
     // NULL and the person's bubble: a label is not guessed.
+    //
+    // A turn from before migration 26 has no source_message_id; the one
+    // message recorded as having started it (its task, its turn number,
+    // delivery 'started') is that link, and turns(task_id, n) is unique.
+    //
+    // The lookups by message id have no index of their own; two are built for
+    // the backfill and dropped after it, so a large profile pays once, briefly.
     db.exec(`
+CREATE INDEX message_source_history ON workflow_history(message_id);
+CREATE INDEX message_source_wakes ON workflow_wakes(message_id);
+
+UPDATE turns SET source_message_id = (
+  SELECT m.id FROM task_messages m WHERE m.task_id = turns.task_id AND m.turn_n = turns.n AND m.delivery = 'started'
+) WHERE source_message_id IS NULL AND origin IS NULL
+  AND (SELECT COUNT(*) FROM task_messages m WHERE m.task_id = turns.task_id AND m.turn_n = turns.n AND m.delivery = 'started') = 1;
+
 CREATE TEMP TABLE message_source_links AS
 SELECT m.id AS message_id, w.type AS type,
   (SELECT event_key FROM workflow_wakes WHERE message_id = m.id LIMIT 1) AS wake_key,
@@ -59,6 +74,8 @@ UPDATE task_messages SET source_json = (
   AND id NOT IN (SELECT message_id FROM message_source_links);
 
 DROP TABLE message_source_links;
+DROP INDEX message_source_history;
+DROP INDEX message_source_wakes;
 `);
   },
 };
