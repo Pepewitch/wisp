@@ -12,7 +12,7 @@ import type { ToolPanelControls } from "@/hooks/useToolPanel"
 import { revealFileHandler } from "@/lib/external-links"
 import type { ApiTask, HarnessesResponse } from "@/lib/types"
 
-/** What sits beside a task's conversation: the tool panel on a desktop, the tabs on a phone. */
+/** What sits beside a task's conversation: the tool panel on a desktop, full-screen tools on a phone. */
 export interface TaskSurfaces {
   /** On the desktop, the tool panel's upper half: Autopilot, Changes, Workflows and Subtasks, one at a time. */
   changes: ReactNode

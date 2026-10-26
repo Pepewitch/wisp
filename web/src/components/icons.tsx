@@ -55,6 +55,7 @@ export {
   DesktopRegular as Local,
   LayerDiagonalRegular as Worktree,
   MoreHorizontalRegular as More,
+  PanelBottomRegular as PanelBottom,
   SubtractRegular as Minus,
   StopRegular as Stop,
   WindowConsoleRegular as Console,

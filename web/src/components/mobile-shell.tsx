@@ -2,72 +2,58 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 import { Drawer } from "@base-ui/react/drawer"
 import { CleanupPanel } from "./cleanup-panel"
 
-import { Hamburger, Local } from "@/components/icons"
-import { PullRequestStatusLink } from "@/components/pull-request-status"
-import { TaskActions } from "@/components/task-actions"
-import { SubtaskCrumb } from "@/components/subtask-crumb"
-import { Meta, StateDot, Tab } from "@/components/primitives"
-import { formatTokens } from "@/lib/format"
+import { BranchRequest, ChevronLeft, Hamburger, Local, PanelBottom } from "@/components/icons"
+import { StateDot } from "@/components/primitives"
+import { TaskSheet } from "@/components/task-sheet"
+import { TOOL_LABEL } from "@/components/tool-hints"
+import { PULL_REQUEST_ICON_TONE, pullRequestIconTone } from "@/lib/pull-request-tone"
+import { pullRequestWords } from "@/lib/pull-request-words"
 import { useDaemonRuntime } from "@/lib/runtime"
-import { pausedOnNetwork, stateWord } from "@/lib/state"
-import type { ApiTask, PullRequestStatus } from "@/lib/types"
+import { outcomeWord, pausedOnNetwork } from "@/lib/state"
+import { TOOL_NAMES, type ToolName } from "@/lib/tools"
+import type { ApiTask, ConversationDetail, PullRequestStatus, Turn } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 import { useMobileViewport } from "@/hooks/use-mobile-viewport"
 import { useSubtaskCount } from "@/hooks/useSubtasks"
 
-type MobileTab = "chat" | "autopilot" | "changes" | "workflows" | "subtasks" | "terminal"
-
-const TAB_LABEL: Record<MobileTab, string> = {
-  chat: "Chat",
-  autopilot: "Autopilot",
-  changes: "Changes",
-  workflows: "Workflows",
-  subtasks: "Subtasks",
-  terminal: "Terminal",
-}
+/** What fills the screen below the header: the conversation, or one tool full screen. */
+type Surface = "chat" | ToolName
 
 /**
  * Below the `md` breakpoint (useIsMobile). The three-pane grid does not shrink
  * into a phone, so it is replaced rather than squeezed:
  *
  *  - the sidebar becomes a swipe-dismissable drawer, reached from one hamburger
- *  - the task surfaces become ONE tab strip, so there is exactly one mechanism
- *    for "which surface am I looking at"
+ *  - the task is three layers (frontend §6b): a header that is the title over
+ *    ONE status line, a task sheet (task-sheet.tsx) that is the summary card's
+ *    rows plus the tools and the verbs, and a tool full screen with a way
+ *    back to the chat
  *  - no resizable groups mount at all, so saved desktop geometry is neither
  *    applied nor overwritten by phone dimensions
  *
- * The chrome is BANDED, and each band answers one question, because the range
- * this shell covers is 320px to 767px — a phone AND a narrow Wisp Desktop
- * window, whose `minWidth` is 720. One row carrying app chrome, task identity
- * and task actions at once could not align at either end of that range: the
- * hamburger and the overflow menu centre against a two-or-three line stack, so
- * nothing in the header shares a line with anything else, and an idle daemon
- * version wraps into the width the title needed.
- *
- *  1. the app band — Wisp Desktop only (see below)
- *  2. the task band — one hamburger, the title over ONE metadata line, and the
- *     task's overflow menu, all centred on the same axis
- *  3. the pull request, when there is one, on its own full-width row rather
- *     than splitting the header with the title
- *  4. the tab strip — equal-width segments rather than left-packed pills with
- *     a dead right half
+ * The range this shell covers is 320px to 767px — a phone AND a narrow Wisp
+ * Desktop window, whose `minWidth` is 720 — so the chrome is banded: Wisp
+ * Desktop's app band (below), then the task band, and nothing else above the
+ * conversation.
  *
  * Two deliberate departures from the desktop language, because touch is not a
  * small mouse:
  *
  *  - drawer task rows are the TWO-LINE touch variant. The desktop row defers
  *    branch and state to a hover card, and a finger cannot hover.
- *  - the composer is pinned on Chat, Autopilot, Changes, and Workflows but NOT on
- *    Terminal, where the shell itself is the input and a second one would
- *    fight the keyboard.
+ *  - the composer is pinned under the chat and every tool but the Terminal,
+ *    where the shell itself is the input and a second one would fight the
+ *    keyboard.
  *
  * Everything is inset for `safe-area-inset-*` so the composer clears a home
- * bar and the header clears a notch.
+ * bar and the header clears a notch (`--safe-top`, which also clears the
+ * installed iOS app's own blur).
  */
 export function MobileShell({
   task,
   pullRequest,
+  turns,
   sidebar,
   conversation,
   changes,
@@ -84,31 +70,31 @@ export function MobileShell({
 }: {
   task: ApiTask | null
   pullRequest?: PullRequestStatus
+  /** the task's loaded turns: the sheet's clock and its `/tokens` fallback */
+  turns?: Turn[]
   sidebar: (dismiss: () => void) => ReactNode
   conversation: ReactNode
   changes: ReactNode
   /**
-   * The Autopilot tab (auto-merge, auto-fix and auto-review), a surface level
-   * with Changes, absent on a daemon without autopilot. It is handed a way
-   * back to the chat because "View message" must land on a transcript that is
-   * on screen.
+   * The Autopilot tool (auto-merge, auto-fix and auto-review), absent on a
+   * daemon without autopilot. It is handed a way back to the chat because
+   * "View message" must land on a transcript that is on screen.
    */
   autopilot?: (showChat: () => void, hidden: boolean) => ReactNode
   /** Absent when the connected daemon does not support task workflows. */
   workflows?: ReactNode
   /**
-   * Absent without `features.subtasks`. Its tab shows only while the task has
-   * subtasks: a sixth tab on every task would crowd the strip, and New
-   * subtask is in the task menu either way.
+   * Absent without `features.subtasks`. The sheet offers it only while the
+   * task has subtasks; New subtask is one of the sheet's verbs either way.
    */
   subtasks?: ReactNode
   terminal: ReactNode
   composer: ReactNode
   /**
    * The first-run panel. When set it owns everything below the app band: there
-   * is no task, so the surface tabs have nothing to switch between and the
-   * composer has nothing to steer. The drawer stays reachable — the hamburger
-   * is the one control that still means something.
+   * is no task, so there is no sheet to open and the composer has nothing to
+   * steer. The drawer stays reachable — the hamburger is the one control that
+   * still means something.
    */
   firstRun?: ReactNode
   /** Wisp Desktop, whose packaged window hides its title bar — see the app band. */
@@ -119,21 +105,25 @@ export function MobileShell({
   zoomControl?: ReactNode
   connectionStatus?: ReactNode
 }) {
-  const [chosen, setTab] = useState<MobileTab>("chat")
+  const { connectionId } = useDaemonRuntime()
+  const [chosen, setSurface] = useState<Surface>("chat")
   const [drawer, setDrawer] = useState(false)
+  const [sheet, setSheet] = useState(false)
   const viewportRef = useMobileViewport(!desktop)
   const hasSubtasks = useSubtaskCount(task?.id ?? null) > 0
-  const tabs = surfaceTabs(autopilot !== undefined, workflows !== undefined, subtasks !== undefined && hasSubtasks)
-  // a surface can leave while it is open (the last subtask archived
+  const tools = offeredTools(autopilot !== undefined, workflows !== undefined, subtasks !== undefined && hasSubtasks)
+  // a tool can leave while it is open (the last subtask archived
   // elsewhere): the conversation takes over rather than an empty pane
-  const tab = tabs.includes(chosen) ? chosen : "chat"
-  useChatOnFind(tab, setTab)
+  const surface = chosen !== "chat" && tools.includes(chosen) ? chosen : "chat"
+  const showChat = () => setSurface("chat")
+  useChatOnFind(surface, setSurface)
 
   // a task switch is always about reading the conversation next
   const [seenTask, setSeenTask] = useState(task?.id)
   if (seenTask !== task?.id) {
     setSeenTask(task?.id)
-    setTab("chat")
+    setSurface("chat")
+    setSheet(false)
   }
 
   return (
@@ -170,114 +160,86 @@ export function MobileShell({
             <Hamburger className="size-5" />
           </button>
 
-          {/* Exactly two lines, so the 44px control on either side of it centres
-              on the axis the title sits on. Nothing else joins this row. */}
-          <div className="min-w-0 flex-1 py-2">
-            {task ? (
-              <>
-                <h1 className="truncate text-[14.5px] font-semibold tracking-[-0.01em]" title={task.title}>
-                  {task.title}
-                </h1>
-                <Meta
-                  className="mt-1"
-                  items={[
-                    task.subtask_kind && <SubtaskCrumb key="subtask" task={task} />,
-                    <span key="state" className="flex shrink-0 items-center gap-1.5">
-                      <StateDot state={task.state} background={task.background} pausedOnNetwork={pausedOnNetwork(task)} />
-                      <span className="text-fg-secondary">{stateWord(task)}</span>
-                    </span>,
-                    // Worktree is the default and says so on its own branch;
-                    // LOCAL is the one worth the width (§5c), and the desktop
-                    // header marks it the same way.
-                    task.mode === "local" && (
-                      <span key="mode" className="flex shrink-0 items-center gap-1.5 text-fg-secondary">
-                        <Local className="size-3" />
-                        Local
-                      </span>
-                    ),
-                    // The composer used to carry these too, three rows down and
-                    // truncated to "claudeI…". One place, un-truncated.
-                    <span key="agent" className="flex min-w-0 items-center gap-1.5">
-                      <span className="shrink-0">{task.harness}</span>
-                      {task.model && (
-                        <>
-                          <span className="text-faint">·</span>
-                          <span className="min-w-0 truncate font-mono">{task.model}</span>
-                        </>
-                      )}
-                    </span>,
-                    // The same stream-read number the desktop header shows, and
-                    // absent the same way. It keeps its width; the model name is
-                    // the one that truncates, since the composer's picker names
-                    // the model too.
-                    typeof task.context_tokens === "number" && (
-                      <span key="context" className="shrink-0 tabular-nums" title="conversation the model is carrying, as of its last call">
-                        {formatTokens(task.context_tokens)} ctx
-                      </span>
-                    ),
-                  ]}
-                />
-              </>
-            ) : firstRun ? (
-              <div className="text-[14.5px] font-semibold tracking-[-0.01em]">Wisp</div>
-            ) : (
-              <div className="text-[14.5px] text-muted-foreground">No task selected</div>
-            )}
-          </div>
+          {task ? (
+            <TaskLines
+              task={task}
+              pullRequest={pullRequest}
+              onOpen={() => setSheet(true)}
+              onQuestion={() => {
+                setSurface("chat")
+                // the transcript can only scroll to the question once it is on screen
+                requestAnimationFrame(() => uiIntentsFor(connectionId).focusStream())
+              }}
+            />
+          ) : (
+            <div className="min-w-0 flex-1 py-3">
+              {firstRun ? (
+                <div className="text-[15px] font-semibold tracking-[-0.01em]">Wisp</div>
+              ) : (
+                <div className="text-[14.5px] text-muted-foreground">No task selected</div>
+              )}
+            </div>
+          )}
 
-          {/* 44px hit box around a 26px trigger — the touch floor (§6b) */}
           {task && (
-            <span className="flex size-11 shrink-0 items-center justify-center">
-              <TaskActions task={task} />
-            </span>
+            <button
+              type="button"
+              onClick={() => setSheet(true)}
+              aria-label="Task sheet"
+              aria-haspopup="dialog"
+              aria-expanded={sheet}
+              className="flex size-11 shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-hover"
+            >
+              <PanelBottom className="size-5" />
+            </button>
           )}
         </div>
-
-        {/* Its own row, indented so its TEXT starts on the title's left edge. */}
-        {pullRequest?.kind === "found" && (
-          <div className="flex pr-1 pb-1.5 pl-10">
-            <PullRequestStatusLink
-              pullRequest={pullRequest.pullRequest}
-              others={pullRequest.others}
-              autoMerge={task?.autopilot}
-              compact
-            />
-          </div>
-        )}
       </header>
       {connectionStatus}
       {task?.cleanup && <div className="scroll-slim max-h-[40dvh] shrink-0 overflow-y-auto border-b border-border px-3 pb-3 [&_button]:min-h-11"><CleanupPanel task={task} /></div>}
 
-      {!firstRun && (
-      <div
-        role="tablist"
-        aria-label="Task surface"
-        // six surfaces (a task with subtasks) no longer fit a 320px screen:
-        // the strip scrolls sideways there instead of spilling off the edge
-        className="flex h-11 shrink-0 items-center gap-1 overflow-x-auto border-b border-border bg-surface px-1.5 [scrollbar-width:none]"
-      >
-        {tabs.map((t) => (
-          <Tab key={t} size="lg" active={tab === t} onClick={() => setTab(t)} className="h-full flex-1 basis-auto justify-center px-1">
-            {TAB_LABEL[t]}
-          </Tab>
-        ))}
-      </div>
+      {!firstRun && surface !== "chat" && (
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-surface pr-3 pl-1">
+          <button
+            type="button"
+            onClick={showChat}
+            className="flex h-11 shrink-0 items-center gap-1 rounded-lg pr-3 pl-2 text-[14px] text-fg-secondary active:bg-hover"
+          >
+            <ChevronLeft aria-hidden className="size-4" />
+            Chat
+          </button>
+          {/* Changes names itself in its own header, beside its refresh */}
+          {surface !== "changes" && <span className="min-w-0 truncate text-[14px] font-medium text-foreground">{TOOL_LABEL[surface]}</span>}
+        </div>
       )}
 
       <main className="flex min-h-0 flex-1 flex-col">
         {firstRun ?? (
           <SurfacePanes
-            tab={tab}
-            onShowConversation={() => setTab("chat")}
+            surface={surface}
+            onShowConversation={showChat}
             surfaces={{ conversation, autopilot, changes, workflows, subtasks: hasSubtasks ? subtasks : undefined, terminal }}
           />
         )}
       </main>
 
-      {!firstRun && tab !== "terminal" && (
+      {!firstRun && surface !== "terminal" && (
         <div className="shrink-0" style={{ paddingBottom: "var(--mobile-bottom, env(safe-area-inset-bottom))" }}>
           {composer}
         </div>
+      )}
+
+      {task && !firstRun && (
+        <TaskSheet
+          task={task}
+          pullRequest={pullRequest}
+          turns={turns}
+          open={sheet}
+          onOpenChange={setSheet}
+          tools={tools}
+          onOpenTool={setSurface}
+          onShowChat={showChat}
+        />
       )}
 
       <Drawer.Root open={drawer} onOpenChange={setDrawer} swipeDirection="left">
@@ -298,9 +260,79 @@ export function MobileShell({
   )
 }
 
-/** Every surface's pane, all mounted: switching tabs must not drop the conversation's scroll position or tear down a live shell. */
-function SurfacePanes({ tab, onShowConversation, surfaces }: {
-  tab: MobileTab
+/**
+ * The task band's middle: the title over ONE status line,
+ * `● Running · ⎇ #318 open · CI pending`. The whole two-line block is one
+ * thumb target (a stretched button under the words): it opens the task sheet,
+ * or, while a question waits, goes to the question, which the line then says
+ * in amber. The sheet stays one tap away on the task button beside it.
+ */
+function TaskLines({ task, pullRequest, onOpen, onQuestion }: {
+  task: ApiTask
+  pullRequest?: PullRequestStatus
+  onOpen: () => void
+  onQuestion: () => void
+}) {
+  const waiting = task.state === "needs-input"
+  // the conversation detail carries it; the list row alone does not
+  const question = waiting && Boolean((task as Partial<ConversationDetail>).pending_question_id)
+  const found = pullRequest?.kind === "found" ? pullRequest.pullRequest : null
+  const words = found ? pullRequestWords(found, task.autopilot) : null
+  // CI belongs on the line only while the PR is still going somewhere
+  const checks = found && words && (found.lifecycle === "open" || found.lifecycle === "draft") && found.checks !== "none" ? words.checks : null
+  return (
+    <div className="relative flex min-h-11 min-w-0 flex-1 flex-col justify-center py-1.5">
+      <button
+        type="button"
+        onClick={waiting ? onQuestion : onOpen}
+        aria-label={waiting ? "Show the question" : "Open the task sheet"}
+        className="absolute inset-0 rounded-lg active:bg-hover focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
+      />
+      <h1 className="pointer-events-none relative truncate text-[15px] font-semibold tracking-[-0.01em]" title={task.title}>
+        {task.title}
+      </h1>
+      <p className="pointer-events-none relative mt-0.5 flex min-w-0 items-center gap-1.5 text-[12.5px] whitespace-nowrap text-muted-foreground">
+        <StateDot state={task.state} background={task.background} pausedOnNetwork={pausedOnNetwork(task)} />
+        <span className={cn("shrink-0", waiting ? "text-state-needs-input" : "text-fg-secondary")}>
+          {waiting ? `Waiting for you${question ? " · 1 question" : ""}` : outcomeWord(task)}
+        </span>
+        {found && words && (
+          <>
+            <span aria-hidden className="text-faint">·</span>
+            <BranchRequest aria-hidden className={cn("size-3.5 shrink-0", PULL_REQUEST_ICON_TONE[pullRequestIconTone(found)])} />
+            <span className="min-w-0 truncate tabular-nums">
+              #{found.number} {lowerFirst(words.lifecycle)}
+              {checks && ` · ${checks}`}
+            </span>
+          </>
+        )}
+        {task.mode === "local" && (
+          // Worktree is the default; LOCAL is the one worth the width (§5c)
+          <span className="flex shrink-0 items-center gap-1">
+            <span aria-hidden className="text-faint">·</span>
+            <Local aria-hidden className="size-3" />
+            Local
+          </span>
+        )}
+        {task.archived && (
+          <span className="flex shrink-0 items-center gap-1.5">
+            <span aria-hidden className="text-faint">·</span>
+            Archived
+          </span>
+        )}
+      </p>
+    </div>
+  )
+}
+
+/** "Open" reads "#318 open" mid-line; "Merged by Wisp" keeps its proper noun. */
+function lowerFirst(word: string): string {
+  return word.charAt(0).toLowerCase() + word.slice(1)
+}
+
+/** Every surface's pane, all mounted: leaving one must not drop the conversation's scroll position or tear down a live shell. */
+function SurfacePanes({ surface, onShowConversation, surfaces }: {
+  surface: Surface
   onShowConversation: () => void
   surfaces: {
     conversation: ReactNode
@@ -314,35 +346,35 @@ function SurfacePanes({ tab, onShowConversation, surfaces }: {
   const { conversation, autopilot, changes, workflows, subtasks, terminal } = surfaces
   return (
     <>
-      <Pane show={tab === "chat"}>{conversation}</Pane>
-      {autopilot && <Pane show={tab === "autopilot"}>{autopilot(onShowConversation, tab !== "autopilot")}</Pane>}
-      <Pane show={tab === "changes"}>{changes}</Pane>
-      {workflows !== undefined && <Pane show={tab === "workflows"}>{workflows}</Pane>}
-      {subtasks !== undefined && <Pane show={tab === "subtasks"}>{subtasks}</Pane>}
-      <Pane show={tab === "terminal"}><div className="flex min-h-0 flex-1 flex-col pb-(--mobile-bottom)">{terminal}</div></Pane>
+      <Pane show={surface === "chat"}>{conversation}</Pane>
+      {autopilot && <Pane show={surface === "autopilot"}>{autopilot(onShowConversation, surface !== "autopilot")}</Pane>}
+      <Pane show={surface === "changes"}>{changes}</Pane>
+      {workflows !== undefined && <Pane show={surface === "workflows"}>{workflows}</Pane>}
+      {subtasks !== undefined && <Pane show={surface === "subtasks"}>{subtasks}</Pane>}
+      <Pane show={surface === "terminal"}><div className="flex min-h-0 flex-1 flex-col pb-(--mobile-bottom)">{terminal}</div></Pane>
     </>
   )
 }
 
-function surfaceTabs(autopilot: boolean, workflows: boolean, subtasks: boolean): MobileTab[] {
-  return [
-    "chat",
-    ...(autopilot ? (["autopilot"] as const) : []),
-    "changes",
-    ...(workflows ? (["workflows"] as const) : []),
-    ...(subtasks ? (["subtasks"] as const) : []),
-    "terminal",
-  ]
+/** The tools the sheet offers, in the top bar's order. */
+function offeredTools(autopilot: boolean, workflows: boolean, subtasks: boolean): ToolName[] {
+  return TOOL_NAMES.filter(
+    (name) =>
+      (name !== "autopilot" || autopilot) &&
+      (name !== "workflows" || workflows) &&
+      (name !== "subtasks" || subtasks),
+  )
 }
 
 /**
- * Find-in-task searches the transcript, which the Autopilot tab hides: a find
- * from anywhere (the task menu, ⌘F) gives the chat back first. The find has
- * already run against a hidden transcript by then, where nothing can scroll,
- * so it is asked again once the chat is on screen — the same frame the
- * Autopilot tab's own "View message" waits.
+ * Find-in-task searches the transcript, which the Autopilot tool hides: a
+ * find from anywhere (⌘F on a narrow Desktop window) gives the chat back
+ * first. The find has already run against a hidden transcript by then, where
+ * nothing can scroll, so it is asked again once the chat is on screen — the
+ * same frame the Autopilot tool's own "View message" waits. The sheet's Find
+ * tile brings the chat back itself, before it asks.
  */
-function useChatOnFind(tab: MobileTab, setTab: (tab: MobileTab) => void) {
+function useChatOnFind(surface: Surface, setSurface: (surface: Surface) => void) {
   const { connectionId } = useDaemonRuntime()
   const intents = uiIntentsFor(connectionId)
   const findSeq = useSyncExternalStore(intents.subscribe, () => intents.findRequest()?.seq ?? 0)
@@ -350,11 +382,11 @@ function useChatOnFind(tab: MobileTab, setTab: (tab: MobileTab) => void) {
   useEffect(() => {
     if (findSeq === seenFind.current) return
     seenFind.current = findSeq
-    if (tab !== "autopilot") return
+    if (surface !== "autopilot") return
     const request = intents.findRequest()
-    setTab("chat")
+    setSurface("chat")
     if (request) requestAnimationFrame(() => intents.openFind(request.query, request.turn))
-  }, [findSeq, tab, setTab, intents])
+  }, [findSeq, surface, setSurface, intents])
 }
 
 /** Kept mounted, hidden when inactive — see the note in MobileShell. */

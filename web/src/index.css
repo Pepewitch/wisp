@@ -670,6 +670,24 @@
   transition: rotate var(--dur-in) var(--ease-out);
 }
 
+/* The phone's task sheet (task-sheet.tsx) rises from the bottom edge and
+   leaves quicker; a surface, so no spring. While a finger swipes it, it
+   follows base-ui's --drawer-swipe-movement-y with no easing at all. */
+.wisp-sheet {
+  translate: 0 var(--drawer-swipe-movement-y, 0px);
+  transition: translate var(--dur-in) var(--ease-out);
+}
+.wisp-sheet[data-swiping] {
+  transition-duration: 0ms;
+}
+.wisp-sheet[data-starting-style],
+.wisp-sheet[data-ending-style] {
+  translate: 0 100%;
+}
+.wisp-sheet[data-ending-style] {
+  transition-duration: var(--dur-out);
+}
+
 /* Wisp's own tooltip (lib/title-tips.ts) stands in for every `title` in the
    app. It opens as a hairline from the side that faces what you point at,
    then unfolds to its height with the small spring. The box is a ::before,
@@ -766,7 +784,8 @@
   [data-glide] > [data-panel],
   .wisp-summary-card,
   .wisp-unfold,
-  .wisp-turn {
+  .wisp-turn,
+  .wisp-sheet {
     transition: none;
   }
   .wisp-tip[data-state]::before,

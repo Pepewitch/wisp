@@ -328,7 +328,7 @@ function MainView({
   })
 
   const isMobile = useIsMobile()
-  // the phone keeps its own tabs, so the chords are the pointer shell's
+  // the phone opens its tools from its task sheet, so the chords are the pointer shell's
   const tools = useTaskToolPanel(runtime.connectionId, selectedId, searchFeature, !isMobile && task !== null)
   // the base is NOT passed to the diff: only the daemon knows which commit it
   // actually diffed from (it resolves GitHub's base), and a local task diffs
@@ -521,6 +521,7 @@ function AppShell({
         <MobileShell
           task={task}
           pullRequest={pullRequest}
+          turns={turns}
           firstRun={firstRun}
           sidebar={(dismiss) => sidebar({ touch: true, afterSelect: dismiss })}
           conversation={conversation}

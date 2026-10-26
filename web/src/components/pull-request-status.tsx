@@ -26,20 +26,17 @@ function replacesFacts(status: AutopilotStatus | null | undefined, pullRequest: 
 
 /**
  * One neutral, unboxed link for an associated PR. The provider owns every
- * status; Wisp only normalizes and relays it. `compact` keeps the same facts in
- * a thumb-sized two-line target for the mobile header.
+ * status; Wisp only normalizes and relays it.
  */
 export function PullRequestStatusLink({
   pullRequest,
   others = 0,
-  compact = false,
   autoMerge,
   className,
 }: {
   pullRequest: PullRequestInfo
   /** How many MORE this task has — it is showing its newest. */
   others?: number
-  compact?: boolean
   /** the task's auto-merge status, whose reason stands in for CI and review while armed */
   autoMerge?: AutopilotStatus | null
   className?: string
@@ -67,34 +64,18 @@ export function PullRequestStatusLink({
       className={cn(
         "flex shrink-0 items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground",
         "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-        // compact owns a full row in the mobile header, so it is bounded by that
-        // row rather than by a share of the viewport it split with the title
-        compact ? "h-11 max-w-full gap-1.5 px-2" : "h-8 max-w-[420px] gap-1.5 px-2 text-[11.5px]",
+        "h-8 max-w-[420px] gap-1.5 px-2 text-[11.5px]",
         className,
       )}
     >
       <BranchRequest
         data-testid="pull-request-icon"
-        className={cn(
-          compact ? "size-4" : "size-3.5",
-          PULL_REQUEST_ICON_TONE[iconTone],
-        )}
+        className={cn("size-3.5", PULL_REQUEST_ICON_TONE[iconTone])}
       />
-      {compact ? (
-        <span className="min-w-0">
-          <span className="block truncate font-mono text-[11px] text-fg-secondary">
-            PR #{pullRequest.number} · {lifecycle}
-          </span>
-          <span className="block truncate text-[10.5px]">
-            {detail}
-          </span>
-        </span>
-      ) : (
-        <span className="truncate">
-          <span className="font-mono text-fg-secondary">PR #{pullRequest.number}</span>
-          <span> · {lifecycle} · {detail}</span>
-        </span>
-      )}
+      <span className="truncate">
+        <span className="font-mono text-fg-secondary">PR #{pullRequest.number}</span>
+        <span> · {lifecycle} · {detail}</span>
+      </span>
       {/* one short fact, and only when there IS one: this row is the newest of
           several, and nothing else on screen would say so */}
       {more && (
