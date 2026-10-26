@@ -1604,7 +1604,10 @@ The words are shared too: `pullRequestWords`, `autopilotReason` and
 
 **Rows open in place**, a base-ui Collapsible each. Which rows are open is
 remembered per row for every task in this browser (`wisp_summary_card_open`),
-so a row you keep open stays open as you switch tasks.
+so a row you keep open stays open as you switch tasks. The lead row's clock
+ticks by the second only while a turn runs; a settled task's "4 min ago" moves
+by the minute (`useMinuteTick`). The card stays mounted across a task switch,
+so a pending or refused autopilot write shows only on the task that sent it.
 
 **The fold point is the pane, not the window.** A ResizeObserver on the
 centre pane (`usePaneFitsCard`) keeps the card from 1000px
@@ -1617,6 +1620,9 @@ first read happens before paint, so a wide pane never flashes the chip.
 title's own dot moves into it: each fact has one quick look on screen, card
 or chip, never both. It is a base-ui Popover (`POPOVER_SURFACE`,
 `--z-menu`) holding the same card, grown from the chip by the shared rule.
+It hangs from the top bar, so it never flips above it: it keeps its side
+and is capped at base-ui's `--available-height`, scrolling inside, so a long
+`/tokens` report or many children never push a row or its footer off screen.
 A pointer focuses the popup itself and the keyboard the first row. A row that
 acts (a question, a child, a panel) closes it.
 

@@ -7,7 +7,7 @@ import { Button, StateDot } from "@/components/primitives"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useSummaryFolded, useSummaryRows, type SummaryRow } from "@/hooks/useSummaryCard"
 import { useTaskSummary, type SummaryModel } from "@/hooks/useTaskSummary"
-import { useTick } from "@/hooks/useTick"
+import { useMinuteTick, useTick } from "@/hooks/useTick"
 import { repositoryUrl } from "@/lib/autopilot-history"
 import { AUTOPILOT_RAIL_TONE, autopilotReason, autopilotTint } from "@/lib/autopilot-words"
 import { externalLinkProps } from "@/lib/external-links"
@@ -94,7 +94,7 @@ export function SummaryCard({ model, floating = false, openRows, onFold, onDone,
 
 /* ── rows ───────────────────────────────────────────────────────────────── */
 
-const ROW = "flex min-h-[30px] w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px]"
+const ROW = "flex min-h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-[12.5px]"
 const FOCUS = "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none"
 
 /**
@@ -142,7 +142,10 @@ function Row({ row, label, value, title, children }: {
 function LeadRow({ model, onJump, onFold }: { model: SummaryModel; onJump: () => void; onFold?: () => void }) {
   const { task } = model
   const running = model.runningSince !== null && task.state === "running"
-  const now = useTick(true)
+  // by the second only while a turn runs; "4 min ago" moves by the minute
+  const second = useTick(running)
+  const minute = useMinuteTick(!running)
+  const now = running ? second : minute
   const waiting = task.state === "needs-input"
   const word = waiting ? "Waiting for you" : outcomeWord(task)
   const value = running

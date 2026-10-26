@@ -67,11 +67,13 @@ function ChipCard({ task, pullRequest, turns, onDone, footer }: {
 }
 
 /** The chip and its popover, from the task alone; the gallery opens it with `defaultOpen`. */
-export function SummaryChip({ task, pullRequest, popup, defaultOpen = false }: {
+export function SummaryChip({ task, pullRequest, popup, defaultOpen = false, popupClassName }: {
   task: ApiTask
   pullRequest?: PullRequestStatus
   popup: (close: () => void) => ReactNode
   defaultOpen?: boolean
+  /** the gallery's tighter cap, so an open frame stays inside its own box */
+  popupClassName?: string
 }) {
   const [open, setOpen] = useState(defaultOpen)
   const popupRef = useRef<HTMLDivElement>(null)
@@ -100,13 +102,22 @@ export function SummaryChip({ task, pullRequest, popup, defaultOpen = false }: {
         <ChevronDown aria-hidden className="size-3 text-faint" />
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner side="bottom" align="start" sideOffset={6} collisionPadding={12} className="z-(--z-menu)">
+        {/* It hangs from the top bar, so there is never room above: it keeps its
+            side and scrolls within the height left below it instead of flipping. */}
+        <Popover.Positioner
+          side="bottom"
+          align="start"
+          sideOffset={6}
+          collisionPadding={12}
+          collisionAvoidance={{ side: "none", align: "shift" }}
+          className="z-(--z-menu)"
+        >
           <Popover.Popup
             ref={popupRef}
             aria-label="Task summary"
             // a pointer lands on the popup, so no row wears a focus ring it did not ask for; the keyboard lands on the first row
             initialFocus={(type) => (type === "keyboard" ? true : popupRef.current)}
-            className={cn(POPOVER_SURFACE, "w-[264px] max-w-[calc(100vw-24px)] rounded-xl p-1 outline-none")}>
+            className={cn(POPOVER_SURFACE, "scroll-slim max-h-(--available-height) w-[264px] max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl p-1 outline-none", popupClassName)}>
             {popup(() => setOpen(false))}
           </Popover.Popup>
         </Popover.Positioner>

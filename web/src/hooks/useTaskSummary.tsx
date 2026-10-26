@@ -47,6 +47,7 @@ export function useTaskSummary(task: ApiTask, pullRequest: PullRequestStatus | u
   const { connectionId } = useDaemonRuntime()
   const features = useHarnessFeatures().data
   const autopilot = useAutopilot()
+  const sentHere = autopilot.variables?.id === task.id
   const tools = useToolPanelControls()
   const children = useSubtaskChildren(task.id)
   const intents = uiIntentsFor(connectionId)
@@ -62,8 +63,10 @@ export function useTaskSummary(task: ApiTask, pullRequest: PullRequestStatus | u
       switches: {
         status: task.autopilot ?? null,
         locked: task.archived ? "archived" : task.mode === "local" ? "local" : null,
-        pending: autopilot.isPending,
-        error: autopilot.error ? failureReason(autopilot.error) : null,
+        // the card stays mounted across tasks: a write in flight, or one that
+        // failed, belongs to the task that sent it, never to the next one shown
+        pending: sentHere && autopilot.isPending,
+        error: sentHere && autopilot.error ? failureReason(autopilot.error) : null,
         onSet: (change) => autopilot.mutate({ id: task.id, set: change }),
         onAct: (act) => autopilot.mutate({ id: task.id, act }),
       },

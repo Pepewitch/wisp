@@ -60,13 +60,17 @@ interface Call {
   body: unknown
 }
 
-function daemon(features: Record<string, boolean> = { taskAutopilot: true, autoReview: true, subtasks: true }): Call[] {
+function daemon(
+  features: Record<string, boolean> = { taskAutopilot: true, autoReview: true, subtasks: true },
+  refuse: string | null = null,
+): Call[] {
   const calls: Call[] = []
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input)
       calls.push({ path, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (refuse && path.endsWith("/autopilot")) return new Response(JSON.stringify({ error: refuse }), { status: 409, headers: { "content-type": "application/json" } })
       const body = path.endsWith("/api/harnesses")
         ? { harnesses: [], features }
         : path.includes("/usage")
@@ -166,6 +170,21 @@ describe("the autopilot row", () => {
     expect(screen.getByRole("switch", { name: "Auto-merge" })).toHaveAttribute("aria-checked", "true")
     fireEvent.click(review)
     await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot`, method: "PUT", body: { autoReview: true } }))
+  })
+
+  it("keeps a refused write on the task that sent it, not the next task shown", async () => {
+    // the shell keeps one card mounted and swaps its task, as a sidebar click does
+    daemon(undefined, "Auto-merge needs GitHub")
+    const other = { ...TASK, id: "tother", title: "Another task" }
+    const view = mount(card(TASK))
+    fireEvent.click(await screen.findByRole("button", { name: /Autopilot/ }))
+    fireEvent.click(await screen.findByRole("switch", { name: "Auto-merge" }))
+    expect(await screen.findByRole("alert")).toHaveTextContent("Auto-merge needs GitHub")
+    view.rerender(card(other))
+    expect(await screen.findByRole("switch", { name: "Auto-merge" })).not.toBeDisabled()
+    expect(screen.queryByRole("alert")).toBeNull()
+    view.rerender(card(TASK))
+    expect(await screen.findByRole("alert")).toHaveTextContent("Auto-merge needs GitHub")
   })
 
   it("leaves history and rounds to the Autopilot panel, which it opens", async () => {
@@ -291,6 +310,8 @@ describe("the chip", () => {
     expect(within(popup).getByRole("button", { name: /Pull request/ })).toHaveTextContent("#42 · Open")
     // folded by the pane, not by a person: there is nothing to put back
     expect(within(popup).queryByRole("button", { name: "Show beside the conversation" })).toBeNull()
+    // a long /tokens report or many children scroll inside it, within the height left below the bar
+    expect(popup).toHaveClass("max-h-(--available-height)", "overflow-y-auto")
   })
 
   it("puts a folded card back beside the conversation where there is room", async () => {

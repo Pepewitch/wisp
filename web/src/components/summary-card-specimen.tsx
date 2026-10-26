@@ -157,11 +157,27 @@ export function SummaryCardSpecimen() {
   )
 }
 
+/** Forty reporting turns: taller than any viewport left under the bar, so the popup has to scroll. */
+const LONG_TOKENS = (
+  <TokensReport
+    harness="claude"
+    turns={Array.from({ length: 40 }, (_, i) => ({
+      id: i + 1,
+      n: i + 1,
+      usage: { inputTokens: 40_000 + i * 1_100, outputTokens: 1_200 + (i % 7) * 310, cachedInputTokens: 38_000 + i * 1_000 },
+    }))}
+    total={{ inputTokens: 2_458_000, outputTokens: 81_400, cachedInputTokens: 2_300_000 }}
+    reportingTurns={40}
+  />
+)
+
 function ChipSpecimen() {
-  const running = STATES[0]!.model
+  const running = { ...STATES[0]!.model, tokens: LONG_TOKENS }
   return (
-    <div data-frame="chip-open" className="mt-6 h-[400px]">
-      <Eyebrow>Folded: the chip beside the title, open</Eyebrow>
+    // in the app the popover is capped by the viewport left under the bar; here
+    // by the frame too, so it scrolls inside its own box and covers no other one
+    <div data-frame="chip-open" className="mt-6 h-[460px]">
+      <Eyebrow>Folded: the chip beside the title, open, with a long /tokens report under Context</Eyebrow>
       <div style={{ "--sidebar-width": "180px" } as CSSProperties} className="mt-2 flex h-9 items-center rounded-lg border border-border bg-surface pr-3">
         <TopBarLeft desktop={false}>
           <WispMark className="size-[17px]" />
@@ -170,7 +186,7 @@ function ChipSpecimen() {
           <TopBarTask
             task={running.task}
             dragRegion={false}
-            chip={<SummaryChip task={running.task} pullRequest={running.pullRequest} defaultOpen popup={() => <SummaryCard model={running} floating openRows={[]} />} />}
+            chip={<SummaryChip task={running.task} pullRequest={running.pullRequest} defaultOpen popupClassName="max-h-[380px]" popup={() => <SummaryCard model={running} floating openRows={["context"]} />} />}
           />
         </div>
       </div>
