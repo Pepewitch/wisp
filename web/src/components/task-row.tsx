@@ -23,8 +23,6 @@ interface TaskRowProps {
   onSelect: (id: string) => void
   /** how many parents above it in the sidebar's subtask nesting */
   depth?: number
-  /** the list has subtask disclosures: every row leaves their column free, so the dots line up */
-  gutter?: boolean
   /** a control beside the row, never inside its button: the subtask disclosure */
   lead?: ReactNode
   /** after the title, inside the row: the subtask count and rollup, or where the parent is */
@@ -78,7 +76,7 @@ function TaskStateDot({ task, className }: { task: ApiTask; className?: string }
  *  - an archived row gets no button, and therefore no fade on its marks: there
  *    is nothing to reveal, so nothing may move.
  */
-export function TaskRow({ task, status, pullRequest, selected, onSelect, depth = 0, gutter = false, lead, trail, parentTitle }: TaskRowProps) {
+export function TaskRow({ task, status, pullRequest, selected, onSelect, depth = 0, lead, trail, parentTitle }: TaskRowProps) {
   // the card's own wish (hover/focus), and the veto that outranks it
   const [wantsCard, setWantsCard] = useState(false)
   const [overArchive, setOverArchive] = useState(false)
@@ -107,8 +105,9 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect, depth =
           data-selected={selected || undefined}
           onClick={() => onSelect(task.id)}
           className={cn(
-            "flex h-[26px] w-full items-center gap-2.5 rounded-md pr-2 text-left transition-colors",
-            gutter ? "pl-[26px]" : "pl-2.5",
+            // every row keeps the disclosure's gutter, child or not, so the dots
+            // stand in one column across projects, Cleanup and Archived
+            "flex h-[26px] w-full items-center gap-2.5 rounded-md pr-2 pl-[26px] text-left transition-colors",
             "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
             selected ? "bg-accent" : "hover:bg-hover",
             task.archived && (!task.cleanup || task.cleanup.state === "complete") && "opacity-55",

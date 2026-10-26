@@ -166,8 +166,8 @@ describe("subtasks in the sidebar", () => {
     row("orphan", { subtask_kind: "review" }),
   ]
 
-  function Nested({ touch = false, nest = true, selectedId = null }: { touch?: boolean; nest?: boolean; selectedId?: string | null }) {
-    const { groups, archivedTasks, ...tree } = useSidebarTree({ connectionId: "test-connection", tasks, repos: [], nest, selectedId })
+  function Nested({ touch = false, nest = true, selectedId = null, more = [] }: { touch?: boolean; nest?: boolean; selectedId?: string | null; more?: ApiTask[] }) {
+    const { groups, archivedTasks, ...tree } = useSidebarTree({ connectionId: "test-connection", tasks: [...tasks, ...more], repos: [], nest, selectedId })
     return (
       <Sidebar
         groups={groups}
@@ -212,6 +212,14 @@ describe("subtasks in the sidebar", () => {
   it("opens the parents above a selected child", () => {
     mountNested({ selectedId: "reviewer" })
     expect(rows()).toEqual(["parent", "child", "reviewer", "orphan"])
+  })
+
+  it("keeps every row's dot in one column, in a project with no parent too", () => {
+    mountNested({ more: [row("plain", { repo_path: "/src/other" })] })
+    const inset = (id: string) => document.querySelector(`button[data-task-id="${id}"]`)!.className.split(" ").filter((c) => c.startsWith("pl-"))
+    expect(inset("parent")).toEqual(["pl-[26px]"])
+    expect(inset("orphan")).toEqual(inset("parent"))
+    expect(inset("plain")).toEqual(inset("parent"))
   })
 
   it("gives the disclosure its own 44px target on touch", () => {

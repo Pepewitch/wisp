@@ -92,8 +92,6 @@ export function TaskTree({ nodes, view, status, pullRequests, selectedId, onSele
   touch: boolean
 }) {
   const { disclosure, titleOf } = view
-  // a list with any family leaves every row the disclosure's column, so the dots line up
-  const gutter = !touch && nodes.some((node) => node.children.length > 0)
   return visibleRows(nodes, disclosure.isOpen).map(({ node, depth }) => {
     const { task } = node
     const open = disclosure.isOpen(task.id)
@@ -114,6 +112,6 @@ export function TaskTree({ nodes, view, status, pullRequests, selectedId, onSele
       ),
       parentTitle: task.parent_task_id ? titleOf(task.parent_task_id) : null,
     }
-    return touch ? <TaskRowTouch key={task.id} {...props} /> : <TaskRow key={task.id} {...props} gutter={gutter} />
+    return touch ? <TaskRowTouch key={task.id} {...props} /> : <TaskRow key={task.id} {...props} />
   })
 }
