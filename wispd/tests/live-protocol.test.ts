@@ -256,7 +256,10 @@ describe("Codex live terminal events", () => {
 
     driver.handle({
       method: "thread/tokenUsage/updated",
-      params: { turnId: "turn-1", tokenUsage: { last: { inputTokens: 7, outputTokens: 2 } } },
+      params: {
+        turnId: "turn-1",
+        tokenUsage: { total: { inputTokens: 7, outputTokens: 2 }, last: { inputTokens: 7, outputTokens: 2 } },
+      },
     });
     const failure = {
       method: "turn/completed",
@@ -271,6 +274,7 @@ describe("Codex live terminal events", () => {
         type: "turn.failed",
         error: { message: "quota exhausted" },
         usage: { input_tokens: 7, output_tokens: 2 },
+        last_usage: { input_tokens: 7, output_tokens: 2 },
       },
     ]);
     const parsed = parseOutput(BUILTIN_ADAPTERS.codex!, events.map((event) => JSON.stringify(event)).join("\n"));
@@ -279,6 +283,67 @@ describe("Codex live terminal events", () => {
       usage: { input_tokens: 7, output_tokens: 2 },
     });
     expect(terminalCount).toBe(1);
+    await driver.close();
+  });
+
+  test("a multi-call turn on a resumed thread records the turn's sum, and the last call as context", async () => {
+    // Shapes and numbers from a live 0.162.1 probe: `total` is cumulative per
+    // thread across resumes, and the resume replays the previous turn's update.
+    const sink = new MemorySink();
+    const events: Record<string, any>[] = [];
+    const driver = new CodexLiveDriver({
+      sink,
+      def: BUILTIN_ADAPTERS.codex!,
+      cwd: "/tmp",
+      sessionId: "existing-thread",
+      model: null,
+      effort: null,
+      fast: false,
+      initialMessageId: "initial-message",
+      initialInput: [{ type: "text", text: "hello", text_elements: [] }],
+      emit: (event) => events.push(event),
+      onTerminal: () => {},
+    });
+    const breakdown = (input: number, cached: number, output: number, reasoning: number) => ({
+      totalTokens: input + output,
+      inputTokens: input,
+      cachedInputTokens: cached,
+      cacheWriteInputTokens: 0,
+      outputTokens: output,
+      reasoningOutputTokens: reasoning,
+    });
+    const usageUpdate = (turnId: string, total: object, last: object) => ({
+      method: "thread/tokenUsage/updated",
+      params: { threadId: "existing-thread", turnId, tokenUsage: { total, last, modelContextWindow: 258_400 } },
+    });
+
+    const initialize = await requestAt(sink, 0);
+    driver.handle({ id: initialize.id, result: {} });
+    expect((await requestAt(sink, 1)).method).toBe("initialized");
+    const resume = await requestAt(sink, 2);
+    driver.handle(usageUpdate("previous-turn", breakdown(72_465, 68_224, 174, 12), breakdown(14_630, 14_336, 5, 0)));
+    driver.handle({ id: resume.id, result: { thread: { id: "existing-thread", turns: [] } } });
+    const startTurn = await requestAt(sink, 3);
+    driver.handle({ id: startTurn.id, result: { turn: { id: "turn-1" } } });
+    await driver.ready;
+
+    driver.handle(usageUpdate("turn-1", breakdown(88_523, 75_008, 235, 21), breakdown(16_058, 6_784, 61, 9)));
+    driver.handle(usageUpdate("turn-1", breakdown(104_669, 90_880, 285, 21), breakdown(16_146, 15_872, 50, 0)));
+    driver.handle(usageUpdate("turn-1", breakdown(120_895, 106_880, 290, 21), breakdown(16_226, 16_000, 5, 0)));
+    driver.handle({ method: "turn/completed", params: { threadId: "existing-thread", turn: { id: "turn-1", status: "completed" } } });
+
+    const completed = events.find((event) => event.type === "turn.completed")!;
+    expect(completed.usage).toEqual({
+      total_tokens: 48_430 + 116,
+      input_tokens: 48_430,
+      cached_input_tokens: 38_656,
+      cache_write_input_tokens: 0,
+      output_tokens: 61 + 50 + 5,
+      reasoning_output_tokens: 9,
+    });
+    expect(completed.last_usage).toMatchObject({ input_tokens: 16_226, output_tokens: 5 });
+    const parsed = parseOutput(BUILTIN_ADAPTERS.codex!, events.map((event) => JSON.stringify(event)).join("\n"));
+    expect(parsed).toMatchObject({ usage: { output_tokens: 116 }, context: { usedTokens: 16_226 } });
     await driver.close();
   });
 

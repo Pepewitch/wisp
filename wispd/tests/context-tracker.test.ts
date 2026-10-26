@@ -103,6 +103,15 @@ describe("codex-jsonl", () => {
     expect(readContextPoint(codex, event)).toEqual({ usedTokens: 166_151 });
   });
 
+  test("the app-server's last_usage wins over the turn's summed usage", () => {
+    const event = {
+      type: "turn.completed",
+      usage: { input_tokens: 48_430, output_tokens: 116 },
+      last_usage: { input_tokens: 16_226, output_tokens: 5 },
+    };
+    expect(readContextPoint(codex, event)).toEqual({ usedTokens: 16_226 });
+  });
+
   test("the captured first turn folds to its final prompt", () => {
     expect(foldIncrementalOutcome(codex, fixture("codex-first-turn.jsonl"))!.outcome.context).toEqual({
       usedTokens: 13_186,

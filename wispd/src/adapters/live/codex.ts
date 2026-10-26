@@ -163,6 +163,15 @@ function snakeUsage(value: unknown): Record<string, number> | null {
   return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
+/** `after − before` for every counter `after` reports (camelCase breakdowns). */
+function usageDelta(after: unknown, before: Record<string, number>): Record<string, number> {
+  const delta: Record<string, number> = {};
+  for (const [name, amount] of Object.entries(record(after))) {
+    if (typeof amount === "number") delta[name] = amount - (before[name] ?? 0);
+  }
+  return delta;
+}
+
 /**
  * Long-lived Codex app-server turn.
  *
@@ -188,6 +197,9 @@ export class CodexLiveDriver {
   private turnId: string | null = null;
   private model: string | null;
   private usage: Record<string, number> | null = null;
+  private lastUsage: Record<string, number> | null = null;
+  /** The thread's cumulative usage before this turn's first model call. */
+  private usageBefore: Record<string, number> | null = null;
   private readonly children = new Set<string>();
 
   constructor(private readonly options: CodexLiveOptions) {
@@ -295,9 +307,19 @@ export class CodexLiveDriver {
         }
         return;
       }
-      case "thread/tokenUsage/updated":
-        if (!this.turnId || params.turnId === this.turnId) this.usage = snakeUsage(record(params.tokenUsage).last);
+      case "thread/tokenUsage/updated": {
+        // `total` is cumulative per THREAD, across resumes (live-probed on
+        // 0.162.1), and `last` is the call that just finished. The turn's usage
+        // is how far the total grew during this turn; the last call alone goes
+        // out as `last_usage`, whose prompt is the context size. A resume
+        // replays the previous turn's update before this turn has an id.
+        if (!this.turnId || params.turnId !== this.turnId) return;
+        const tokenUsage = record(params.tokenUsage);
+        this.usageBefore ??= usageDelta(tokenUsage.total, usageDelta(tokenUsage.last, {}));
+        this.usage = snakeUsage(usageDelta(tokenUsage.total, this.usageBefore));
+        this.lastUsage = snakeUsage(tokenUsage.last);
         return;
+      }
       case "turn/completed": {
         if (this.terminal) return;
         const turn = record(params.turn);
@@ -323,9 +345,10 @@ export class CodexLiveDriver {
               ? turn.error
               : { message: `Codex turn ${String(turn.status ?? "failed")}` },
             usage: this.usage,
+            last_usage: this.lastUsage,
           });
         } else {
-          this.options.emit({ type: "turn.completed", usage: this.usage });
+          this.options.emit({ type: "turn.completed", usage: this.usage, last_usage: this.lastUsage });
         }
         this.terminal = true;
         this.options.onTerminal();
