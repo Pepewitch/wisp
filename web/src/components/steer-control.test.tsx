@@ -279,6 +279,13 @@ describe("the composer control bar answers its own width", () => {
     expect(container.querySelector('[class~="@container"]')).not.toBeNull()
   })
 
+  it("keeps to the reading column the transcript uses, so its width is the measure's", () => {
+    const { container } = mount(<SteerBox task={task("done")} />)
+
+    const bar = container.querySelector('[class~="@container"]')!
+    expect(bar.parentElement!.className.split(/\s+/)).toContain("max-w-(--reading-measure)")
+  })
+
   it("yields harness and model at the first step, where the task header still says them", () => {
     mount(<SteerBox task={task("done")} />)
 
@@ -341,7 +348,7 @@ describe("the composer control bar answers its own width", () => {
   it("keeps the keyboard hint for the wide arrangement alone", () => {
     mount(<SteerBox task={task("done")} />)
 
-    expect(screen.getByTitle("Enter sends · Shift+Enter for a new line").className).toContain("@2xl:block")
+    expect(screen.getByTitle("Enter sends · Shift+Enter for a new line").className).toContain("@xl:block")
   })
 })
 

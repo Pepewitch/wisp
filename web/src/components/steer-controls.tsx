@@ -29,7 +29,8 @@ import { cn } from "@/lib/utils"
  * "Default effort" ended up printed over "Suffix prompt". Only the model chip
  * yields width, by truncating inside its own box, because the task header two
  * rows up still names it in full — and at @lg that header's identity joins the
- * bar too, at @2xl the ↵ hint.
+ * bar too, at @xl the ↵ hint. @xl, not wider: the reading column caps the bar
+ * at 644px, so a step past that would never be reached.
  *
  * What a send will and will not do mid-turn is NOT in this bar: it belongs to
  * the line above the composer, where it takes the resume hint's place for as
@@ -159,7 +160,7 @@ export function ComposerControls({
 function WideEnd() {
   return (
     <span
-      className="hidden shrink-0 font-mono text-[10.5px] text-faint @2xl:block"
+      className="hidden shrink-0 font-mono text-[10.5px] text-faint @xl:block"
       title="Enter sends · Shift+Enter for a new line"
     >
       ↵

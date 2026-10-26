@@ -437,6 +437,22 @@ describe("the reading column's axis", () => {
     expect(classes).toContain("overflow-x-hidden")
     expect(classes).toContain("break-words")
   })
+
+  it("scrolls the whole pane but reads in the column", () => {
+    render(<Conversation task={task} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport()),
+    })
+
+    // A wheel over either margin must still scroll the transcript, so the
+    // measure belongs to what the scroller holds, never to the scroller.
+    const viewport = screen.getByTestId("conversation-viewport")
+    expect(viewport.className).not.toContain("max-w-")
+    const column = viewport.firstElementChild!
+    expect(column.className.split(/\s+/)).toEqual(
+      expect.arrayContaining(["mx-auto", "w-full", "max-w-(--reading-measure)"])
+    )
+    expect(column.querySelector("[data-turn='1']")).not.toBeNull()
+  })
 })
 
 describe("a steer that lands inside a running turn", () => {
