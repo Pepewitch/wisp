@@ -65,6 +65,9 @@ them, and archive them as one family.
 - **Claude's user skills honour `CLAUDE_CONFIG_DIR`** (#421). The skills list
   for a claude task reads `$CLAUDE_CONFIG_DIR/skills` when that is set, as
   Claude Code does, instead of always `~/.claude/skills`.
+- **Dependencies** (#422). DOMPurify 3.4.17, undici 8.12.3 and vitest 4.1.12
+  move past the advisories published since 0.7.1, including a critical
+  DOMPurify sanitizer bypass.
 
 ## Install or upgrade
 
