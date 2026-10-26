@@ -309,9 +309,14 @@ export class CodexLiveDriver {
       if (!this.turnId) this.threadTotal = total;
       return;
     }
-    // With no replay to start from, the first update only becomes the starting
-    // point: it may be a real call or a stale re-send, and is not counted.
-    const growth = this.threadTotal ? usageDelta(total, this.threadTotal) : {};
+    if (!this.threadTotal) {
+      // No replay: codex replays whenever the thread has usage, so a total that
+      // is exactly this call is the thread's first call, counted from zero.
+      // Otherwise this update may be a stale re-send and only sets the start.
+      const beyondLast = usageDelta(total, usageDelta(tokenUsage.last, {}));
+      this.threadTotal = Object.values(beyondLast).every((amount) => amount === 0) ? {} : total;
+    }
+    const growth = usageDelta(total, this.threadTotal);
     // Only a completed call adds prompt tokens. Codex also re-sends an
     // unchanged count (on rate-limit news), and a context-window overflow
     // refills `total` with zeroed counters, which is a reset, not usage.

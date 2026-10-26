@@ -379,8 +379,21 @@ describe("Codex live terminal events", () => {
     await driver.close();
   });
 
-  test("without a replay the first update only sets the starting point", async () => {
-    // The one ambiguous case: that first update may be a real call or a stale
+  test("without a replay, a thread's first call counts from zero", async () => {
+    // A thread persisted before any call completed has no usage to replay.
+    const events: Record<string, any>[] = [];
+    const driver = await resumedTurn(events, false);
+    driver.handle(usageUpdate("turn-1", firstCall, firstCall));
+    driver.handle(usageUpdate("turn-1", breakdown(32_204, 22_656, 111, 9), breakdown(16_146, 15_872, 50, 0)));
+    driver.handle(settle("completed"));
+
+    const completed = events.find((event) => event.type === "turn.completed")!;
+    expect(completed.usage).toMatchObject({ input_tokens: 16_058 + 16_146, output_tokens: 61 + 50 });
+    await driver.close();
+  });
+
+  test("without a replay, a first update carrying earlier usage only sets the starting point", async () => {
+    // The one ambiguous case: that update may be a real call or a stale
     // re-send, so it is never counted. An undercount, never a double count.
     const events: Record<string, any>[] = [];
     const driver = await resumedTurn(events, false);
