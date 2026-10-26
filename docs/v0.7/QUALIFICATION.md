@@ -2,20 +2,84 @@
 
 This ledger separates release evidence from the version label. The 0.7 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.7.1 is the current release; earlier 0.7 records are retained
+coverage. 0.7.2 is the current release; earlier 0.7 records are retained
 below. The 0.6 records remain in
 [the 0.6 ledger](../v0.6/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
 recorded for 0.5 under
 [Still unqualified or outside scope](../v0.5/QUALIFICATION.md#still-unqualified-or-outside-scope)
-still apply to 0.7.1.
+still apply to 0.7.2.
+
+## 0.7.2 publication
+
+**Published and promoted on 2026-10-26.**
+[Wisp 0.7.2](https://github.com/Pepewitch/wisp/releases/tag/v0.7.2) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 04:00:40 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`bd4d12655a52f3c0672334c230b6725a59f5728e`](https://github.com/Pepewitch/wisp/commit/bd4d12655a52f3c0672334c230b6725a59f5728e),
+landed through [PR #424](https://github.com/Pepewitch/wisp/pull/424). It carries
+subtasks, on by default: a task can start explore, review and continue
+subtasks, hear their turn, stuck, setup-failed and PR reports, and archive them
+as one family
+([#414](https://github.com/Pepewitch/wisp/pull/414),
+[#417](https://github.com/Pepewitch/wisp/pull/417),
+[#418](https://github.com/Pepewitch/wisp/pull/418)); `wisp new` from inside a
+task now creates a task for the project's checkout
+([#413](https://github.com/Pepewitch/wisp/pull/413)); and the other changes
+listed in the release notes since 0.7.1.
+
+Two earlier pushes of the tag never published. On release commit `6719b1c` and
+then `a927103`, `macos-trusted` failed before the `publish` job ran, because a
+request to Apple's CloudKit ticket service dropped
+(`NSURLErrorDomain -1005`, stapler Error 68). The first push failed during
+`stapler validate`, twice. The second failed after Tauri ignored a failed
+`stapler staple` and left Desktop without a ticket, which the inventory check
+refused. [#423](https://github.com/Pepewitch/wisp/pull/423) retries
+`stapler validate` on a dropped connection, and
+[#424](https://github.com/Pepewitch/wisp/pull/424) staples Desktop again when
+its ticket is missing and retries `stapler staple`. Each unpublished tag was
+deleted and the tag was recreated on the fixed commit. In the publishing run,
+one staple and one validate each dropped once and passed on the retry, and the
+Desktop re-staple ran.
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/40266138076)
+for the published tag completed every job successfully on its first run:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, supply-chain, update-verifier, and public-promotion dry-run checks passed; the exact-main [release candidate](https://github.com/Pepewitch/wisp/actions/runs/40265949786) also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |
+| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit `bd4d126` were verified |
+| Homebrew installability | The Formula and Cask were audited offline before publication, and the published Formula was installed the way a user does before the tap advanced |
+
+Promotion completed at 04:03:10 UTC with Homebrew tap commit
+[`666f77a89bf603ad57648cb8b425a7a724e6a608`](https://github.com/Pepewitch/homebrew-tap/commit/666f77a89bf603ad57648cb8b425a7a724e6a608).
+The Formula, Cask, daemon update channel, and Desktop update channel all serve
+0.7.2.
+
+0.7.2 adds database migration 26, so a 0.7.1 daemon cannot reopen a profile that
+0.7.2 has opened. No PNG asset or brand-generator input changed since 0.7.1, so
+the PNG assets were not re-rendered. This is a fully automated publication: no
+maintainer qualification — fresh-install or upgrade receipts, a Desktop updater
+journey across this version, the token-spending harness probes, or the paid
+evaluator panel — was performed, and this record does not claim them. The
+published assets and release body remain immutable; this ledger records the
+completed outcome separately.
+
+Nobody ran subtasks, this release's headline change, against the published
+daemon. They were verified only by the four pull requests' auto-review rounds,
+on throwaway daemons built from source.
 
 ## 0.7.1 publication
 
 **Published and promoted on 2026-10-21.**
-[Wisp 0.7.1](https://github.com/Pepewitch/wisp/releases/tag/v0.7.1) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.7.1](https://github.com/Pepewitch/wisp/releases/tag/v0.7.1) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 03:32:29 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`6256260aaa0f090505d00baecdb0486b65d49f4f`](https://github.com/Pepewitch/wisp/commit/6256260aaa0f090505d00baecdb0486b65d49f4f),
@@ -51,8 +115,8 @@ passed every check:
 
 Promotion completed at 03:36:14 UTC with Homebrew tap commit
 [`e22a6ac0d334ccf3c7f52fdb0a3469ed9c32f5e1`](https://github.com/Pepewitch/homebrew-tap/commit/e22a6ac0d334ccf3c7f52fdb0a3469ed9c32f5e1).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.7.1.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.7.1 until 0.7.2 was promoted.
 
 0.7.1 adds no database migration. No PNG asset or brand-generator input changed
 since 0.7.0, so the PNG assets were not re-rendered. This is a fully automated
