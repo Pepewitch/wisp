@@ -14,7 +14,8 @@ import {
   type StoredAttachment,
 } from "./attachments";
 import { emit } from "./events";
-import { getTask, runningTurn, transition } from "./store";
+import { isRecord } from "./validate";
+import { getTask, runningTurn, transition, turnForTask } from "./store";
 import { clearHarnessBackground, setHarnessBackground } from "./task-processes";
 import { deliveredMessage, nativeImageAttachments } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
@@ -698,6 +699,24 @@ function codexInput(def: AdapterDef, text: string, attachments: StoredAttachment
   ];
 }
 
+/**
+ * The codex thread total the task's previous turn stored, when that turn ran
+ * on this same thread. Only the turn right before counts: an older total
+ * would miss whatever the turns since then spent.
+ */
+function storedThreadTotal(task: Task, turn: number): Record<string, unknown> | null {
+  if (!task.session_id) return null;
+  const usageJson = turnForTask(task.id, turn - 1)?.usage_json;
+  if (!usageJson) return null;
+  try {
+    const usage: unknown = JSON.parse(usageJson);
+    if (!isRecord(usage) || usage.thread_id !== task.session_id || !isRecord(usage.thread_total)) return null;
+    return usage.thread_total;
+  } catch {
+    return null;
+  }
+}
+
 function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
   const sink = options.child.stdin;
   if (!sink || typeof sink === "number") throw new Error("Codex live process did not expose stdin");
@@ -716,6 +735,7 @@ function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
     initialInput: codexInput(options.def, options.prompt, options.attachments),
     emit,
     onTerminal: () => void closeLiveInput(options.task.id, options.turnId),
+    threadTotal: storedThreadTotal(options.task, options.turn),
   });
   liveInputs.set(options.task.id, {
     turnId: options.turnId,

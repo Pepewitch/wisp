@@ -23,6 +23,8 @@ interface CodexLiveOptions {
   initialInput: CodexLiveInput[];
   emit: (event: Record<string, unknown>) => void;
   onTerminal: () => void;
+  /** The thread's cumulative total (snake_case) that the previous turn on this session stored, if any. */
+  threadTotal?: Record<string, unknown> | null;
 }
 
 function record(value: unknown): Record<string, any> {
@@ -146,21 +148,28 @@ function snakeItem(value: unknown): Record<string, unknown> {
   }
 }
 
-function snakeUsage(value: unknown): Record<string, number> | null {
+/** The app-server's counter names, and the snake_case names Wisp stores them under. */
+const USAGE_NAMES: [camel: string, snake: string][] = [
+  ["totalTokens", "total_tokens"],
+  ["inputTokens", "input_tokens"],
+  ["cachedInputTokens", "cached_input_tokens"],
+  ["cacheWriteInputTokens", "cache_write_input_tokens"],
+  ["outputTokens", "output_tokens"],
+  ["reasoningOutputTokens", "reasoning_output_tokens"],
+];
+
+function renameUsage(value: unknown, from: 0 | 1): Record<string, number> | null {
   const usage = record(value);
-  const fields: [string, unknown][] = [
-    ["total_tokens", usage.totalTokens],
-    ["input_tokens", usage.inputTokens],
-    ["cached_input_tokens", usage.cachedInputTokens],
-    ["cache_write_input_tokens", usage.cacheWriteInputTokens],
-    ["output_tokens", usage.outputTokens],
-    ["reasoning_output_tokens", usage.reasoningOutputTokens],
-  ];
-  const normalized: Record<string, number> = {};
-  for (const [name, amount] of fields) {
-    if (typeof amount === "number") normalized[name] = amount;
+  const renamed: Record<string, number> = {};
+  for (const names of USAGE_NAMES) {
+    const amount = usage[names[from]];
+    if (typeof amount === "number") renamed[names[1 - from]!] = amount;
   }
-  return Object.keys(normalized).length > 0 ? normalized : null;
+  return Object.keys(renamed).length > 0 ? renamed : null;
+}
+
+function snakeUsage(value: unknown): Record<string, number> | null {
+  return renameUsage(value, 0);
 }
 
 /** `after − before` for every counter `after` reports (camelCase breakdowns). */
@@ -211,7 +220,12 @@ export class CodexLiveDriver {
 
   constructor(private readonly options: CodexLiveOptions) {
     this.threadId = options.sessionId;
-    this.threadTotal = options.sessionId ? null : {};
+    // A resume's starting point, in order: the update the app-server replays
+    // (set in recordUsage), then the total Wisp stored at the end of the
+    // previous turn, and only then a guess. The stored value comes before
+    // guessing because a first update is ambiguous without one: an earlier
+    // call re-sent and a new call can both report total == last.
+    this.threadTotal = options.sessionId ? renameUsage(options.threadTotal, 1) : {};
     this.model = options.model;
     this.peer = new JsonRpcPeer({
       sink: options.sink,
@@ -310,9 +324,10 @@ export class CodexLiveDriver {
       return;
     }
     if (!this.threadTotal) {
-      // No replay: codex replays whenever the thread has usage, so a total that
-      // is exactly this call is the thread's first call, counted from zero.
-      // Otherwise this update may be a stale re-send and only sets the start.
+      // Nothing replayed or stored (a thread from before Wisp stored totals):
+      // a total that is exactly this call is taken as the thread's first call,
+      // counted from zero. Otherwise this update may be a stale re-send and
+      // only sets the start.
       const beyondLast = usageDelta(total, usageDelta(tokenUsage.last, {}));
       this.threadTotal = Object.values(beyondLast).every((amount) => amount === 0) ? {} : total;
     }
@@ -325,6 +340,14 @@ export class CodexLiveDriver {
     }
     this.threadTotal = total;
     this.lastUsage = snakeUsage(tokenUsage.last);
+  }
+
+  /** The turn's summed usage, stored with the thread's total so the next resume can start from it. */
+  private usageReport(): Record<string, unknown> | null {
+    const usage = snakeUsage(this.turnUsage);
+    const threadTotal = snakeUsage(this.threadTotal);
+    if (!usage && !threadTotal) return null;
+    return { ...usage, ...(threadTotal ? { thread_id: this.threadId, thread_total: threadTotal } : {}) };
   }
 
   handle(frame: RpcFrame): void {
@@ -375,11 +398,11 @@ export class CodexLiveDriver {
             error: record(turn.error).message
               ? turn.error
               : { message: `Codex turn ${String(turn.status ?? "failed")}` },
-            usage: snakeUsage(this.turnUsage),
+            usage: this.usageReport(),
             last_usage: this.lastUsage,
           });
         } else {
-          this.options.emit({ type: "turn.completed", usage: snakeUsage(this.turnUsage), last_usage: this.lastUsage });
+          this.options.emit({ type: "turn.completed", usage: this.usageReport(), last_usage: this.lastUsage });
         }
         this.terminal = true;
         this.options.onTerminal();

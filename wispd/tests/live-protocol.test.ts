@@ -273,7 +273,12 @@ describe("Codex live terminal events", () => {
       {
         type: "turn.failed",
         error: { message: "quota exhausted" },
-        usage: { input_tokens: 7, output_tokens: 2 },
+        usage: {
+          input_tokens: 7,
+          output_tokens: 2,
+          thread_id: "thread-1",
+          thread_total: { input_tokens: 7, output_tokens: 2 },
+        },
         last_usage: { input_tokens: 7, output_tokens: 2 },
       },
     ]);
@@ -309,7 +314,7 @@ describe("Codex live terminal events", () => {
    * update right after the resume response, excludeTurns:true or not
    * (live-probed on 0.162.1); `replay: false` covers a resume where it does not.
    */
-  async function resumedTurn(events: Record<string, any>[], replay = true) {
+  async function resumedTurn(events: Record<string, any>[], replay = true, threadTotal: object | null = null) {
     const sink = new MemorySink();
     const driver = new CodexLiveDriver({
       sink,
@@ -323,6 +328,7 @@ describe("Codex live terminal events", () => {
       initialInput: [{ type: "text", text: "hello", text_elements: [] }],
       emit: (event) => events.push(event),
       onTerminal: () => {},
+      threadTotal: threadTotal as Record<string, unknown> | null,
     });
     const initialize = await requestAt(sink, 0);
     driver.handle({ id: initialize.id, result: {} });
@@ -358,6 +364,15 @@ describe("Codex live terminal events", () => {
       cache_write_input_tokens: 0,
       output_tokens: 61 + 50 + 5,
       reasoning_output_tokens: 9,
+      thread_id: "existing-thread",
+      thread_total: {
+        total_tokens: 121_185,
+        input_tokens: 120_895,
+        cached_input_tokens: 106_880,
+        cache_write_input_tokens: 0,
+        output_tokens: 290,
+        reasoning_output_tokens: 21,
+      },
     });
     expect(completed.last_usage).toMatchObject({ input_tokens: 16_226, output_tokens: 5 });
     const parsed = parseOutput(BUILTIN_ADAPTERS.codex!, events.map((event) => JSON.stringify(event)).join("\n"));
@@ -404,6 +419,42 @@ describe("Codex live terminal events", () => {
 
     const completed = events.find((event) => event.type === "turn.completed")!;
     expect(completed.usage).toMatchObject({ input_tokens: 16_058 + 16_146, output_tokens: 61 + 50 });
+    await driver.close();
+  });
+
+  // The total Wisp stored after a thread's single earlier call: total == last.
+  const oneEarlierCall = breakdown(14_630, 14_336, 5, 0);
+  const storedTotal = {
+    total_tokens: 14_635,
+    input_tokens: 14_630,
+    cached_input_tokens: 14_336,
+    cache_write_input_tokens: 0,
+    output_tokens: 5,
+    reasoning_output_tokens: 0,
+  };
+  const afterFirstCall = breakdown(14_630 + 16_058, 14_336 + 6_784, 5 + 61, 9);
+
+  test("without a replay, the stored total makes a re-sent earlier call add nothing", async () => {
+    const events: Record<string, any>[] = [];
+    const driver = await resumedTurn(events, false, storedTotal);
+    driver.handle(usageUpdate("turn-1", oneEarlierCall, oneEarlierCall));
+    driver.handle(usageUpdate("turn-1", afterFirstCall, firstCall));
+    driver.handle(settle("completed"));
+
+    const completed = events.find((event) => event.type === "turn.completed")!;
+    expect(completed.usage).toMatchObject({ input_tokens: 16_058, output_tokens: 61 });
+    await driver.close();
+  });
+
+  test("without a replay, the stored total counts a first real call", async () => {
+    const events: Record<string, any>[] = [];
+    const driver = await resumedTurn(events, false, storedTotal);
+    driver.handle(usageUpdate("turn-1", afterFirstCall, firstCall));
+    driver.handle(settle("completed"));
+
+    const completed = events.find((event) => event.type === "turn.completed")!;
+    expect(completed.usage).toMatchObject({ input_tokens: 16_058, output_tokens: 61 });
+    expect(completed.usage.thread_total).toMatchObject({ input_tokens: 14_630 + 16_058, output_tokens: 66 });
     await driver.close();
   });
 
