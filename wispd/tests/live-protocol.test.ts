@@ -314,7 +314,7 @@ describe("Codex live terminal events", () => {
    * update right after the resume response, excludeTurns:true or not
    * (live-probed on 0.162.1); `replay: false` covers a resume where it does not.
    */
-  async function resumedTurn(events: Record<string, any>[], replay = true, threadTotal: object | null = null) {
+  async function resumedTurn(events: Record<string, any>[], replay = true, previousUsage: object | null = null) {
     const sink = new MemorySink();
     const driver = new CodexLiveDriver({
       sink,
@@ -328,7 +328,7 @@ describe("Codex live terminal events", () => {
       initialInput: [{ type: "text", text: "hello", text_elements: [] }],
       emit: (event) => events.push(event),
       onTerminal: () => {},
-      threadTotal: threadTotal as Record<string, unknown> | null,
+      previousUsage: previousUsage ? JSON.stringify(previousUsage) : null,
     });
     const initialize = await requestAt(sink, 0);
     driver.handle({ id: initialize.id, result: {} });
@@ -422,9 +422,9 @@ describe("Codex live terminal events", () => {
     await driver.close();
   });
 
-  // The total Wisp stored after a thread's single earlier call: total == last.
+  // A thread's single earlier call, so its total == last, in Wisp's stored names.
   const oneEarlierCall = breakdown(14_630, 14_336, 5, 0);
-  const storedTotal = {
+  const earlierCallStored = {
     total_tokens: 14_635,
     input_tokens: 14_630,
     cached_input_tokens: 14_336,
@@ -433,30 +433,38 @@ describe("Codex live terminal events", () => {
     reasoning_output_tokens: 0,
   };
   const afterFirstCall = breakdown(14_630 + 16_058, 14_336 + 6_784, 5 + 61, 9);
+  const storedTotal = { ...earlierCallStored, thread_id: "existing-thread", thread_total: earlierCallStored };
 
-  test("without a replay, the stored total makes a re-sent earlier call add nothing", async () => {
-    const events: Record<string, any>[] = [];
-    const driver = await resumedTurn(events, false, storedTotal);
-    driver.handle(usageUpdate("turn-1", oneEarlierCall, oneEarlierCall));
-    driver.handle(usageUpdate("turn-1", afterFirstCall, firstCall));
-    driver.handle(settle("completed"));
+  // Both orderings, starting from the stored total and from the previous
+  // turn's old-format usage (its final call, as Wisp stored before totals).
+  for (const [label, previous] of [
+    ["the stored total", storedTotal],
+    ["an old-format previous turn", earlierCallStored],
+  ] as const) {
+    test(`without a replay, ${label} makes a re-sent earlier call add nothing`, async () => {
+      const events: Record<string, any>[] = [];
+      const driver = await resumedTurn(events, false, previous);
+      driver.handle(usageUpdate("turn-1", oneEarlierCall, oneEarlierCall));
+      driver.handle(usageUpdate("turn-1", afterFirstCall, firstCall));
+      driver.handle(settle("completed"));
 
-    const completed = events.find((event) => event.type === "turn.completed")!;
-    expect(completed.usage).toMatchObject({ input_tokens: 16_058, output_tokens: 61 });
-    await driver.close();
-  });
+      const completed = events.find((event) => event.type === "turn.completed")!;
+      expect(completed.usage).toMatchObject({ input_tokens: 16_058, output_tokens: 61 });
+      await driver.close();
+    });
 
-  test("without a replay, the stored total counts a first real call", async () => {
-    const events: Record<string, any>[] = [];
-    const driver = await resumedTurn(events, false, storedTotal);
-    driver.handle(usageUpdate("turn-1", afterFirstCall, firstCall));
-    driver.handle(settle("completed"));
+    test(`without a replay, ${label} counts a first real call`, async () => {
+      const events: Record<string, any>[] = [];
+      const driver = await resumedTurn(events, false, previous);
+      driver.handle(usageUpdate("turn-1", afterFirstCall, firstCall));
+      driver.handle(settle("completed"));
 
-    const completed = events.find((event) => event.type === "turn.completed")!;
-    expect(completed.usage).toMatchObject({ input_tokens: 16_058, output_tokens: 61 });
-    expect(completed.usage.thread_total).toMatchObject({ input_tokens: 14_630 + 16_058, output_tokens: 66 });
-    await driver.close();
-  });
+      const completed = events.find((event) => event.type === "turn.completed")!;
+      expect(completed.usage).toMatchObject({ input_tokens: 16_058, output_tokens: 61 });
+      expect(completed.usage.thread_total).toMatchObject({ input_tokens: 14_630 + 16_058, output_tokens: 66 });
+      await driver.close();
+    });
+  }
 
   test("a context-window overflow resets the total without subtracting from the turn", async () => {
     // fill_to_context_window: total becomes the window with every other counter zeroed.

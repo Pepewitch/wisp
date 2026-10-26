@@ -23,8 +23,8 @@ interface CodexLiveOptions {
   initialInput: CodexLiveInput[];
   emit: (event: Record<string, unknown>) => void;
   onTerminal: () => void;
-  /** The thread's cumulative total (snake_case) that the previous turn on this session stored, if any. */
-  threadTotal?: Record<string, unknown> | null;
+  /** The usage JSON Wisp stored for the previous turn, when resuming. */
+  previousUsage?: string | null;
 }
 
 function record(value: unknown): Record<string, any> {
@@ -172,6 +172,33 @@ function snakeUsage(value: unknown): Record<string, number> | null {
   return renameUsage(value, 0);
 }
 
+function sameUsage(a: Record<string, number>, b: Record<string, number>): boolean {
+  const names = Object.keys(a);
+  return names.length > 0 && names.length === Object.keys(b).length && names.every((name) => a[name] === b[name]);
+}
+
+/**
+ * What the previous turn's stored usage says about where a resume starts.
+ * Since this change Wisp stores the thread's total, trusted only for the same
+ * thread. Before it, Wisp stored that turn's final call (`last`), which is
+ * exactly what a stale re-send at the start of the next turn carries.
+ */
+function previousStart(
+  usageJson: string | null | undefined,
+  threadId: string | null,
+): { total: Record<string, number> | null; lastCall: Record<string, number> | null } {
+  const none = { total: null, lastCall: null };
+  if (!usageJson || !threadId) return none;
+  let usage: Record<string, any>;
+  try {
+    usage = record(JSON.parse(usageJson));
+  } catch {
+    return none;
+  }
+  if (usage.thread_id === undefined) return { total: null, lastCall: renameUsage(usage, 1) };
+  return usage.thread_id === threadId ? { total: renameUsage(usage.thread_total, 1), lastCall: null } : none;
+}
+
 /** `after − before` for every counter `after` reports (camelCase breakdowns). */
 function usageDelta(after: unknown, before: Record<string, number>): Record<string, number> {
   const delta: Record<string, number> = {};
@@ -216,6 +243,8 @@ export class CodexLiveDriver {
   private lastUsage: Record<string, number> | null = null;
   /** The thread's cumulative `total` as of the latest update; unknown on a resume until it reports. */
   private threadTotal: Record<string, number> | null;
+  /** The previous turn's final call, when Wisp stored only that (before it stored totals). */
+  private readonly previousLastCall: Record<string, number> | null;
   private readonly children = new Set<string>();
 
   constructor(private readonly options: CodexLiveOptions) {
@@ -224,8 +253,12 @@ export class CodexLiveDriver {
     // (set in recordUsage), then the total Wisp stored at the end of the
     // previous turn, and only then a guess. The stored value comes before
     // guessing because a first update is ambiguous without one: an earlier
-    // call re-sent and a new call can both report total == last.
-    this.threadTotal = options.sessionId ? renameUsage(options.threadTotal, 1) : {};
+    // call re-sent and a new call can both report total == last. A replay
+    // always wins, because the stored total can lag after a compact or an
+    // attach outside Wisp spends tokens on the thread.
+    const previous = previousStart(options.previousUsage, options.sessionId);
+    this.threadTotal = options.sessionId ? previous.total : {};
+    this.previousLastCall = previous.lastCall;
     this.model = options.model;
     this.peer = new JsonRpcPeer({
       sink: options.sink,
@@ -324,12 +357,17 @@ export class CodexLiveDriver {
       return;
     }
     if (!this.threadTotal) {
-      // Nothing replayed or stored (a thread from before Wisp stored totals):
-      // a total that is exactly this call is taken as the thread's first call,
-      // counted from zero. Otherwise this update may be a stale re-send and
-      // only sets the start.
-      const beyondLast = usageDelta(total, usageDelta(tokenUsage.last, {}));
-      this.threadTotal = Object.values(beyondLast).every((amount) => amount === 0) ? {} : total;
+      // Nothing replayed and no total stored. A stale re-send repeats the
+      // previous turn's final call, which is what Wisp stored before it stored
+      // totals: an exact match is a re-send, anything else a new call. With no
+      // previous usage at all, a total that is exactly this call is taken as
+      // the thread's first call; anything more may be a re-send.
+      const last = usageDelta(tokenUsage.last, {});
+      const before = usageDelta(total, last);
+      const resent = this.previousLastCall
+        ? sameUsage(last, this.previousLastCall)
+        : Object.values(before).some((amount) => amount !== 0);
+      this.threadTotal = resent ? total : before;
     }
     const growth = usageDelta(total, this.threadTotal);
     // Only a completed call adds prompt tokens. Codex also re-sends an
