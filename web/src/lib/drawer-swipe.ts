@@ -1,8 +1,9 @@
 /**
- * The numbers behind the phone drawer's drag (hooks/useDrawerSwipe.ts): when
- * a touch becomes the drawer's, where a release sends it, and how long the
+ * The numbers behind the phone drawers' drag (hooks/useDrawerSwipe.ts): when
+ * a touch becomes a drawer's, where a release sends it, and how long the
  * rest of the way takes. Pure, so the feel is pinned by tests rather than by
- * a thumb.
+ * a thumb. Everything is measured along the drawer's own axis: x for the
+ * sidebar, y for the task sheet.
  */
 
 /**
@@ -11,9 +12,9 @@
  * taken away while the platform would still honour it.
  */
 export const DRAG_CLAIM_PX = 10
-/** How much more sideways than vertical a drag must be: a scroll that drifts is still a scroll. */
+/** How much more along the drawer's axis than across it a drag must be: a scroll that drifts is still a scroll. */
 export const DRAG_AXIS_RATIO = 1.5
-/** A release faster than this, rightward, opens whatever the progress (px/ms). */
+/** A release faster than this, toward open, opens whatever the progress (px/ms). */
 export const FLING_PX_PER_MS = 0.3
 /** Slower than this either way is a finger at rest rather than one moving (px/ms). */
 const STILL_PX_PER_MS = 0.05
@@ -26,22 +27,22 @@ const VELOCITY_WINDOW_MS = 100
  */
 const EASE_OUT_LAUNCH = 1 / 0.22
 
-/** +1 is rightward, the way the drawer opens; -1 is leftward, the way it closes. */
+/** A sign along the drawer's axis: +1 toward larger clientX / clientY (right, down), -1 the other way. */
 export type DragDirection = 1 | -1
 
 /**
- * What a touch that has moved (dx, dy) from where it went down is: still
- * undecided, the drawer's, or something else's (a scroll, the other way) for
- * the rest of its life.
+ * What a touch that has moved `along` the drawer's axis and `across` it from
+ * where it went down is: still undecided, the drawer's, or something else's
+ * (a scroll, the other way) for the rest of its life.
  */
-export function claimDrag(dx: number, dy: number, direction: DragDirection): "pending" | "claim" | "refuse" {
-  if (Math.hypot(dx, dy) < DRAG_CLAIM_PX) return "pending"
-  return Math.sign(dx) === direction && Math.abs(dx) >= DRAG_AXIS_RATIO * Math.abs(dy) ? "claim" : "refuse"
+export function claimDrag(along: number, across: number, direction: DragDirection): "pending" | "claim" | "refuse" {
+  if (Math.hypot(along, across) < DRAG_CLAIM_PX) return "pending"
+  return Math.sign(along) === direction && Math.abs(along) >= DRAG_AXIS_RATIO * Math.abs(across) ? "claim" : "refuse"
 }
 
 /**
  * Where a release sends the drawer, from how open it is (0 to 1) and the
- * finger's rightward velocity. Opening and closing share it, so a drawer
+ * finger's velocity toward open. Opening and closing share it, so a drawer
  * dragged from either end settles by the same rule.
  */
 export function settlesOpen(progress: number, velocity: number): boolean {
@@ -51,20 +52,21 @@ export function settlesOpen(progress: number, velocity: number): boolean {
 
 /**
  * How long the rest of the way takes, in ms: the token's duration for the
- * whole width, scaled to what is left, and shortened further for a finger
- * that was already moving toward the end faster than that.
+ * drawer's whole size, scaled to what is left, and shortened further for a
+ * finger that was already moving toward the end faster than that.
  */
-export function settleDuration(distance: number, width: number, velocityTowardEnd: number, fullMs: number): number {
-  if (!(distance > 0) || !(width > 0) || !(fullMs > 0)) return 0
-  const paced = fullMs * Math.min(1, distance / width)
+export function settleDuration(distance: number, size: number, velocityTowardEnd: number, fullMs: number): number {
+  if (!(distance > 0) || !(size > 0) || !(fullMs > 0)) return 0
+  const paced = fullMs * Math.min(1, distance / size)
   if (!(velocityTowardEnd > 0)) return Math.round(paced)
   return Math.round(Math.min(paced, (EASE_OUT_LAUNCH * distance) / velocityTowardEnd))
 }
 
-/** The finger's horizontal velocity over the end of a drag, in px/ms. */
+/** The finger's velocity along the drawer's axis over the end of a drag, in px/ms. */
 export class DragVelocity {
   private samples: { x: number; t: number }[] = []
 
+  /** `x` is the finger's position along the axis, whichever axis that is. */
   add(x: number, t: number): void {
     this.samples.push({ x, t })
     while (this.samples.length > 2 && t - this.samples[0]!.t > VELOCITY_WINDOW_MS) this.samples.shift()

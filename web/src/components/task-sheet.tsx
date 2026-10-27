@@ -4,6 +4,7 @@ import { Archive, ChevronRight, Pencil, Plus, Search, type FluentIcon } from "@/
 import { SubtaskCrumb } from "@/components/subtask-crumb"
 import { SummaryCard } from "@/components/task-summary-card"
 import { TOOL_ICON, TOOL_LABEL, useToolHints, type ToolHints } from "@/components/tool-hints"
+import { useDrawerSwipe } from "@/hooks/useDrawerSwipe"
 import { useTaskSummary } from "@/hooks/useTaskSummary"
 import { useTaskVerbs, type TaskVerbs } from "@/hooks/useTaskVerbs"
 import { PULL_REQUEST_ICON_TONE, pullRequestIconTone } from "@/lib/pull-request-tone"
@@ -21,7 +22,9 @@ const FOCUS = "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:out
  * screen behind it; a verb closes the sheet first, so its dialog never opens
  * under the sheet's scrim.
  *
- * A base-ui Drawer swiped down to dismiss, like the task drawer's swipe left.
+ * A base-ui Drawer dragged down to dismiss by the task drawer's own drag
+ * (useDrawerSwipe): it follows the thumb from the handle, the body or the
+ * backdrop, unless the body is scrolled down, when the drag scrolls it.
  * Its body mounts only while it is open, so the card's reads (the `/tokens`
  * report, the autopilot clock) run only while it is on screen. The verbs'
  * dialogs live outside it and outlast it.
@@ -39,13 +42,15 @@ export function TaskSheet({ task, pullRequest, turns, open, onOpenChange, tools,
   onShowChat: () => void
 }) {
   const verbs = useTaskVerbs(task)
-  const close = () => onOpenChange(false)
+  const { popupRef, backdropRef, request } = useDrawerSwipe(open, onOpenChange, { dismiss: "down" })
+  const close = () => request(false)
   return (
     <>
-      <Drawer.Root open={open} onOpenChange={onOpenChange} swipeDirection="down">
+      <Drawer.Root open={open} onOpenChange={request} swipeDirection="down">
         <Drawer.Portal>
-          <Drawer.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
+          <Drawer.Backdrop ref={backdropRef} className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
           <Drawer.Popup
+            ref={popupRef}
             className={cn(
               "wisp-sheet fixed inset-x-0 bottom-0 z-(--z-modal) mx-auto flex max-h-[88dvh] w-full max-w-[640px] flex-col",
               "rounded-t-xl border border-b-0 border-border-strong bg-popover shadow-modal outline-none",

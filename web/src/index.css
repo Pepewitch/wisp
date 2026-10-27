@@ -759,18 +759,15 @@ body[data-project-drag] * {
 }
 
 /* The phone's task sheet (task-sheet.tsx) rises from the bottom edge and
-   leaves quicker; a surface, so no spring. While a finger swipes it, it
-   follows base-ui's --drawer-swipe-movement-y with no easing at all. */
+   leaves quicker; a surface, so no spring. A thumb dragging it down
+   (useDrawerSwipe) writes its transform, and the backdrop's opacity, inline;
+   that wins over these rules until the settle is over. */
 .wisp-sheet {
-  translate: 0 var(--drawer-swipe-movement-y, 0px);
-  transition: translate var(--dur-in) var(--ease-out);
-}
-.wisp-sheet[data-swiping] {
-  transition-duration: 0ms;
+  transition: transform var(--dur-in) var(--ease-out);
 }
 .wisp-sheet[data-starting-style],
 .wisp-sheet[data-ending-style] {
-  translate: 0 100%;
+  transform: translateY(100%);
 }
 .wisp-sheet[data-ending-style] {
   transition-duration: var(--dur-out);
