@@ -311,6 +311,7 @@ wisp verify improve --note "also check dark mode"
 wisp verify fix --area web             # a task that repairs one area a reviewer could not follow
 wisp verify activate                   # make the newest draft the active recipe
 wisp verify show [file]                # list the recipe's files, or print one
+wisp verify checkout <dir> [--active]  # what a recipe task starts from: the newest draft, else the active recipe
 wisp verify fallback a|b <harness>|none  # who stands in for a reviewer after an infrastructure failure
 ```
 
@@ -322,6 +323,19 @@ recipe task runs on the reviewer agent; while that is left on each task's own
 agent, you pick the recipe task's agent there for that task alone. The button's dot says
 when a draft is waiting, a recipe task is working, or a reviewer reported a
 problem with the recipe.
+
+**A new recipe task builds on a waiting draft.** While a draft waits for you,
+a recipe task you start (improve, fix or setup) starts from that draft, not from
+the active recipe: `wisp verify checkout` hands it the newest draft, and its
+prompt says so. Its own save then replaces the waiting draft, since activation
+takes only the newest one, so the two never compete in silence. The settings
+show the draft's task and age beside **Activate draft** and **Improve on the
+draft**, and `wisp verify improve` prints a note naming the draft it builds on.
+To keep the waiting draft apart, activate it first. With no draft waiting, the
+settings show how long ago the recipe was last activated ("Recipe updated 3d
+ago"). Nothing improves the recipe on a schedule: a recipe task starts only when
+you ask, or when autopilot needs a fix for a recipe a reviewer could not follow
+and no draft is waiting.
 
 **Every change is a draft you activate.** The recipe decides what merges, so
 lowering the bar is never an agent's call alone: an agent can propose a draft,

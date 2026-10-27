@@ -1,7 +1,7 @@
 import { outputCommand, saveCommand } from "./cli-output";
 import { captureCommand } from "./cli-capture";
 import { type CommandName, offlineAnswer, respond, resolveCommand } from "./cli-help";
-import { print, printError, printRaw } from "./cli-print";
+import { ago, print, printError, printRaw } from "./cli-print";
 import {
   api,
   CliApiError,
@@ -41,14 +41,6 @@ import { BUILD_INFO, versionLine } from "./version";
 import { sourceLine } from "../../shared/turn-source";
 
 const COMMAND = wispCommand();
-
-function ago(iso: string): string {
-  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (min < 1) return "now";
-  if (min < 60) return `${min}m`;
-  if (min < 60 * 24) return `${Math.round(min / 60)}h`;
-  return `${Math.round(min / 1440)}d`;
-}
 
 /**
  * `wisp wait` exit codes, one per settled state. 'creating'/'running' are

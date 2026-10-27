@@ -113,11 +113,15 @@ wisp verify status [project] [--json]            # the project's recipe, a draft
 wisp verify setup|improve|fix [project] [--area <name>] [--note "…"] [--harness <h>] [--model <m>]
 wisp verify activate [project]                   # make the newest draft the active recipe
 wisp verify fallback a|b <harness> [--model <m>] [--effort <e>] | none [--project <path>]
-wisp verify show [file] | checkout <dir> | draft save <dir>
+wisp verify show [file] | checkout <dir> [--active | --draft <task>] | draft save <dir>
 ```
 
 The recipe lives in the Wisp home, never in the repository. `checkout` and
-`draft save` are what a recipe task runs; only a recipe task's own turn may
+`draft save` are what a recipe task runs; `checkout` gives the newest draft
+still waiting to be activated, else the active recipe (`--active` asks for the
+active one). While a draft waits, `setup`, `improve` and `fix` start a task that
+builds on it and print a note naming it: that task's save replaces the waiting
+draft, so activate the draft first to keep it apart; only a recipe task's own turn may
 save a draft, and only a person activates it (an agent's `activate` is refused).
 Resume on a task whose reviewer needs you has a fresh reviewer look at the same
 head again without spending a round.

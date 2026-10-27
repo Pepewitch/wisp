@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import type { VerificationStatus } from "../../shared/api/auto-review";
-import { mkdtempSync } from "node:fs";
+import type { VerificationCheckout, VerificationStatus } from "../../shared/api/auto-review";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
@@ -8,8 +8,11 @@ import { loadConfig, type WispConfig } from "../src/config";
 import { verificationRoute } from "../src/routes/auto-review";
 import { addProjectRoute } from "../src/routes/projects";
 import type { ModelProbeCache } from "../src/model-probes";
-import { createTask, freeSlot, newTaskId } from "../src/store";
-import { activeRecipe } from "../src/verify/recipe";
+import type { NewTaskInput } from "../src/domain/task-create";
+import { createTask, freeSlot, getTask, newTaskId, transition } from "../src/store";
+import { activateDraft, activeRecipe, projectDir, saveDraft } from "../src/verify/recipe";
+import { harnessesRoute } from "../src/routes/harnesses";
+import { startRecipeTask } from "../src/verify/reviewer";
 import { recordVerifyTask } from "../src/verify/status";
 import { created, forgetTasks } from "./autopilot-harness";
 
@@ -84,6 +87,95 @@ describe("verification routes", () => {
     recipeTask(repo); // 'creating': still at work
     const res = await call(cfg, "POST", "/api/projects/verification/tasks", { path: repo, mode: "improve", harness: "fake" });
     expect(res.status).toBe(409);
+  });
+});
+
+describe("a waiting draft", () => {
+  const DRAFT = [{ path: "RECIPE.md", content: "# Drafted" }, { path: "areas/web/AREA.md", content: "---\npaths: web/**, docs/**\nstatus: proven\n---\n" }];
+  const checkout = async (repo: string, query = "") =>
+    (await call(loadConfig(), "GET", "/api/projects/verification/checkout", undefined, `?path=${encodeURIComponent(repo)}${query}`)).json() as Promise<VerificationCheckout>;
+
+  /** A project with an active recipe, and a newer draft from a recipe task that has finished. */
+  async function project() {
+    const repo = mkdtempSync(join(tmpdir(), "wisp-verify-draft-"));
+    saveDraft(repo, "tfirst", RECIPE);
+    await activateDraft(repo, "test");
+    const drafted = recipeTask(repo);
+    transition(drafted, "running");
+    transition(drafted, "done");
+    saveDraft(repo, drafted, DRAFT);
+    return { repo, drafted };
+  }
+
+  /** Press Improve: a recipe task on a launcher that only records what it was asked to start. */
+  async function improve(repo: string) {
+    const launched: NewTaskInput[] = [];
+    const launch = async (input: NewTaskInput) => {
+      launched.push(input);
+      const id = newTaskId();
+      createTask({ id, title: input.prompt, repo_path: input.repoPath, harness: input.harness, model: null, verify_role: "recipe", slot: freeSlot() });
+      created.push(id);
+      input.prepare?.(getTask(id)!);
+      return { task: getTask(id)!, autopilot: null } as never;
+    };
+    const started = await startRecipeTask({ cfg: loadConfig(), adapters: {}, launch }, {
+      repoPath: repo, projectName: "p", mode: "improve", area: null, note: null, complaints: [], agent: { harness: "fake" }, roundId: null, actor: "web",
+    });
+    return { launched, started };
+  }
+
+  test("the status says how old the draft and the active recipe are", async () => {
+    const { repo, drafted } = await project();
+    const status = await (await call(loadConfig(), "GET", "/api/projects/verification", undefined, `?path=${encodeURIComponent(repo)}`)).json() as VerificationStatus;
+    expect(status.state).toBe("active");
+    expect(status.draft?.taskId).toBe(drafted);
+    for (const at of [status.activatedAt, status.draft?.savedAt]) {
+      expect(typeof at).toBe("string");
+      expect(Date.now() - Date.parse(at!)).toBeLessThan(60_000);
+    }
+    expect(Date.parse(status.draft!.savedAt)).toBeGreaterThanOrEqual(Date.parse(status.activatedAt!));
+  });
+
+  test("an improve starts from the newest draft, and its checkout returns the draft's files", async () => {
+    const { repo, drafted } = await project();
+    const { launched, started } = await improve(repo);
+    expect("task" in started && started.draft?.taskId).toBe(drafted);
+    const prompt = launched[0]!.firstTurnPrompt!;
+    expect(prompt).toContain(`Start from the waiting draft from task ${drafted}`);
+    expect(prompt).not.toContain("Start from the active recipe");
+
+    // what that prompt tells it to run: the newest draft, unless it asks for the active recipe
+    const fromDraft = await checkout(repo);
+    expect(fromDraft.draft?.taskId).toBe(drafted);
+    expect(fromDraft.files.find((file) => file.path === "RECIPE.md")?.content).toBe("# Drafted");
+    const fromActive = await checkout(repo, "&active=1");
+    expect(fromActive.draft).toBeNull();
+    expect(fromActive.files.find((file) => file.path === "RECIPE.md")?.content).toBe("# Fixture");
+    expect((await call(loadConfig(), "GET", "/api/projects/verification/checkout", undefined, `?path=${encodeURIComponent(repo)}&active=1&draft=${drafted}`)).status).toBe(400);
+  });
+
+  test("the daemon says its recipe tasks start from a waiting draft", async () => {
+    const models = { refresh: async () => {}, refreshIfStale: async () => {}, snapshot: () => ({}) } as unknown as ModelProbeCache;
+    const body = await harnessesRoute(new URL("http://wisp.test/api/harnesses"), loadConfig(), {}, models).json() as { features: Record<string, boolean> };
+    expect(body.features.recipeFromDraft).toBe(true);
+  });
+
+  test("a named draft's checkout dates it by its directory when its record is unreadable", async () => {
+    const { repo, drafted } = await project();
+    writeFileSync(join(projectDir(repo), "drafts", `${drafted}.json`), "{");
+    const named = await checkout(repo, `&draft=${drafted}`);
+    expect(named.draft?.taskId).toBe(drafted);
+    expect(Number.isNaN(Date.parse(named.draft!.savedAt))).toBe(false);
+  });
+
+  test("with no draft waiting, a recipe task starts from the active recipe", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "wisp-verify-draft-"));
+    saveDraft(repo, "tfirst", RECIPE);
+    await activateDraft(repo, "test");
+    const { launched, started } = await improve(repo);
+    expect("task" in started && started.draft).toBeNull();
+    expect(launched[0]!.firstTurnPrompt).toContain("Start from the active recipe");
+    expect((await checkout(repo)).draft).toBeNull();
   });
 });
 

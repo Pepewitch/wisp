@@ -8,13 +8,13 @@
  * GET  /api/projects/verification/files?path=[&file=][&draft=<task>]
  *                                                 one recipe file, or the list (active, or a task's draft)
  * GET  /api/projects/verification/rubric?path=     the review rubric with the project's own rules
- * GET  /api/projects/verification/checkout?path=[&draft=<task>]
- *                                                 every file, for `wisp verify checkout`
+ * GET  /api/projects/verification/checkout?path=[&draft=<task>|&active=1]
+ *                                                 every file, for `wisp verify checkout`: the newest draft, else the active recipe
  * POST /api/projects/verification/draft           a recipe task saves its proposal: { task, files }
  */
 import { existsSync, statSync } from "node:fs"
 import { isAbsolute, resolve } from "node:path"
-import type { AutoReviewRoundsResponse, AutoReviewVerdictBody, VerificationTaskBody } from "../../../shared/api/auto-review"
+import type { AutoReviewRoundsResponse, AutoReviewVerdictBody, VerificationCheckout, VerificationTaskBody, VerificationTaskCreated } from "../../../shared/api/auto-review"
 import type { AdapterDef } from "../adapters"
 import { autopilotRow, checkAutopilotSoon } from "../autopilot/store"
 import type { WispConfig } from "../config"
@@ -25,7 +25,7 @@ import { getTask, listTasks } from "../store"
 import { requestActor, TASK_HEADER } from "../task-audit"
 import { announceWorkflow, recordWorkflow } from "../workflows/store"
 import { projectName } from "../verify/project"
-import { activateDraft, readRecipeFile, RECIPE_INDEX, recipeFiles, RecipeError, reviewRulesSection, saveDraft, type RecipeFile } from "../verify/recipe"
+import { activateDraft, draftSavedAt, latestDraft, readRecipeFile, RECIPE_INDEX, recipeFiles, RecipeError, reviewRulesSection, saveDraft, type RecipeFile } from "../verify/recipe"
 import { rubricText } from "../verify/rubric"
 import { startRecipeTask, submitVerdict, VerdictError, verdictContextOf, verdictError } from "../verify/reviewer"
 import { reviewsOf, reviewView } from "../verify/reviews"
@@ -133,13 +133,7 @@ export function verificationRoute(
     if (project instanceof Response) return project
     return json({ text: rubricText(reviewRulesSection(readRecipeFile(project, RECIPE_INDEX))) })
   }
-  if (sub === "/checkout" && method === "GET") {
-    const project = projectPath(url.searchParams.get("path"))
-    if (project instanceof Response) return project
-    const draft = draftParam(url)
-    if (draft instanceof Response) return draft
-    return json({ files: recipeFiles(project, draft) })
-  }
+  if (sub === "/checkout" && method === "GET") return checkoutRoute(url)
   if (method !== "POST") return err("Method not allowed", 405)
   if (sub === "/tasks") return recipeTaskRoute(req, cfg, adapters, models)
   if (sub === "/activate") return activateRoute(req)
@@ -154,6 +148,29 @@ function draftParam(url: URL): string | undefined | Response {
   const draft = url.searchParams.get("draft")
   if (draft === null || draft === "") return undefined
   return DRAFT_ID.test(draft) ? draft : err("draft must be a recipe task's id", 400)
+}
+
+/**
+ * What a recipe task starts from: the newest waiting draft when there is one,
+ * else the active recipe. `draft=<task>` names one draft, `active=1` asks for
+ * the active recipe.
+ */
+function checkoutRoute(url: URL): Response {
+  const project = projectPath(url.searchParams.get("path"))
+  if (project instanceof Response) return project
+  const draft = draftParam(url)
+  if (draft instanceof Response) return draft
+  const active = url.searchParams.get("active") === "1"
+  if (draft && active) return err("draft and active name different recipes: ask for one", 400)
+  if (draft) {
+    const files = recipeFiles(project, draft)
+    return json<VerificationCheckout>({ files, draft: files.length > 0 ? { taskId: draft, savedAt: draftSavedAt(project, draft) } : null })
+  }
+  const newest = active ? null : latestDraft(project, draftTaskExists)
+  // an activation between the two reads leaves the draft empty: the active recipe is then the newest
+  const fromDraft = newest ? recipeFiles(project, newest.taskId) : []
+  if (newest && fromDraft.length > 0) return json<VerificationCheckout>({ files: fromDraft, draft: { taskId: newest.taskId, savedAt: newest.savedAt } })
+  return json<VerificationCheckout>({ files: recipeFiles(project), draft: null })
 }
 
 function fileRoute(url: URL): Response {
@@ -188,7 +205,7 @@ async function recipeTaskRoute(req: Request, cfg: WispConfig, adapters: Record<s
   })
   if ("error" in started) return err(started.error, started.status)
   emit({ type: "project", action: "update", path: project })
-  return json({ task: { id: started.task.id, title: started.task.title } }, 201)
+  return json<VerificationTaskCreated>({ task: { id: started.task.id, title: started.task.title }, draft: started.draft }, 201)
 }
 
 function agentFor(cfg: WispConfig, project: string): { harness: string; model?: string; effort?: string } | null {

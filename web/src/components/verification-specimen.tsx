@@ -49,6 +49,16 @@ const ACTIVE: VerificationStatus = {
   attention: null,
 }
 
+/** A draft waiting, its task finished: nothing at work, so Improve on the draft is ready. */
+const DRAFT_WAITING: VerificationStatus = {
+  ...ACTIVE,
+  areas: ACTIVE.areas.map((area) => ({ ...area, attention: null })),
+  task: { id: "tvr3ip", mode: "improve", area: null, state: "done", archived: false },
+}
+
+/** No draft waiting: Improve, and how old the active recipe is. */
+const RECIPE_ONLY: VerificationStatus = { ...DRAFT_WAITING, activatedAt: ago(60 * 24 * 3), draft: null }
+
 function Specimen({ status, initial, initialSecond, initialFallbacks, busy = false, message = null }: {
   status: VerificationStatus
   initial: ProjectVerifyAgent | null
@@ -67,7 +77,7 @@ function Specimen({ status, initial, initialSecond, initialFallbacks, busy = fal
   const model: VerificationFieldsModel = {
     status, now: NOW, readError: null, harnesses: HARNESSES, hidden: {}, agent, onAgentChange: setAgent,
     recipeAgent, onRecipeAgentChange: setRecipeAgent, note, onNoteChange: setNote,
-    starting: null, activating: false, busy, message, onStart: () => {}, onActivate: () => {}, onOpenTask: () => {},
+    starting: null, activating: false, busy, fromDraft: true, message, onStart: () => {}, onActivate: () => {}, onOpenTask: () => {},
     ...(initialSecond !== undefined ? { second, onSecondChange: setSecond } : {}),
     ...(initialFallbacks !== undefined
       ? { fallbacks, onFallbackChange: (role: "primary" | "second", agent: ProjectVerifyAgent | null) => setFallbacks((prev) => ({ ...prev, [role]: agent })) }
@@ -107,6 +117,23 @@ export function VerificationSpecimen() {
           Each named reviewer has an effort beside its model: the harness&apos;s levels, or its default. On a daemon
           with fallbacks, Fallback for A and Fallback for B name who stands in, once per round, when a reviewer&apos;s
           task fails on the network, its provider or setup; None leaves that round to you.
+        </p>
+      </div>
+      <div data-frame="verification-draft">
+        <Eyebrow>Verification — a draft waiting: Improve builds on it</Eyebrow>
+        <Specimen status={DRAFT_WAITING} initial={{ harness: "claude", model: "opus-5" }} />
+        <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+          While a draft waits for a person, it sits beside the action: its task and age, Activate draft, and Improve on
+          the draft in place of Improve. A recipe task started now checks out that draft, not the active recipe, so the
+          two never race; its save replaces the draft. Activate first to keep the waiting one apart.
+        </p>
+      </div>
+      <div data-frame="verification-recipe-age">
+        <Eyebrow>Verification — no draft waiting: Improve and the recipe&apos;s age</Eyebrow>
+        <Specimen status={RECIPE_ONLY} initial={{ harness: "claude", model: "opus-5" }} />
+        <p className="mt-2.5 text-[11.5px] leading-relaxed text-muted-foreground">
+          With no draft waiting, Improve sits beside how long ago a person last activated the recipe. It only says so:
+          nothing suggests or schedules an improve.
         </p>
       </div>
       <div data-frame="verification-second-off">

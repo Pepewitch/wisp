@@ -8,7 +8,7 @@
  * its own work by mistake or as a shortcut; it is no boundary against a
  * hostile process running as the same user, which can read Wisp's database.
  */
-import type { AutoReviewEvidence, AutoReviewFinding, AutoReviewSignals, AutoReviewVerdictBody } from "../../../shared/api/auto-review"
+import type { AutoReviewEvidence, AutoReviewFinding, AutoReviewSignals, AutoReviewVerdictBody, VerificationDraftRef } from "../../../shared/api/auto-review"
 import type { AdapterDef } from "../adapters"
 import type { PrSnapshot } from "../autopilot/github"
 import { repoConfigFor, type WispConfig } from "../config"
@@ -27,11 +27,11 @@ import { maxTier, numstatOf, signalsOf, tierOf } from "./depth"
 import { evidenceShortfall, requiredAreas, waiversError } from "./evidence"
 import { recipePrompt, reviewerPrompt, verdictNudge, type RecipePromptInput } from "./prompts"
 import {
-  activeRecipe, AREA_INDEX, fetchBase, fetchPullHead, matchAreas, readRecipeFile, RECIPE_INDEX, recipeSettings, recipeVersion, reviewRulesSection, type RecipeArea,
+  activeRecipe, AREA_INDEX, fetchBase, fetchPullHead, latestDraft, matchAreas, readRecipeFile, RECIPE_INDEX, recipeSettings, recipeVersion, reviewRulesSection, type RecipeArea,
 } from "./recipe"
 import { createPanelRound, endReview, finishReview, getReview, launchedReview, markReviewNudged, reviewOfTask, type PanelAgent, type ReviewRow } from "./reviews"
 import { getRound, highestTier, roundsOf, roundView, VERDICT_STATES, type RoundRow } from "./rounds"
-import { busyVerifyTask, recordVerifyTask, type VerifyMode } from "./status"
+import { busyVerifyTask, draftTaskExists, recordVerifyTask, type VerifyMode } from "./status"
 import { resolve } from "node:path"
 
 /** Starts a task the way a person's request would: the same admission, audit and launch. */
@@ -198,14 +198,21 @@ export async function launchReview(start: ReviewerStart, input: {
   return { error: `Could not start reviewer ${label}: ${created.error}` }
 }
 
-/** Start a recipe task: setting up the recipe, improving it, or fixing one area a reviewer could not follow. */
+/** The task started, and the waiting draft it starts from (null: the active recipe, or none yet). */
+type RecipeTaskStart = { task: Task; draft: VerificationDraftRef | null } | { error: string; status: number }
+
 /** Projects whose recipe task is being created right now: checked and claimed before any await. */
 const recipeAdmissions = new Set<string>()
 
+/**
+ * Start a recipe task: setting up the recipe, improving it, or fixing one
+ * area a reviewer could not follow. With a draft waiting, it starts from that
+ * draft rather than the active recipe.
+ */
 export async function startRecipeTask(start: ReviewerStart, input: {
   repoPath: string; projectName: string; mode: VerifyMode; area: string | null; note: string | null; complaints: string[]
   agent: { harness: string; model?: string; effort?: string }; roundId: string | null; actor: string
-}): Promise<{ task: Task } | { error: string; status: number }> {
+}): Promise<RecipeTaskStart> {
   // One recipe writer per project, for every caller (the API and autopilot's
   // fix): the check and the claim happen together, before anything awaits.
   const project = resolve(input.repoPath)
@@ -220,10 +227,13 @@ export async function startRecipeTask(start: ReviewerStart, input: {
   }
 }
 
-async function launchRecipeTask(start: ReviewerStart, input: Parameters<typeof startRecipeTask>[1]): Promise<{ task: Task } | { error: string; status: number }> {
+async function launchRecipeTask(start: ReviewerStart, input: Parameters<typeof startRecipeTask>[1]): Promise<RecipeTaskStart> {
+  // a waiting draft is newer than the active recipe: building on it keeps its work instead of racing it
+  const waiting = latestDraft(input.repoPath, draftTaskExists)
+  const draft = waiting ? { taskId: waiting.taskId, savedAt: waiting.savedAt } : null
   const promptInput: RecipePromptInput = {
     mode: input.mode, projectName: input.projectName, repoPath: input.repoPath, area: input.area, note: input.note,
-    complaints: input.complaints, hasRecipe: activeRecipe(input.repoPath) !== null, capture: captureAvailable(start.cfg.chromePath),
+    complaints: input.complaints, hasRecipe: activeRecipe(input.repoPath) !== null, draft, capture: captureAvailable(start.cfg.chromePath),
   }
   const title = input.mode === "setup" ? `Set up verification · ${input.projectName}`
     : input.mode === "improve" ? `Improve verification · ${input.projectName}`
@@ -238,7 +248,7 @@ async function launchRecipeTask(start: ReviewerStart, input: Parameters<typeof s
     const status = created.kind === "at-capacity" ? 429 : created.kind === "invalid" ? 400 : created.kind === "attachment" ? created.status : 409
     return { error: created.error, status }
   }
-  return { task: created.task }
+  return { task: created.task, draft }
 }
 
 /** The images a reviewer published, oldest turn first: its evidence. */

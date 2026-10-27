@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import type { VerificationTaskBody } from "../../../shared/api/auto-review";
+import type { VerificationTaskBody, VerificationTaskCreated } from "../../../shared/api/auto-review";
 import type { AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot";
 
 import { completeAuth, verifyToken } from "@/lib/api";
@@ -464,14 +464,15 @@ export function useSaveProject() {
 /**
  * POST /api/projects/verification/tasks — start a recipe task that sets up,
  * improves, or fixes one area of the project's verification recipe. Resolves
- * to the new task, which the caller may select.
+ * to the new task, which the caller may select, and the waiting draft it
+ * starts from (null on a daemon that predates it, or with none waiting).
  */
 export function useStartVerificationTask() {
   const client = useQueryClient();
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
     mutationFn: (body: VerificationTaskBody) =>
-      transport.request<{ task: { id: string; title: string } }>("/api/projects/verification/tasks", { method: "POST", body }),
+      transport.request<VerificationTaskCreated>("/api/projects/verification/tasks", { method: "POST", body }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: qk.repos });
       void client.invalidateQueries({ queryKey: qk.tasks });
