@@ -397,6 +397,11 @@
      about 130 characters and put a prompt bubble ~1000px from the prose it
      answered. Reference it with `max-w-(--reading-measure)`. */
   --reading-measure: 680px;
+  /* The summary card's gutter at the centre pane's right edge, 0 while the
+     card is folded (frontend §5n). The conversation's scroller runs under it,
+     so its scrollbar keeps to the pane's edge, and pads its content by it, so
+     the column centres beside the card. */
+  --summary-gutter: 0px;
 
   /* sidebar surface family */
   --sidebar: var(--surface);

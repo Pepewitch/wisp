@@ -48,7 +48,8 @@ export function FindBar({
         // A phone is 320px wide at its narrowest, which a right-anchored bar
         // of pointer-sized controls overflows. Touch spans the column instead
         // and every control takes its 44px hit box (§6b).
-        touch ? "inset-x-2" : "right-4"
+        // the conversation runs under the summary card's gutter; the bar stays clear of the card
+        touch ? "inset-x-2" : "right-[calc(var(--summary-gutter)+--spacing(4))]"
       )}
     >
       <div className="flex items-center gap-1.5">
