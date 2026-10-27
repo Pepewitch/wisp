@@ -15,7 +15,7 @@
     },
     "flags": {
       "cost": "free",
-      "verifiedAgainst": "2026.09.28-64d2043",
+      "verifiedAgainst": "2026.10.22-27dcf5f",
       "source": "flag tokens parsed out of 'cursor-agent --help'",
       "lists": {
         "values": [
@@ -58,7 +58,7 @@
     },
     "models": {
       "cost": "free",
-      "verifiedAgainst": "2026.09.28-64d2043",
+      "verifiedAgainst": "2026.10.22-27dcf5f",
       "source": "'cursor-agent models' (requires an authenticated CLI)",
       "note": "runtime discovery offers this whole catalog; pruning the picker is the user's, via settings' hiddenModels",
       "lists": {
@@ -96,6 +96,16 @@
           "claude-fable-5-thinking-medium",
           "claude-fable-5-thinking-xhigh",
           "claude-fable-5-xhigh",
+          "claude-haiku-5-5-high",
+          "claude-haiku-5-5-low",
+          "claude-haiku-5-5-max",
+          "claude-haiku-5-5-medium",
+          "claude-haiku-5-5-thinking-high",
+          "claude-haiku-5-5-thinking-low",
+          "claude-haiku-5-5-thinking-max",
+          "claude-haiku-5-5-thinking-medium",
+          "claude-haiku-5-5-thinking-xhigh",
+          "claude-haiku-5-5-xhigh",
           "claude-opus-4-7-high",
           "claude-opus-4-7-high-fast",
           "claude-opus-4-7-low",
@@ -193,6 +203,11 @@
           "cursor-grok-4.6-medium-fast",
           "cursor-grok-4.6-xhigh",
           "cursor-grok-4.6-xhigh-fast",
+          "deepseek-v41-flash-1017-high",
+          "deepseek-v41-flash-1017-low",
+          "deepseek-v41-flash-1017-max",
+          "deepseek-v41-flash-1017-medium",
+          "deepseek-v41-flash-1017-none",
           "gemini-3-flash",
           "gemini-3.1-pro",
           "gemini-3.5-flash",
@@ -206,6 +221,9 @@
           "gemini-3.8-flash-high",
           "gemini-3.8-flash-low",
           "gemini-3.8-flash-medium",
+          "gemini-4-argon-high",
+          "gemini-4-argon-low",
+          "gemini-4-argon-medium",
           "glm-5.2-high",
           "glm-5.2-max",
           "gpt-5-mini",
@@ -308,7 +326,13 @@
           "muse-spark-1.3-max",
           "muse-spark-1.3-medium",
           "muse-spark-1.3-minimal",
-          "muse-spark-1.3-xhigh"
+          "muse-spark-1.3-xhigh",
+          "muse-wonder-1.0-high",
+          "muse-wonder-1.0-low",
+          "muse-wonder-1.0-max",
+          "muse-wonder-1.0-medium",
+          "muse-wonder-1.0-minimal",
+          "muse-wonder-1.0-xhigh"
         ]
       },
       "scalars": {

@@ -180,7 +180,10 @@ one; each has a named refusal when absent, so the UI degrades honestly.
    with only `staticModels` has no catalog to check: the default must be *in*
    that list (validate enforces it), and every new task is then sent the id,
    so an older CLI would fail the turn. A user list that omits an inherited
-   default drops it with a warning, and `defaultModel: null` clears it. Set
+   default drops it with a warning, and `defaultModel: null` clears it. A
+   user default that the builtin's own list stops offering (a refreshed
+   lineup) falls back to the builtin's default with a warning, so removing an
+   id from a builtin's `staticModels` never stops an upgraded daemon. Set
    one only where the owner named it.
 7. **`probe`** — out-of-turn reads (`context`, the harness's own `usage`).
    The strategy declares which commands it can answer; a surface never fakes

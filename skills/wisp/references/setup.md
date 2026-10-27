@@ -177,7 +177,7 @@ harmless preferences.
   minting different identities. Do not edit either value independently.
 - `harnessDefaults` example — the default model/effort for new tasks;
   `--model`/`--effort` always win over it:
-  `"harnessDefaults": { "claude": { "model": "claude-sonnet-5", "reasoningEffort": "medium" } }`
+  `"harnessDefaults": { "claude": { "model": "claude-sonnet-5-5", "reasoningEffort": "medium" } }`
 - `hiddenModels` example — model ids the UI keeps OUT of its picker, per
   harness: `"hiddenModels": { "cursor": ["auto", "gpt-5.6-sol"] }`. A view
   filter and nothing more — every id here is still launchable by `--model`,
