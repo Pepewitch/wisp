@@ -1,3 +1,5 @@
+import type { OpenCommand } from "../adapters/running-steps";
+
 export interface BrokerRecord {
   sequence: number;
   source: "stdout" | "stderr";
@@ -95,12 +97,16 @@ export interface TurnBrokerSubscription {
   close(): void;
 }
 
-/** One bounded fan-out channel for a recorder-owned running turn. */
+/**
+ * One bounded fan-out channel for a recorder-owned running turn, and the one
+ * live fact about that turn a request needs: which command steps are running.
+ */
 export class TurnBroker {
   private readonly subscribers = new Set<BrokerSubscriber>();
   private highWaterSequence = 0;
   private primaryOffset = 0;
   private closed = false;
+  openCommands: readonly OpenCommand[] = [];
 
   publish(record: BrokerRecord): void {
     if (this.closed) return;
@@ -154,6 +160,11 @@ export function openTurnBroker(turnId: number): TurnBroker {
 
 export function subscribeTurnBroker(turnId: number): TurnBrokerSubscription | null {
   return brokers.get(turnId)?.subscribe() ?? null;
+}
+
+/** The started, unfinished command steps of a running turn its recorder saw, oldest first. */
+export function openTurnCommands(turnId: number): readonly OpenCommand[] {
+  return brokers.get(turnId)?.openCommands ?? [];
 }
 
 export function closeTurnBroker(turnId: number): void {

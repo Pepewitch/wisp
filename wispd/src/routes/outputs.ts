@@ -1,5 +1,5 @@
 import { outputImageUrl } from "../../../shared/api/outputs";
-import { MAX_OUTPUT_IMAGE_BYTES, OutputError, outputImagePath, parseOutputManifest, publishOutputImage } from "../outputs";
+import { MAX_OUTPUT_IMAGE_BYTES, OutputError, outputImagePath, parseOutputManifest, publishOutputImage, publishingStep } from "../outputs";
 import { getTask, turnForTask } from "../store";
 import { err, json } from "./http";
 import { serveAttachment } from "./task-messages";
@@ -29,7 +29,7 @@ export function outputRoute(req: Request, url: URL, path: string, method: string
   return (async () => {
     try {
       const bytes = await boundedImageBody(req);
-      const image = publishOutputImage(turn.id, bytes, name, "published");
+      const image = publishOutputImage(turn.id, bytes, name, "published", publishingStep(turn.id, "add"));
       return json({ image, url: outputImageUrl(task.id, turn.n, image.id) }, 201);
     } catch (error) {
       if (error instanceof OutputError) return err(error.message, error.status);

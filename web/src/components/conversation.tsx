@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react"
 
-import { TurnOutputs } from "@/components/turn-outputs"
+import { StepImages, TurnOutputs } from "@/components/turn-outputs"
 import { ActivityList } from "@/components/activity-list"
 import { ConversationFloat } from "@/components/conversation-float"
 import { FindBar } from "@/components/find-in-task"
@@ -48,14 +48,17 @@ import {
 import { countPendingQuestions } from "@/lib/questionnaire"
 import { duration } from "@/lib/state"
 import { sourceLabel } from "@/lib/turn-source"
+import { lookedAtLabel, placeStepImages, sharedImages, withoutPlacedImageNotes } from "@/lib/turn-images"
 import { useDaemonRuntime, useDaemonTransport } from "@/lib/runtime"
 import { scheduleConversationPaint } from "@/lib/task-switch-performance"
 import type { ConversationDetail, TaskMessage, Turn } from "@/lib/types"
+import type { OutputImage } from "../../../shared/api/outputs"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
 import type { StreamState } from "@/stream/reducer"
 
 const EMPTY_MESSAGES: TaskMessage[] = []
+const EMPTY_OUTPUTS: OutputImage[] = []
 
 /* ────────────────────────────────────────────────────────────────────────
    THE SCROLL CONTRACT (skills/wisp-dev/references/frontend.md §5)
@@ -394,6 +397,10 @@ const TurnBlock = memo(function TurnBlock({
   // Wisp's or the harness's input, labelled from its stored source; a source
   // this client cannot name keeps the person's bubble, as an older turn does
   const label = turn.source ? sourceLabel(turn.source) : null
+  // Images a tool showed the agent live in its steps; only the ones it shared
+  // follow the reply. An evicted turn has no steps, so it keeps them all here.
+  const outputs = turn.outputs ?? EMPTY_OUTPUTS
+  const shared = useMemo(() => (evicted ? outputs : sharedImages(outputs)), [evicted, outputs])
 
   return (
     <article data-turn={turn.n} data-status={turn.status} className={first ? "" : "pt-[30px]"}>
@@ -431,6 +438,8 @@ const TurnBlock = memo(function TurnBlock({
         live={live}
         loaded={expanded}
         onLoaded={setExpanded}
+        outputs={outputs}
+        removed={archived}
         autoLoad={(latest && settledWithoutResult) || revealActivity}
         onBeforeToggle={onBeforeToggle}
         renderMessage={(id) => {
@@ -446,7 +455,7 @@ const TurnBlock = memo(function TurnBlock({
       <TurnCaptureNotice taskId={taskId} turn={turn} />
 
       {conclusion && <Prose text={conclusion} className="mt-4" />}
-      <TurnOutputs taskId={taskId} turn={turn.n} outputs={turn.outputs ?? []} removed={archived} />
+      <TurnOutputs taskId={taskId} turn={turn.n} outputs={shared} removed={archived} />
 
       <TurnProgress turn={turn} hasLiveItems={Boolean(live?.items.length)} />
 
@@ -529,6 +538,8 @@ function Activity({
   live,
   loaded,
   onLoaded,
+  outputs,
+  removed,
   autoLoad = false,
   onBeforeToggle,
   renderMessage,
@@ -539,6 +550,10 @@ function Activity({
   /** a settled turn's fetched timeline — owned by TurnBlock so the conclusion rule can see it */
   loaded: TurnActivity | null
   onLoaded: (activity: TurnActivity | null) => void
+  /** the turn's images, drawn under the steps that produced them */
+  outputs: OutputImage[]
+  /** archived without its assets: images keep their names, not their bytes */
+  removed: boolean
   /** fetch on mount instead of waiting for a click — a turn with no result row */
   autoLoad?: boolean
   onBeforeToggle: (node: HTMLElement | null, before: number) => void
@@ -553,7 +568,12 @@ function Activity({
   const activity = live ?? loaded
   const items = activity?.items
   const quietEmpty = turn.operation === "compact"
-  const segments = useMemo(() => splitByMessage(items ?? []), [items])
+  const placement = useMemo(() => placeStepImages(items ?? [], outputs), [items, outputs])
+  const segments = useMemo(() => splitByMessage(withoutPlacedImageNotes(items ?? [], placement)), [items, placement])
+  const lookedAt = lookedAtLabel(outputs)
+  const stepImages = (stepId: string) => (
+    <StepImages taskId={taskId} turn={turn.n} images={placement.byStep.get(stepId) ?? []} removed={removed} step={stepId} />
+  )
 
   const load = () => {
     if (loading) return
@@ -613,6 +633,7 @@ function Activity({
         >
           <ChevronRight aria-hidden className="size-3" />
           {loading ? "Loading activity…" : "Show activity"}
+          {lookedAt && <span data-looked-at>· {lookedAt}</span>}
         </button>
       </div>
     )
@@ -637,11 +658,14 @@ function Activity({
       )}
       {segments.map((segment) => (
         <Fragment key={segment.messageId ?? "tail"}>
-          {segment.items.length > 0 && <ActivityList items={segment.items} onBeforeToggle={onBeforeToggle} />}
+          {segment.items.length > 0 && (
+            <ActivityList items={segment.items} onBeforeToggle={onBeforeToggle} stepImages={stepImages} />
+          )}
           {segment.messageId && renderMessage(segment.messageId)}
         </Fragment>
       ))}
       {!items?.length && !quietEmpty && <span className="text-[11px] text-faint">No activity in this turn</span>}
+      <StepImages taskId={taskId} turn={turn.n} images={placement.unplaced} removed={removed} />
     </div>
   )
 }

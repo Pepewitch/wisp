@@ -6,7 +6,7 @@
 import type { CaptureBody, CaptureResponse } from "../../../shared/api/captures"
 import { outputImageUrl } from "../../../shared/api/outputs"
 import { repoConfigFor, type WispConfig } from "../config"
-import { OutputError, publishOutputImage } from "../outputs"
+import { OutputError, publishOutputImage, publishingStep } from "../outputs"
 import { getTask, runningTurn } from "../store"
 import { portRange } from "../turn-input"
 import type { Task } from "../types"
@@ -190,7 +190,7 @@ async function shootAndStore(
     // checked once more right before the image lands: a turn or review that ended meanwhile gets nothing
     if (!options.admitted()) throw new CaptureFailure("cancelled", "the turn or the review ended before the shot could be stored")
     const extension = shot.mediaType === "image/png" ? "png" : "jpg"
-    const image = publishOutputImage(turn.id, shot.bytes, `${options.name ?? `capture-${base.viewport}`}.${extension}`, "published")
+    const image = publishOutputImage(turn.id, shot.bytes, `${options.name ?? `capture-${base.viewport}`}.${extension}`, "published", publishingStep(turn.id, "capture"))
     const row = recordCapture({
       ...base, status: "ok", image_id: image.id, final_url: sanitizeUrl(shot.finalUrl), http_status: shot.status, dpr: shot.dpr,
       width: shot.width, height: shot.height, media_type: shot.mediaType, clipped: shot.clipped ? 1 : 0, settled: shot.settled ? 1 : 0,

@@ -35,7 +35,7 @@ test("CLI add, list and save roundtrip actual task-owned bytes without overwriti
     const listed = await run(["output", "list", task.id, "--turn", "1"]);
     expect(listed.exit).toBe(0);
     expect(listed.out).toContain(`wisp output save ${task.id} ${image.id} --turn 1 --out <new-file>`);
-    expect(listed.out).toContain("plot.png");
+    expect(listed.out).toContain(`plot.png (${samplePng().length} bytes, shared)`);
     expect((await run(["output", "save", task.id, image.id, "--turn", "1", "--out", destination])).exit).toBe(0);
     expect(readFileSync(destination)).toEqual(samplePng());
     writeFileSync(destination, "keep local changes");

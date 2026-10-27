@@ -1,3 +1,13 @@
+/**
+ * The activity step an image came from: its `id` is the tool call id the
+ * turn's activity timeline gives that step, so a client can place the image
+ * under it; `label` names the step for a reader who cannot see the timeline.
+ */
+export interface OutputStep {
+  id: string;
+  label: string;
+}
+
 /** Images explicitly published by an agent, or captured from a native tool result. */
 export interface OutputImage {
   /** Content hash, scoped to the owning task and turn. Never a filesystem path. */
@@ -5,7 +15,22 @@ export interface OutputImage {
   name: string;
   size: number;
   mediaType: "image/png" | "image/jpeg" | "image/gif" | "image/webp";
+  /** `native`: a tool the agent ran showed it the image. `published`: the agent shared it. */
   source: "native" | "published";
+  /** Absent on images recorded before steps were kept, or when no step was running. */
+  step?: OutputStep;
+}
+
+/** The line a captured image leaves in the transcript and log in place of its bytes. */
+export function outputImageNote(image: Pick<OutputImage, "name" | "size" | "id">): string {
+  return `Image output: ${image.name} (${image.size} bytes; ${image.id})`;
+}
+
+const IMAGE_NOTE = /^(?:· )?Image output: .* \(\d+ bytes; ([0-9a-f]{64})\)$/;
+
+/** The image id an `outputImageNote` line names, or null for any other line. */
+export function outputImageNoteId(line: string): string | null {
+  return IMAGE_NOTE.exec(line.trim())?.[1] ?? null;
 }
 
 export function outputImageUrl(taskId: string, turn: number, imageId: string): string {

@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { OutputImage } from "../../shared/api/outputs";
+import type { OutputImage, OutputStep } from "../../shared/api/outputs";
 import { sniffAttachmentHeader } from "../../shared/attachment-sniff";
 import { TASKS_DIR } from "./config";
 import { emit } from "./events";
+import { openTurnCommands } from "./recording/broker";
 import { db } from "./store-database";
 import { getTask, getTurn } from "./store";
 
@@ -19,6 +20,24 @@ export class OutputError extends Error {
   constructor(message: string, readonly status = 400) { super(message); }
 }
 
+const MAX_STEP_ID_CHARS = 512;
+const MAX_STEP_LABEL_CHARS = 200;
+
+/** A step anchor from harness text, or null when the harness gave no usable id. */
+export function outputStep(id: string | null | undefined, label: string): OutputStep | null {
+  if (!id || id.length > MAX_STEP_ID_CHARS) return null;
+  const clean = label.replace(/[\p{C}\s]+/gu, " ").trim().slice(0, MAX_STEP_LABEL_CHARS).trim();
+  return { id, label: clean || "step" };
+}
+
+function parsedStep(value: unknown): OutputStep | null {
+  if (!value || typeof value !== "object") return null;
+  const { id, label } = value as Record<string, unknown>;
+  return typeof id === "string" && id.length > 0 && id.length <= MAX_STEP_ID_CHARS &&
+    typeof label === "string" && label.length > 0 && label.length <= MAX_STEP_LABEL_CHARS ? { id, label } : null;
+}
+
+/** Manifests written before steps were kept stay valid; a malformed step is dropped, not the image. */
 export function parseOutputManifest(raw: string | null | undefined): OutputImage[] {
   if (!raw) return [];
   try {
@@ -28,7 +47,11 @@ export function parseOutputManifest(raw: string | null | undefined): OutputImage
       typeof item.id === "string" && IMAGE_ID.test(item.id) &&
       typeof item.name === "string" && item.name.length > 0 && item.name.length <= 120 &&
       Number.isSafeInteger(item.size) && item.size > 0 && item.size <= MAX_OUTPUT_IMAGE_BYTES &&
-      IMAGE_TYPES.has(item.mediaType) && (item.source === "native" || item.source === "published"));
+      IMAGE_TYPES.has(item.mediaType) && (item.source === "native" || item.source === "published"))
+      .map(({ id, name, size, mediaType, source, step }) => {
+        const anchor = parsedStep(step);
+        return anchor ? { id, name, size, mediaType, source, step: anchor } : { id, name, size, mediaType, source };
+      });
   } catch { return []; }
 }
 
@@ -36,8 +59,27 @@ export function outputImagePath(taskId: string, turn: number, imageId: string): 
   return join(TASKS_DIR, taskId, "outputs", `turn-${turn}`, imageId);
 }
 
+const PUBLISHERS = { add: /\boutput\s+add\b/, capture: /\bwisp\s+capture\b/ } as const;
+
+/**
+ * The step that published an image, only when it cannot be another: exactly
+ * one command step is open on the turn, and it runs the publishing command
+ * (`wisp output add`, or `wisp capture`). With several open, any of them
+ * could have run the publication, so none is named.
+ */
+export function publishingStep(turnId: number, publisher: keyof typeof PUBLISHERS): OutputStep | null {
+  const open = openTurnCommands(turnId);
+  return open.length === 1 && PUBLISHERS[publisher].test(open[0]!.command) ? open[0]!.step : null;
+}
+
 /** Store before publishing the manifest; a failed write never advertises a missing image. */
-export function publishOutputImage(turnId: number, bytes: Uint8Array, name: string, source: OutputImage["source"]): OutputImage {
+export function publishOutputImage(
+  turnId: number,
+  bytes: Uint8Array,
+  name: string,
+  source: OutputImage["source"],
+  step: OutputStep | null = null,
+): OutputImage {
   if (bytes.length === 0) throw new OutputError("output image is empty");
   if (bytes.length > MAX_OUTPUT_IMAGE_BYTES) throw new OutputError("output image exceeds the 8 MiB limit", 413);
   const mediaType = sniffAttachmentHeader(bytes);
@@ -61,14 +103,19 @@ export function publishOutputImage(turnId: number, bytes: Uint8Array, name: stri
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const target = outputImagePath(task.id, turn.n, id);
     const temporary = `${target}.tmp-${randomUUID()}`;
-    const image: OutputImage = existing ?? { id, name: safeName, size: bytes.length, mediaType: mediaType as OutputImage["mediaType"], source };
+    // Sharing an image the agent had only looked at makes it shared, from the
+    // step that shared it; with no such step it stays under the step that showed it.
+    const promoted = existing?.source === "native" && source === "published" ? withStep({ ...existing, source }, step ?? existing.step ?? null) : null;
+    const image: OutputImage = promoted ?? existing ??
+      withStep({ id, name: safeName, size: bytes.length, mediaType: mediaType as OutputImage["mediaType"], source }, step);
     try {
       writeFileSync(temporary, bytes, { mode: 0o600, flag: "wx" });
       renameSync(temporary, target);
       if (!existing) rollbackTarget = target;
-      if (!existing) db.query("UPDATE turns SET outputs_json = ? WHERE id = ?").run(JSON.stringify([...outputs, image]), turn.id);
+      const next = promoted ? outputs.map((output) => output.id === id ? promoted : output) : existing ? null : [...outputs, image];
+      if (next) db.query("UPDATE turns SET outputs_json = ? WHERE id = ?").run(JSON.stringify(next), turn.id);
     } finally { rmSync(temporary, { force: true }); }
-    added = !existing;
+    added = !existing || Boolean(promoted);
     return image;
   });
   let image: OutputImage;
@@ -84,6 +131,11 @@ export function publishOutputImage(turnId: number, bytes: Uint8Array, name: stri
     emit({ type: "outputs", taskId: turn.task_id, n: turn.n, outputs: parseOutputManifest(turn.outputs_json) });
   }
   return image;
+}
+
+function withStep(image: OutputImage, step: OutputStep | null): OutputImage {
+  const { step: _replaced, ...rest } = image;
+  return step ? { ...rest, step } : rest;
 }
 
 /** Strict base64: Buffer.from alone silently accepts malformed or truncated data. */

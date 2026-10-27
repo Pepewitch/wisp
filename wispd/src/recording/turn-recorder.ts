@@ -6,7 +6,8 @@ import {
   type OutcomeCheckpointV1,
   type ParsedTurn,
 } from "../adapters";
-import { externalizeOutputImages } from "../adapters/output-images";
+import { createOutputImageCapture, type OutputImageCapture } from "../adapters/output-images";
+import { createRunningStepTracker } from "../adapters/running-steps";
 import { JsonLineBuffer } from "../adapters/live/json-lines";
 import { transcriptBudgetBytes, type WispConfig } from "../config";
 import { setTurnCaptureCheckpoint } from "../store";
@@ -123,6 +124,8 @@ export class TurnRecorder {
   private readonly budget: SequencedRecordBudget;
   private readonly tail: TailWindow;
   private readonly broker: TurnBroker;
+  private readonly images: OutputImageCapture;
+  private readonly steps: ReturnType<typeof createRunningStepTracker>;
   private diagnostic: TurnDiagnosticWriter | null;
   private readonly transcriptBudget: number;
   private readonly criticalLaneBytes: number;
@@ -162,6 +165,8 @@ export class TurnRecorder {
     this.budget = new SequencedRecordBudget(ordinaryBytes - tailBytes, MAX_PRIMARY_RECORDS);
     this.tail = new TailWindow(tailBytes, TAIL_MAX_RECORDS);
     this.broker = openTurnBroker(turnId);
+    this.images = createOutputImageCapture(def, turnId, (note) => this.recordNote(note));
+    this.steps = createRunningStepTracker(def);
     this.diagnostic = createTurnDiagnosticWriter(turnId, cfg);
     this.broker.setPrimaryOffset(this.outOffset);
     this.persistCheckpoint(true);
@@ -261,11 +266,12 @@ export class TurnRecorder {
 
   private recordParsed(event: Record<string, unknown>, originalBytes?: number): void {
     if (this.finished) return;
-    const externalized = externalizeOutputImages(event, this.def, this.turnId, (note) => this.recordNote(note));
+    const externalized = this.images(event);
     const projected = boundJsonRecord(externalized, {}, externalized === event ? originalBytes : undefined);
     const bounded = projected.value && !Array.isArray(projected.value) && typeof projected.value === "object"
       ? projected.value as Record<string, unknown>
       : null;
+    if (bounded && this.steps) this.broker.openCommands = this.steps(bounded);
     this.recordProjectedLine(projected.json, externalized, bounded, categoryOf(bounded, "stdout"));
   }
 
