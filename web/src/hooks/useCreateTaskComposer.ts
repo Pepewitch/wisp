@@ -10,6 +10,14 @@ import {
   writeCreateTaskDraft,
   writePendingAttachmentCount,
 } from "@/lib/drafts"
+import {
+  loadPreferredEfforts,
+  preferredEffortFor,
+  preferredEffortsStorageKey,
+  savePreferredEffort,
+  seededEffort,
+  type PreferredEfforts,
+} from "@/lib/effort"
 import { initialChoice, modelOptionsFor, type ModelChoice } from "@/lib/model-choice"
 import type { HarnessInfo, TaskMode } from "@/lib/types"
 
@@ -23,9 +31,10 @@ export function useCreateTaskComposer(
   const [saved] = useState(() => readCreateTaskDraft(connectionId, repoPath))
   const [prompt, setPrompt] = useState(saved?.prompt ?? "")
   const [choice, setChoice] = useState<ModelChoice | null>(() => saved?.choice ?? initialChoice(harnesses, preferredChoice))
-  const [effort, setEffort] = useState(
-    () => saved?.effort ?? harnesses.find((h) => h.name === choice?.harness)?.defaults.reasoningEffort ?? "",
-  )
+  const stars = usePreferredEfforts(connectionId)
+  const seedFor = (next: ModelChoice | null) =>
+    seededEffort(connectionId, harnesses.find((h) => h.name === next?.harness), next?.model, stars.preferred)
+  const [effort, setEffort] = useState(() => saved?.effort ?? seedFor(choice))
   const [fast, setFast] = useState(saved?.fast ?? false)
   const [mode, setMode] = useState<TaskMode>(saved?.mode ?? "worktree")
   // A base override belongs to this task, not the project's resolved default.
@@ -59,17 +68,47 @@ export function useCreateTaskComposer(
     writePendingAttachmentCount(connectionId, createTaskScope(repoPath), attachments.list.length)
   }, [connectionId, repoPath, attachments.list.length])
 
-  const reseedForHarness = (name: string) => {
-    const destination = harnesses.find((candidate) => candidate.name === name)
-    setEffort(destination?.defaults.reasoningEffort ?? "")
+  const reseedForChoice = (next: ModelChoice) => {
+    const destination = harnesses.find((candidate) => candidate.name === next.harness)
+    setEffort(seedFor(next))
     if (!destination?.hasFastMode) setFast(false)
     // another model brings its own task defaults, the way it brings its effort
     autopilot.reset()
   }
 
+  const preferredEffort = stars.starFor(choice)
+  const togglePreferredEffort = (level: string) => stars.toggle(choice, level)
+
   return {
     prompt, setPrompt, choice, setChoice, effort, setEffort, fast, setFast,
     mode, setMode, base, setBase, autopilot, suffixPromptId, setSuffixPromptId,
-    harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForHarness,
+    harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForChoice,
+    preferredEffort, togglePreferredEffort,
   }
+}
+
+/**
+ * The effort stars, one level per harness · model. Like the model star they
+ * seed future dialogs and model switches only: toggling one leaves the effort
+ * already in the composer as it is.
+ */
+function usePreferredEfforts(connectionId: string) {
+  const [preferred, setPreferred] = useState<PreferredEfforts>(() => loadPreferredEfforts(connectionId))
+  useEffect(() => {
+    const key = preferredEffortsStorageKey(connectionId)
+    // `key` is null when another tab cleared the whole store
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === key || event.key === null) setPreferred(loadPreferredEfforts(connectionId))
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [connectionId])
+  const starFor = (choice: ModelChoice | null) =>
+    choice ? preferredEffortFor(preferred, choice.harness, choice.model) : null
+  const toggle = (choice: ModelChoice | null, level: string) => {
+    if (!choice) return
+    const next = starFor(choice) === level ? null : level
+    setPreferred(savePreferredEffort(connectionId, choice.harness, choice.model, next))
+  }
+  return { preferred, starFor, toggle }
 }

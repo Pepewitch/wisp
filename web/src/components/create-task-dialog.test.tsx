@@ -1,9 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { clearRememberedAttachments } from "@/lib/attachments"
 import { createDesktopTransport } from "@/lib/desktop-transport"
 import { clearConnectionDrafts, connectionLocalData } from "@/lib/drafts"
+import { preferredEffortsStorageKey, savePreferredEffort } from "@/lib/effort"
 import type { DaemonTransport } from "@/lib/transport"
 import type { HarnessInfo, RepoInfo } from "@/lib/types"
 import { sameOriginWebTransport } from "@/lib/web-transport"
@@ -509,5 +510,175 @@ describe("auto-merge and auto-fix at creation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Manual PR" }))
     await screen.findByRole("menuitemcheckbox", { name: "Auto-merge" })
     expect(screen.queryByRole("menuitemcheckbox", { name: "Auto-review" })).toBeNull()
+  })
+})
+
+/**
+ * The effort star seeds a fresh dialog, or a switch to that model, with one
+ * level per harness · model. It never changes a level already in the composer.
+ */
+describe("preferred effort", () => {
+  const levels = ["low", "medium", "high", "max"]
+  const effortHarness = (name: string, models: string[], reasoningEffort?: string): HarnessInfo => ({
+    name,
+    hasModel: true,
+    hasEffort: true,
+    hasImage: false,
+    defaults: { model: models[0], ...(reasoningEffort ? { reasoningEffort } : {}) },
+    models: { list: models, defaultModel: models[0] ?? null, probedAt: "2026-09-01T00:00:00.000Z" },
+    effortLevels: levels,
+  })
+  // the same model id on two harnesses: a star must not cross from one to the other
+  const effortHarnesses = [effortHarness("claude", ["opus", "sonnet"], "medium"), effortHarness("droid", ["opus"])]
+  const sent: Record<string, unknown>[] = []
+
+  afterEach(() => {
+    localStorage.clear()
+    sent.length = 0
+  })
+
+  function mount(list = effortHarnesses) {
+    const request = ((path: string, init?: { body?: Record<string, unknown> }) => {
+      if (path === "/api/settings") return Promise.resolve({ hiddenModels: {} })
+      if (path === "/api/harnesses") return Promise.resolve({ harnesses: list, features: {} })
+      if (path === "/api/tasks") sent.push(init?.body ?? {})
+      return Promise.resolve({ id: "synthetic-task" })
+    }) as unknown as DaemonTransport["request"]
+    return render(
+      <CreateTaskDialog
+        open
+        onOpenChange={() => {}}
+        initialRepoPath="/repo"
+        repos={[repo]}
+        harnesses={list}
+        harnessesError={null}
+        onCreated={() => {}}
+      />,
+      { wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", { request })) },
+    )
+  }
+  const effortButton = (level: string) => screen.findByRole("button", { name: level })
+  // Escape from the open menu itself: focus may sit on a star, outside base-ui's item handling
+  const closeMenu = () =>
+    fireEvent.keyDown(screen.queryByRole("menu") ?? document.activeElement ?? document.body, { key: "Escape" })
+  async function pickModel(harnessName: string, model: string) {
+    fireEvent.click(await screen.findByRole("button", { name: /^(claude|droid)\b/ }))
+    const group = await screen.findByRole("group", { name: harnessName })
+    fireEvent.click(within(group).getByRole("menuitemradio", { name: new RegExp(`^${model}`) }))
+    closeMenu()
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull())
+  }
+  async function create(count: number) {
+    fireEvent.change(screen.getByPlaceholderText("What do you want to work on?"), {
+      target: { value: `task ${count}` },
+    })
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
+    await waitFor(() => expect(sent).toHaveLength(count))
+  }
+
+  it("a star seeds the next dialog, not the open one", async () => {
+    const first = mount()
+    fireEvent.click(await effortButton("medium"))
+    const star = await screen.findByRole("button", { name: "Prefer effort high for claude · opus" })
+    expect(star).toHaveAttribute("aria-pressed", "false")
+    fireEvent.click(star)
+    expect(
+      screen.getByRole("button", { name: "Clear preferred effort high for claude · opus" }),
+    ).toHaveAttribute("aria-pressed", "true")
+    closeMenu()
+    expect(await effortButton("medium")).toBeInTheDocument()
+    await create(1)
+    expect(sent[0]).toMatchObject({ harness: "claude", model: "opus", effort: "medium" })
+
+    first.unmount()
+    mount()
+    expect(await effortButton("high")).toBeInTheDocument()
+    await create(2)
+    expect(sent[1]).toMatchObject({ harness: "claude", model: "opus", effort: "high" })
+  })
+
+  it("a model switch takes that pair's star, else the harness default, and switching back restores it", async () => {
+    savePreferredEffort("test-connection", "claude", "opus", "high")
+    mount()
+    expect(await effortButton("high")).toBeInTheDocument()
+
+    await pickModel("claude", "sonnet")
+    expect(await effortButton("medium")).toBeInTheDocument()
+
+    // droid · opus is another pair: no star, and droid configures no default
+    await pickModel("droid", "opus")
+    expect(await effortButton("Effort")).toBeInTheDocument()
+    fireEvent.click(await effortButton("Effort"))
+    fireEvent.click(await screen.findByRole("button", { name: "Prefer effort low for droid · opus" }))
+    expect(screen.getByRole("button", { name: "Prefer effort high for droid · opus" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
+    closeMenu()
+
+    await pickModel("claude", "opus")
+    expect(await effortButton("high")).toBeInTheDocument()
+    await pickModel("claude", "sonnet")
+    expect(await effortButton("medium")).toBeInTheDocument()
+    await pickModel("droid", "opus")
+    expect(await effortButton("low")).toBeInTheDocument()
+  })
+
+  it("never overwrites a level picked by hand, and the filled star clears it", async () => {
+    savePreferredEffort("test-connection", "claude", "opus", "high")
+    const first = mount()
+    fireEvent.click(await effortButton("high"))
+    // a radio row keeps its menu open, so the star sits right beside the pick
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: /^max/ }))
+    fireEvent.click(await screen.findByRole("button", { name: "Prefer effort low for claude · opus" }))
+    // one star per pair: starring low moved it off high
+    expect(screen.getByRole("button", { name: "Prefer effort high for claude · opus" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Clear preferred effort low for claude · opus" }))
+    expect(screen.queryByRole("button", { name: /^Clear preferred effort/ })).toBeNull()
+    closeMenu()
+    expect(await effortButton("max")).toBeInTheDocument()
+    await create(1)
+    expect(sent[0]).toMatchObject({ effort: "max" })
+
+    first.unmount()
+    mount()
+    expect(await effortButton("medium")).toBeInTheDocument()
+  })
+
+  it("picks up a star another tab saved, for the next model switch", async () => {
+    mount()
+    expect(await effortButton("medium")).toBeInTheDocument()
+    // another tab stars claude · sonnet: this composer's own save path never ran
+    savePreferredEffort("test-connection", "claude", "sonnet", "max")
+    window.dispatchEvent(new StorageEvent("storage", { key: preferredEffortsStorageKey("test-connection") }))
+    await pickModel("claude", "sonnet")
+    expect(await effortButton("max")).toBeInTheDocument()
+    // and this tab's own star keeps the other tab's
+    fireEvent.click(await effortButton("max"))
+    fireEvent.click(await screen.findByRole("button", { name: "Prefer effort low for claude · sonnet" }))
+    closeMenu()
+    await pickModel("claude", "opus")
+    fireEvent.click(await effortButton("medium"))
+    fireEvent.click(await screen.findByRole("button", { name: "Prefer effort high for claude · opus" }))
+    closeMenu()
+    expect(JSON.parse(localStorage.getItem(preferredEffortsStorageKey("test-connection"))!)).toEqual({
+      "claude\u0000sonnet": "low",
+      "claude\u0000opus": "high",
+    })
+  })
+
+  it("ignores a star the harness no longer offers, and does not send it", async () => {
+    savePreferredEffort("test-connection", "claude", "opus", "ultra")
+    mount()
+    expect(await effortButton("medium")).toBeInTheDocument()
+    fireEvent.click(await effortButton("medium"))
+    expect(await screen.findByRole("menuitemradio", { name: /^high/ })).toBeInTheDocument()
+    expect(screen.queryByRole("menuitemradio", { name: /^ultra/ })).toBeNull()
+    closeMenu()
+    await create(1)
+    expect(sent[0]).toMatchObject({ harness: "claude", model: "opus", effort: "medium" })
   })
 })

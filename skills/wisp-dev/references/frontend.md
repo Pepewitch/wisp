@@ -547,7 +547,7 @@ control bar under it. Project, harness·model and effort are decisions you make
 rarely, so they are dropdowns in that bar — never a stack of labelled fields
 above the prompt, which buries the one thing you came to type.
 
-Five contract rules the modal must keep:
+Six contract rules the modal must keep:
 
 - **Never hardcode a model id or effort value *in the UI*.** Options come from
   `GET /api/harnesses`; the harness→model dropdown is ONE control, grouped by
@@ -580,6 +580,15 @@ Five contract rules the modal must keep:
   project's draft. A restored draft keeps its model until that project is
   successfully created. The preference is client-local and connection-scoped;
   a missing or retired model falls back normally for a new draft.
+- **Every effort row has the same star, for one harness · model.** Each pair
+  has at most one starred level (`wisp_connection:<id>:preferred_effort`).
+  A fresh dialog, or a switch to that model inside one, opens at the star
+  while the Effort menu still offers it, else at the configured default as
+  before. Starring never changes the level already in the open composer, and
+  a star the menu no longer offers is ignored, never sent. Only listed rows
+  carry a star, so a Custom level can be starred once it has run here. A
+  save re-reads the stored map and changes only its own pair, and an open
+  composer picks up another tab's stars from the `storage` event.
 
 An unfinished create composer stays in webview memory when the dialog closes:
 prompt, raw pending files and task choices restore for the same project on the
