@@ -64,8 +64,10 @@ const COMMAND_USAGE = {
   verify: `  ${COMMAND} verify status [project] [--json]        the project's verification recipe: areas, draft, recipe task, reviewer
   ${COMMAND} verify show [file] [--project <path>]   list the recipe's files, or print one (--draft <task> reads a draft)
   ${COMMAND} verify checkout <dir> | draft save <dir> what a recipe task runs to edit and propose the recipe
+                                                    (checkout: the newest waiting draft, else the active recipe; --active, --draft <task>)
   ${COMMAND} verify setup|improve|fix [project] [--area <name>] [--note "…"] [--harness <h>] [--model <m>]
-                                                    start a task that sets up or fixes the recipe (kept in Wisp, never the repo)
+                                                    start a task that sets up or fixes the recipe (kept in Wisp, never the repo);
+                                                    with a draft waiting, the task starts from that draft and says so
   ${COMMAND} verify activate [project]               make the newest draft the active recipe
   ${COMMAND} verify fallback a|b <harness>|none [--model <m>] [--effort <e>] [--project <path>]
                                                     who reviews in reviewer A's or B's place, once per round, when its task

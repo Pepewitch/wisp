@@ -136,9 +136,10 @@ export function VerificationSection({
         ...(runsOn.effort ? { effort: runsOn.effort } : {}),
       },
       {
-        onSuccess: ({ task }) => {
+        onSuccess: ({ task, draft }) => {
           setNote("")
-          setMessage({ tone: "info", text: `Started ${task.title}.`, taskId: task.id })
+          const from = draft ? `, starting from the draft from task ${draft.taskId}` : ""
+          setMessage({ tone: "info", text: `Started ${task.title}${from}.`, taskId: task.id })
           // the task is selected behind the dialog: closing it lands on the task
           openTask(task.id)
         },
@@ -271,11 +272,7 @@ export function VerificationFields(model: VerificationFieldsModel) {
   return (
     <div className="flex flex-col gap-3">
       <div>
-        <StateLine
-          dot={status.state === "none" ? "bg-border-strong" : "bg-state-done"}
-          text={verificationStateLine(status)}
-          after={status.activatedAt ? `activated ${fromNow(status.activatedAt, now)}` : null}
-        />
+        <StateLine dot={status.state === "none" ? "bg-border-strong" : "bg-state-done"} text={verificationStateLine(status)} after={null} />
         {status.areas.length > 0 && (
           <ul className="mt-1.5 flex flex-col gap-1 pl-[14px]">
             {status.areas.map((area) => (
@@ -310,26 +307,6 @@ export function VerificationFields(model: VerificationFieldsModel) {
           </div>
         )}
       </div>
-
-      {status.draft && (
-        <div className="flex flex-wrap items-center gap-2">
-          <StateLine
-            dot="bg-muted-foreground"
-            text={`Draft ready · ${status.draft.areas.length} ${status.draft.areas.length === 1 ? "area" : "areas"}`}
-            after={`saved ${fromNow(status.draft.savedAt, now)}`}
-          />
-          <span className="ml-auto flex items-center gap-1.5">
-            {onOpenTask && (
-              <Button type="button" size="lg" onClick={() => onOpenTask(status.draft!.taskId)}>
-                Open its task
-              </Button>
-            )}
-            <Button type="button" tone="outline" size="lg" disabled={model.activating} onClick={model.onActivate}>
-              {model.activating ? "Activating…" : "Activate draft"}
-            </Button>
-          </span>
-        </div>
-      )}
 
       {task && (
         <div className="flex items-center gap-2">
@@ -381,10 +358,54 @@ export function VerificationFields(model: VerificationFieldsModel) {
         )}
       />
 
+      {status.draft && <WaitingDraft draft={status.draft} now={now} onOpenTask={onOpenTask} />}
+
       <div className="flex flex-wrap items-center gap-2">
-        {status.state === "none" ? startButton("setup", "Set up verification") : startButton("improve", "Improve")}
+        {status.state === "none"
+          ? startButton("setup", status.draft ? "Set up from the draft" : "Set up verification")
+          : startButton("improve", status.draft ? "Improve on the draft" : "Improve")}
+        {status.draft ? (
+          <Button type="button" tone="outline" size="lg" disabled={model.activating} onClick={model.onActivate}>
+            {model.activating ? "Activating…" : "Activate draft"}
+          </Button>
+        ) : (
+          status.activatedAt && (
+            <span className="shrink-0 text-[11.5px] text-muted-foreground">Recipe updated {fromNow(status.activatedAt, now)}</span>
+          )
+        )}
         <ActionNote message={message} blocked={blocked} onOpenTask={onOpenTask} />
       </div>
+    </div>
+  )
+}
+
+/**
+ * A draft waiting for a person: whose it is and how old. A recipe task started
+ * now builds on it (and its save replaces it), so the buttons below say so.
+ */
+function WaitingDraft({ draft, now, onOpenTask }: { draft: NonNullable<VerificationStatus["draft"]>; now: number; onOpenTask?: (taskId: string) => void }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        {/* wraps rather than truncates: on a phone the task id is the part that must stay */}
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px]">
+          <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
+          <span className="text-foreground">
+            Draft waiting from task <span className="font-mono">{draft.taskId}</span>
+          </span>
+          <span className="text-[11.5px] text-muted-foreground">
+            · {draft.areas.length} {draft.areas.length === 1 ? "area" : "areas"} · saved {fromNow(draft.savedAt, now)}
+          </span>
+        </div>
+        {onOpenTask && (
+          <Button type="button" size="lg" className="ml-auto" onClick={() => onOpenTask(draft.taskId)}>
+            Open its task
+          </Button>
+        )}
+      </div>
+      <p className="pl-[14px] text-[11px] leading-relaxed text-faint">
+        A recipe task started now begins from this draft, and its save replaces it. Activate first to keep this one apart.
+      </p>
     </div>
   )
 }

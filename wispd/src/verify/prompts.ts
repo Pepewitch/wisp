@@ -5,7 +5,7 @@
  * The rules are written once and given to both sides: the author's turns
  * are pointed at the same recipe the reviewer judges by (autopilot notes).
  */
-import type { AutoReviewRole, AutoReviewRound, AutoReviewSignals, AutoReviewTier } from "../../../shared/api/auto-review"
+import type { AutoReviewRole, AutoReviewRound, AutoReviewSignals, AutoReviewTier, VerificationDraftRef } from "../../../shared/api/auto-review"
 import { wispCommand } from "../command"
 import { AREA_INDEX, RECIPE_INDEX, recipeDir, withoutReviewRules, type RecipeArea } from "./recipe"
 import { LENSES, rubricLines } from "./rubric"
@@ -256,6 +256,8 @@ export interface RecipePromptInput {
   /** for fix: what the reviewers reported */
   complaints: string[]
   hasRecipe: boolean
+  /** a draft waiting for a person to activate it: the task starts from it, not from the active recipe */
+  draft: VerificationDraftRef | null
   /** Wisp found a Chrome, so `wisp capture` works here */
   capture: boolean
 }
@@ -273,7 +275,9 @@ export function recipePrompt(input: RecipePromptInput): string {
     "## Where the recipe lives",
     "The recipe is Wisp's, not the repository's: other people work in this repo with their own tools, so nothing you write here may land in it.",
     "- Work in a scratch directory OUTSIDE this worktree, e.g. `mktemp -d`.",
-    ...(input.hasRecipe ? [`- Start from the active recipe: \`${COMMAND} verify checkout <dir>\`.`] : []),
+    ...(input.draft
+      ? [`- Start from the waiting draft from task ${input.draft.taskId} (saved ${input.draft.savedAt}, not activated yet), not from the active recipe: \`${COMMAND} verify checkout <dir>\` checks out the newest draft. Keep its changes unless they are wrong: activation takes only the newest draft, so your save replaces it.`]
+      : input.hasRecipe ? [`- Start from the active recipe: \`${COMMAND} verify checkout <dir>\`.`] : []),
     `- Save your proposal with \`${COMMAND} verify draft save <dir>\`. It validates the files and keeps them as a draft; a person activates it. Save again after every fix: the newest save wins.`,
     "- Never commit, push or open a pull request. Product code is not yours to change in this task: if the app itself is broken, say so in your final message.",
     "",

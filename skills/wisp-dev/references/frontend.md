@@ -673,8 +673,7 @@ and the modal says so once at the top rather than four times.
 - **Verification** (`project-verification.tsx`, only with
   `features.autoReview`) is the project's verification recipe, which lives in
   the Wisp home and never in the repo: its state as a dot plus muted text, its
-  areas (proven or not, and what a reviewer reported), a waiting draft with
-  **Activate draft** (outline: the modal's one primary stays Save), the recipe
+  areas (proven or not, and what a reviewer reported), the recipe
   task at work with Open, the **Reviewer agent** (saved with Save as `verify`),
   the **Second reviewer** under it (only with `features.reviewPanel`: *Same
   agent as the reviewer* = null, *Off — one reviewer* = `"off"`, or a model
@@ -685,6 +684,12 @@ and the modal says so once at the top rather than four times.
   *None — the round needs you* = null, or a model from the same list; saved as
   `verifyFallback` and `verifySecondFallback`, each sent only once a person
   picked one), and a note with **Set up verification** / **Improve** and a per-area **Fix**.
+  A waiting draft sits beside that action, its task and age with Open, and turns
+  the button into **Improve on the draft** (**Set up from the draft** with no
+  recipe yet) next to **Activate draft** (outline: the modal's one primary stays
+  Save), because a recipe task then starts from the draft. With no draft, the
+  button has the active recipe's age beside it ("Recipe updated 3d ago", from
+  `activatedAt`); nothing nags or schedules an improve.
   A named reviewer on an effort-capable harness has an effort menu beside its
   model: *Harness default*, which saves no `effort`, and the harness's levels
   (`effortOptions`, as the composer offers them); the current effort stays

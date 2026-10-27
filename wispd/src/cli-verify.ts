@@ -7,10 +7,10 @@
  */
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { isAbsolute, join, resolve } from "node:path"
-import type { VerificationStatus } from "../../shared/api/auto-review"
+import type { VerificationCheckout, VerificationDraftRef, VerificationStatus, VerificationTaskCreated } from "../../shared/api/auto-review"
 import type { Flags } from "./cli-args"
 import { api, CliApiError, daemonRequest, exitApi } from "./cli-api"
-import { print, printError, printJson } from "./cli-print"
+import { ago, print, printError, printJson } from "./cli-print"
 import { wispCommand } from "./command"
 import { controlFree } from "./control-free"
 
@@ -18,7 +18,7 @@ const COMMAND = wispCommand()
 
 export const VERIFY_USAGE = `usage: ${COMMAND} verify status [project] [--json]
        ${COMMAND} verify show [file] [--project <path>] [--draft <task>]
-       ${COMMAND} verify checkout <dir> [--project <path>] [--draft <task>]
+       ${COMMAND} verify checkout <dir> [--project <path>] [--draft <task> | --active]
        ${COMMAND} verify draft save <dir>
        ${COMMAND} verify setup|improve|fix [project] [--area <name>] [--note "…"] [--harness <h>] [--model <m>] [--effort <e>]
        ${COMMAND} verify activate [project]
@@ -28,6 +28,17 @@ export const VERIFY_USAGE = `usage: ${COMMAND} verify status [project] [--json]
 /** What a draft directory may hold before anything is sent: the daemon checks the rest. */
 const MAX_FILES = 300
 const MAX_BYTES = 4 * 1024 * 1024
+
+/** "3h ago", or "just now". */
+const since = (iso: string): string => {
+  const age = ago(iso)
+  return age === "now" ? "just now" : `${age} ago`
+}
+
+/** What a new recipe task builds on when a draft waits: said, so it never competes with that draft unseen. */
+function draftNote(draft: VerificationDraftRef): string {
+  return `this task starts from the waiting draft from task ${draft.taskId} (saved ${since(draft.savedAt)}), not the active recipe, and its save replaces that draft. To keep that draft apart, activate it first: ${COMMAND} verify activate`
+}
 
 function usage(): never {
   printError(VERIFY_USAGE)
@@ -50,12 +61,13 @@ const query = (project: string, extra: Record<string, string | undefined> = {}):
 }
 
 export function formatVerification(status: VerificationStatus, project: string): string {
-  const lines = [`${controlFree(project)}: ${status.state === "active" ? `recipe ${status.version ?? "?"}, ${status.areas.length} area${status.areas.length === 1 ? "" : "s"}` : "no verification recipe yet"}`]
+  const activated = status.activatedAt ? `, activated ${since(status.activatedAt)}` : ""
+  const lines = [`${controlFree(project)}: ${status.state === "active" ? `recipe ${status.version ?? "?"}, ${status.areas.length} area${status.areas.length === 1 ? "" : "s"}${activated}` : "no verification recipe yet"}`]
   for (const area of status.areas) {
     lines.push(`  ${area.name} (${area.status}) · ${area.paths.join(", ")}${area.attention ? `\n    needs attention: ${controlFree(area.attention)}` : ""}`)
   }
   if (status.attention) lines.push(`  needs attention: ${controlFree(status.attention)}`)
-  if (status.draft) lines.push(`  draft from task ${status.draft.taskId} (${status.draft.areas.length} areas) — activate with: ${COMMAND} verify activate`)
+  if (status.draft) lines.push(`  draft from task ${status.draft.taskId} (${status.draft.areas.length} areas, saved ${since(status.draft.savedAt)}) — activate with: ${COMMAND} verify activate`)
   if (status.task) lines.push(`  recipe task ${status.task.id} (${status.task.mode}${status.task.area ? ` ${status.task.area}` : ""}): ${status.task.state}`)
   const agent = (named: { harness: string; model: string | null; effort?: string | null }) =>
     `${named.harness}${named.model ? ` ${named.model}` : ""}${named.effort ? ` (${named.effort} effort)` : ""}`
@@ -114,9 +126,11 @@ async function checkout(dir: string | undefined, flags: Flags): Promise<void> {
   if (!dir) usage()
   const root = resolve(dir)
   if (existsSync(root) && readdirSync(root).length > 0) { printError(`${dir} is not empty; check out into a new or empty directory`); process.exit(1) }
+  const named = typeof flags.draft === "string" ? flags.draft : undefined
+  if (named && flags.active) { printError("--draft and --active name different recipes: pick one"); process.exit(2) }
   const project = projectOf(flags)
-  const { files } = await api(`/api/projects/verification/checkout?${query(project, { draft: typeof flags.draft === "string" ? flags.draft : undefined })}`) as { files: { path: string; content: string }[] }
-  if (files.length === 0) { print("This project has no verification recipe yet: start one from scratch in that directory."); return }
+  const { files, draft } = await api(`/api/projects/verification/checkout?${query(project, { draft: named, active: flags.active ? "1" : undefined })}`) as VerificationCheckout
+  if (files.length === 0) { print(named ? `No draft from task ${named}.` : "This project has no verification recipe yet: start one from scratch in that directory."); return }
   for (const file of files) {
     // the daemon validated these paths; a checkout still never writes outside its directory
     const target = resolve(root, file.path)
@@ -124,7 +138,8 @@ async function checkout(dir: string | undefined, flags: Flags): Promise<void> {
     mkdirSync(join(target, ".."), { recursive: true })
     writeFileSync(target, file.content)
   }
-  print(`Checked out ${files.length} recipe files into ${dir}. Edit them, then: ${COMMAND} verify draft save ${dir}`)
+  const source = draft ? `the waiting draft from task ${draft.taskId}${draft.savedAt ? ` (saved ${since(draft.savedAt)})` : ""}` : "the active recipe"
+  print(`Checked out ${files.length} files of ${source} into ${dir}. Edit them, then: ${COMMAND} verify draft save ${dir}`)
 }
 
 async function showFile(file: string | undefined, flags: Flags): Promise<void> {
@@ -174,8 +189,9 @@ export async function verifyCommand(positional: string[], flags: Flags): Promise
     const project = projectOf(flags, argument)
     const body: Record<string, string> = { path: project, mode: verb }
     for (const key of ["area", "note", "harness", "model", "effort"] as const) if (typeof flags[key] === "string") body[key] = flags[key] as string
-    const created = await api("/api/projects/verification/tasks", "POST", body) as { task: { id: string; title: string } }
+    const created = await api("/api/projects/verification/tasks", "POST", body) as VerificationTaskCreated
     print(`created ${created.task.id} — ${controlFree(created.task.title)}`)
+    if (created.draft) print(`note: ${draftNote(created.draft)}`)
     return
   }
   if (verb === "fallback") return setFallback(argument, extra, flags)

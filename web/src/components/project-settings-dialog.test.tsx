@@ -200,7 +200,10 @@ describe("project settings verification", () => {
         if (path.startsWith("/api/projects/verification?")) return Response.json(status)
         if (path === "/api/projects/verification/tasks") {
           return tasks === 201
-            ? Response.json({ task: { id: "tvr3ip", title: "Set up verification for sample-app" } }, { status: 201 })
+            ? Response.json(
+                { task: { id: "tvr3ip", title: "Set up verification for sample-app" }, draft: status.draft && { taskId: status.draft.taskId, savedAt: status.draft.savedAt } },
+                { status: 201 },
+              )
             : Response.json({ error: "Task tvr3ip is already working on this project's verification recipe" }, { status: tasks })
         }
         if (path === "/api/projects/verification/activate") return Response.json({ version: "4", areas: [], changed: true })
@@ -524,5 +527,28 @@ describe("project settings verification", () => {
       method: "POST",
       body: { path: "/repo", mode: "fix", area: "editor", harness: "claude", model: "opus-5" },
     })
+  })
+
+  it("with a draft waiting, Improve builds on the draft and says whose it is", async () => {
+    const calls = stubVerification(STATUS_DRAFT)
+    mount(<ProjectSettingsSpecimen project={REVIEWABLE} />)
+    expect((await screen.findByText("tvr3ip")).parentElement).toHaveTextContent("Draft waiting from task tvr3ip")
+    expect(screen.queryByText(/Recipe updated/)).toBeNull()
+    expect(screen.queryByRole("button", { name: "Improve" })).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Improve on the draft" }))
+    expect(await screen.findByText(/starting from the draft from task tvr3ip/)).toBeInTheDocument()
+    expect(calls).toContainEqual({
+      path: "/api/projects/verification/tasks",
+      method: "POST",
+      body: { path: "/repo", mode: "improve", harness: "claude", model: "opus-5" },
+    })
+  })
+
+  it("with no draft waiting, Improve sits beside the active recipe's age", async () => {
+    stubVerification({ ...STATUS_DRAFT, draft: null, activatedAt: new Date(Date.now() - 3 * 86_400_000).toISOString() })
+    mount(<ProjectSettingsSpecimen project={REVIEWABLE} />)
+    expect(await screen.findByText("Recipe updated 3d ago")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Improve" })).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Activate draft" })).toBeNull()
   })
 })

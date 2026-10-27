@@ -10,6 +10,15 @@
  */
 import { controlFree, terminalJson } from "./control-free";
 
+/** How long ago an ISO-8601 instant was, short: "now", "8m", "3h", "2d". */
+export function ago(iso: string): string {
+  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (min < 1) return "now";
+  if (min < 60) return `${min}m`;
+  if (min < 60 * 24) return `${Math.round(min / 60)}h`;
+  return `${Math.round(min / 1440)}d`;
+}
+
 export function print(text: string): void {
   console.log(controlFree(text));
 }

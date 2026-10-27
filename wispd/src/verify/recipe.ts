@@ -440,6 +440,9 @@ function savedAtOf(record: string): string {
   }
 }
 
+/** When one task's draft was saved; "" when its record is unreadable. */
+export const draftSavedAt = (repoPath: string, taskId: string): string => savedAtOf(join(draftsDir(repoPath), `${taskId}.json`))
+
 /**
  * Throw away the activated draft and every draft saved before it. A draft
  * saved while the activation ran is newer, and stays to be activated next.
