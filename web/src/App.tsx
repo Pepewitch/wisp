@@ -25,9 +25,9 @@ import { ProjectSettingsDialog, type ProjectSettingsTarget } from "@/components/
 import { SettingsDialog } from "@/components/settings-dialog"
 import { UsageLimitsControl } from "@/components/usage-limits-control"
 import { StartHere } from "@/components/start-here"
+import { TaskComposer } from "@/components/task-composer"
 import { Shell, ToolPanel } from "@/components/panes"
 import { Sidebar } from "@/components/sidebar"
-import { SteerBox } from "@/components/steer-box"
 import { TaskNotices } from "@/components/task-notices"
 import { TaskSummaryGutter } from "@/components/task-summary-card"
 import { TaskSummaryChip } from "@/components/task-summary-chip"
@@ -46,6 +46,7 @@ import {
 } from "@/hooks/queries"
 import { useFirstRunPanel } from "@/hooks/useFirstRunPanel"
 import { useProjectAddFlow } from "@/hooks/useProjectAddFlow"
+import { useProjectOrder } from "@/hooks/useProjectOrder"
 import { useHashRoute } from "@/hooks/useHashRoute"
 import { useProjectSearch } from "@/hooks/useProjectSearch"
 import { useSearchShortcuts } from "@/hooks/useSearchShortcuts"
@@ -76,8 +77,6 @@ import type {
   HarnessInfo,
   PullRequestStatus,
   RepoInfo,
-  StatusEntry,
-  TaskSkills,
   Turn,
 } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
@@ -243,6 +242,7 @@ function MainView({
   }, [selectedId])
 
   const searchFeature = useHarnessFeatures()
+  const projectOrder = useProjectOrder(searchFeature.data?.projectOrder === true)
   const [showArchived, setShowArchived] = useShowArchived(runtime.connectionId)
   // search can find an archived task whatever the switch says; the switch
   // decides whether the pane shows the row (and whether ↑/↓ can reach it)
@@ -365,6 +365,7 @@ function MainView({
         opts?.afterSelect?.()
       }}
       verification={searchFeature.data?.autoReview === true}
+      projectOrder={projectOrder}
       onOpenSettings={() => {
         // dismiss and open in the same commit — the same pair a project's gear
         // already makes on touch, so the drawer is never left over the modal
@@ -604,46 +605,6 @@ function queryError(tasksError: unknown, statusError: unknown): string | null {
   if (tasksError instanceof Error) return `tasks: ${tasksError.message}`
   if (statusError instanceof Error) return `status: ${statusError.message}`
   return null
-}
-
-function TaskComposer({
-  task,
-  harnesses,
-  skills,
-  status,
-  turns,
-  touch,
-}: {
-  task: ApiTask | null
-  harnesses: HarnessInfo[] | undefined
-  skills: TaskSkills | undefined
-  status: StatusEntry | undefined
-  turns: Turn[] | undefined
-  touch: boolean
-}) {
-  const features = useHarnessFeatures()
-  const harness = task
-    ? harnesses?.find((candidate) => candidate.name === task.harness)
-    : undefined
-  return (
-    <SteerBox
-      task={task}
-      harnesses={harnesses}
-      canSwitchAgent={features.data?.taskAgentSwitching === true}
-      canChooseDelivery={features.data?.steerDelivery === true}
-      hasImage={harness?.hasImage}
-      imageNote={harness?.imageNote}
-      probeCommands={harness?.probeCommands}
-      skills={skills}
-      compact={harness?.compact}
-      status={status}
-      turns={turns}
-      runningSince={
-        turns?.find((turn) => turn.status === "running")?.started_at ?? null
-      }
-      touch={touch}
-    />
-  )
 }
 
 function AppDialogs({

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { addPickedLocalProject, groupTasksByProject, pathBasename } from "./projects";
+import { addPickedLocalProject, groupTasksByProject, moveProject, pathBasename, reorderRepos } from "./projects";
 import type { ApiTask, RepoInfo } from "./types";
 
 function makeTask(id: string, repoPath: string, overrides: Partial<ApiTask> = {}): ApiTask {
@@ -75,6 +75,22 @@ describe("groupTasksByProject", () => {
   it("uses the configured display name, else the path basename", () => {
     const groups = groupTasksByProject([], [repo("/a/pinned", "pretty name"), repo("/a/plain", null)]);
     expect(groups.map((g) => g.name)).toEqual(["pretty name", "plain"]);
+  });
+});
+
+describe("reordering", () => {
+  it("moves one path to its new index", () => {
+    expect(moveProject(["a", "b", "c"], 0, 2)).toEqual(["b", "c", "a"]);
+    expect(moveProject(["a", "b", "c"], 2, 0)).toEqual(["c", "a", "b"]);
+    expect(moveProject(["a", "b", "c"], 1, 1)).toEqual(["a", "b", "c"]);
+  });
+
+  it("puts the configured repos in the given order and leaves task-only ones after them", () => {
+    const history = { ...repo("/old/history"), configured: false };
+    const repos = [repo("/a/one"), repo("/a/two"), repo("/a/three"), history];
+    expect(reorderRepos(repos, ["/a/three", "/a/one", "/a/two"]).map((r) => r.path)).toEqual(["/a/three", "/a/one", "/a/two", "/old/history"]);
+    // a group knows which it is, so only those offer a move
+    expect(groupTasksByProject([makeTask("t1", "/stray")], repos).map((g) => g.configured)).toEqual([true, true, true, false, false]);
   });
 });
 

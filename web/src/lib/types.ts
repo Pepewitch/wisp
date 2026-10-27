@@ -477,6 +477,8 @@ export interface HarnessesResponse {
      * archiving a parent takes `subtasks`. Absent or false: the sidebar is flat.
      */
     subtasks?: boolean;
+    /** PUT /api/repos/order: the configured projects can be reordered. Absent: the sidebar offers no reorder. */
+    projectOrder?: boolean;
   };
 }
 

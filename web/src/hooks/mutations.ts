@@ -5,9 +5,10 @@ import type { AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot
 
 import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
+import { reorderRepos } from "@/lib/projects";
 import type { ConnectionQueryKeys } from "@/lib/query";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
-import type { ApiTask, ConversationDetail, ProjectVerifyAgent, ProjectVerifySecond, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SendWhen, SubtaskKind, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
+import type { ApiTask, ConversationDetail, ProjectVerifyAgent, ProjectVerifySecond, FactoryKeyTest, HarnessLimitsResponse, RepoInfo, ReviewJudgeTest, SendResponse, SendWhen, SubtaskKind, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
 
 /**
  * Every WRITE the app makes, one hook each — the mirror of queries.ts.
@@ -456,6 +457,32 @@ export function useSaveProject() {
   return useMutation({
     mutationFn: (body: SaveProjectBody) => transport.request("/api/projects", { method: "POST", body }),
     onSuccess: () => {
+      void client.invalidateQueries({ queryKey: qk.repos });
+    },
+  });
+}
+
+/**
+ * PUT /api/repos/order — the configured projects in a new order, saved in
+ * the daemon's config so every client shows it. The sidebar moves at once;
+ * a refusal (the list changed meanwhile) puts the old order back.
+ */
+export function useReorderProjects() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: (paths: string[]) => transport.request<{ paths: string[] }>("/api/repos/order", { method: "PUT", body: { paths } }),
+    onMutate: async (paths) => {
+      // a repos read in flight would land the old order over the new one
+      await client.cancelQueries({ queryKey: qk.repos });
+      const before = client.getQueryData<{ repos: RepoInfo[] }>(qk.repos);
+      if (before) client.setQueryData(qk.repos, { repos: reorderRepos(before.repos, paths) });
+      return { before };
+    },
+    onError: (_error, _paths, context) => {
+      if (context?.before) client.setQueryData(qk.repos, context.before);
+    },
+    onSettled: () => {
       void client.invalidateQueries({ queryKey: qk.repos });
     },
   });

@@ -68,6 +68,8 @@ export function harnessesRoute(
       // POST /api/tasks with parentTaskId, archive's `subtasks`, GET /api/tasks/:id/subtasks,
       // and reports to the parent; config.json's `subtasks: false` turns it off
       subtasks: subtasksEnabled(cfg),
+      // PUT /api/repos/order: the sidebar reorders the configured projects
+      projectOrder: true,
     },
     harnesses: Object.entries(adapters).map(([name, def]) => ({
       name,

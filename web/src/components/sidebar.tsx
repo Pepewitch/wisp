@@ -6,8 +6,10 @@ import {
   ProjectSearchInput,
   ProjectSearchResults,
 } from "@/components/project-search"
+import type { ProjectOrder } from "@/hooks/useProjectOrder"
 import type { ProjectSearch } from "@/hooks/useProjectSearch"
-import { ArchiveSections, ProjectSection } from "@/components/sidebar-sections"
+import { ArchiveSections } from "@/components/sidebar-sections"
+import { ProjectList } from "@/components/sidebar-projects"
 import { FLAT_VIEW, type SidebarTree } from "@/hooks/useSidebarTree"
 import type { ProjectGroup } from "@/lib/projects"
 import { sidebarLists } from "@/lib/subtask-tree"
@@ -50,6 +52,11 @@ interface SidebarProps {
   onConfigureProject: (repoPath: string, section?: "verification") => void
   /** the daemon advertises `features.autoReview`: each project row carries its verification control */
   verification?: boolean
+  /**
+   * Reordering the configured projects, when the daemon advertises
+   * `features.projectOrder`; absent, nothing drags and no row offers a move.
+   */
+  projectOrder?: ProjectOrder
   /**
    * Opens Wisp's settings. Only the TOUCH footer offers it: the pointer shell
    * has the top bar's gear, and two gears for one modal is one too many. The
@@ -108,6 +115,7 @@ export function Sidebar({
   onNewTask,
   onConfigureProject,
   verification = false,
+  projectOrder,
   onOpenSettings,
   search,
   updateControl,
@@ -144,23 +152,13 @@ export function Sidebar({
         />
       )}
 
-      {error && (
-        <div className="flex items-start gap-2 px-3.5 pb-1.5 text-[11.5px] text-destructive">
-          <span className="min-w-0 flex-1">{error}</span>
-          {errorAction && (
-            <button
-              type="button"
-              onClick={errorAction.onClick}
-              className={cn(
-                "shrink-0 underline underline-offset-2",
-                "hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
-                touch && "min-h-11"
-              )}
-            >
-              {errorAction.label}
-            </button>
-          )}
-        </div>
+      {error && <InlineError error={error} action={errorAction} touch={touch} />}
+      {projectOrder?.error && (
+        <InlineError
+          error={projectOrder.error}
+          action={{ label: "Dismiss", onClick: projectOrder.onDismissError }}
+          touch={touch}
+        />
       )}
 
       <div className="min-h-0 flex-1 scroll-slim overflow-y-auto px-1.5 pb-2">
@@ -184,22 +182,20 @@ export function Sidebar({
           />
         ) : (
           <div className="flex flex-col">
-            {groups.map((group) => (
-              <ProjectSection
-                key={group.path}
-                group={group}
-                list={lists.find((list) => list.key === `project:${group.path}`) ?? { key: group.path, nodes: [] }}
-                view={view}
-                status={status}
-                pullRequests={pullRequests}
-                selectedId={selectedId}
-                onSelect={onSelect}
-                onNewTask={onNewTask}
-                onConfigureProject={onConfigureProject}
-                verification={verification}
-                touch={touch}
-              />
-            ))}
+            <ProjectList
+              groups={groups}
+              lists={lists}
+              onReorder={projectOrder?.onReorder}
+              view={view}
+              status={status}
+              pullRequests={pullRequests}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              onNewTask={onNewTask}
+              onConfigureProject={onConfigureProject}
+              verification={verification}
+              touch={touch}
+            />
 
             <ArchiveSections
               lists={lists.filter((list) => list.key.startsWith("archive:"))}
@@ -256,6 +252,36 @@ export function Sidebar({
         )}
       </div>
     </aside>
+  )
+}
+
+/** A failure the pane reports in its own words, with the one thing to do about it. */
+function InlineError({
+  error,
+  action,
+  touch,
+}: {
+  error: string
+  action?: { label: string; onClick: () => void }
+  touch: boolean
+}) {
+  return (
+    <div className="flex items-start gap-2 px-3.5 pb-1.5 text-[11.5px] text-destructive">
+      <span className="min-w-0 flex-1">{error}</span>
+      {action && (
+        <button
+          type="button"
+          onClick={action.onClick}
+          className={cn(
+            "shrink-0 underline underline-offset-2",
+            "hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
+            touch && "min-h-11"
+          )}
+        >
+          {action.label}
+        </button>
+      )}
+    </div>
   )
 }
 

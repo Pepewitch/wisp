@@ -21,6 +21,8 @@ export interface ProjectGroup {
   exists: boolean;
   /** true when no /api/repos entry backed this group (active-task fallback) */
   unlisted: boolean;
+  /** a config.json project, which can be reordered; a repo known only from tasks cannot */
+  configured: boolean;
   tasks: ApiTask[];
   /** the repo entry's verification summary; absent from a daemon older than auto-review */
   verification?: RepoInfo["verification"];
@@ -56,6 +58,7 @@ export function groupTasksByProject(tasks: ApiTask[], repos: RepoInfo[]): Projec
     name: repo.name ?? pathBasename(repo.path),
     exists: repo.exists,
     unlisted: false,
+    configured: repo.configured,
     tasks: [],
     ...(repo.verification ? { verification: repo.verification } : {}),
   }));
@@ -70,6 +73,7 @@ export function groupTasksByProject(tasks: ApiTask[], repos: RepoInfo[]): Projec
         name: pathBasename(task.repo_path),
         exists: true, // a task exists, so its repo did at creation time
         unlisted: true,
+        configured: false,
         tasks: [],
       };
       byPath.set(key, group);
@@ -78,4 +82,24 @@ export function groupTasksByProject(tasks: ApiTask[], repos: RepoInfo[]): Projec
     group.tasks.push(task);
   }
   return groups;
+}
+
+/** `paths` with the one at `from` moved to index `to` of the result. */
+export function moveProject(paths: readonly string[], from: number, to: number): string[] {
+  const next = [...paths];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved!);
+  return next;
+}
+
+/**
+ * The repos list as it reads once the configured projects take the order
+ * `paths` gives — what the daemon will serve after PUT /api/repos/order. The
+ * repos known only from tasks stay after them, as they were.
+ */
+export function reorderRepos(repos: readonly RepoInfo[], paths: readonly string[]): RepoInfo[] {
+  const rank = new Map(paths.map((path, index) => [path, index]));
+  const moves = (repo: RepoInfo) => repo.configured && rank.has(repo.path);
+  const configured = repos.filter(moves).sort((a, b) => rank.get(a.path)! - rank.get(b.path)!);
+  return [...configured, ...repos.filter((repo) => !moves(repo))];
 }

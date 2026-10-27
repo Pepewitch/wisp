@@ -323,7 +323,9 @@ address's last new wrong token. The web UI is served at `/`.
   (droid/codex; for claude send `/compact` as a dedicated recorded turn);
   `/send` returns 409 while either shape is still compacting
 - `GET /api/status` · `GET /api/repos` · `POST|DELETE /api/projects` ·
-  `POST /api/projects/copy-preview`
+  `POST /api/projects/copy-preview` ·
+  `PUT /api/repos/order` (`{paths}`: every configured project once, in the
+  new order; 409 when the list changed meanwhile)
 - `GET|POST /api/suffix-prompts` ·
   `PATCH|DELETE /api/suffix-prompts/:id`
 - `GET /api/harnesses` (capabilities, effort levels, offered models per

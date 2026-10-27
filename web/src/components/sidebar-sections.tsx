@@ -1,12 +1,14 @@
-import { useState } from "react"
+import { useState, type KeyboardEvent, type PointerEvent } from "react"
 
-import { ChevronDown, Gear, Plus, Verify } from "@/components/icons"
+import { ChevronDown, Gear, More, Plus, Verify } from "@/components/icons"
+import { Menu, MenuItem } from "@/components/menu"
 import { Button, Eyebrow } from "@/components/primitives"
 import { TaskTree } from "@/components/subtask-rows"
 import type { SubtaskTreeView } from "@/hooks/useSidebarTree"
 import { VERIFICATION_DOT, verificationTitle, verificationTone } from "@/lib/auto-review-words"
 import type { ProjectGroup } from "@/lib/projects"
 import type { SidebarList } from "@/lib/subtask-tree"
+import { isApplePlatform } from "@/lib/terminal"
 import type { PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -87,6 +89,50 @@ function VerificationButton({
   )
 }
 
+/** A configured project's place in the order, when the daemon can save a new one. */
+export interface ProjectOrderControls {
+  canMoveUp: boolean
+  canMoveDown: boolean
+  /** `keyboard`: the move came from the focused header, which keeps focus */
+  onMove: (step: -1 | 1, keyboard?: boolean) => void
+  /** this project's header is the one being dragged */
+  dragging: boolean
+  onPointerDown: (event: PointerEvent) => void
+}
+
+const MOVE_KEY = isApplePlatform() ? "⌥" : "Alt+"
+
+/** Alt+↑ / Alt+↓ on a focused header move its project. */
+function moveKey(event: KeyboardEvent, order: ProjectOrderControls): void {
+  if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+  const step = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0
+  if (step === 0) return
+  event.preventDefault()
+  if (step === -1 ? order.canMoveUp : order.canMoveDown) order.onMove(step, true)
+}
+
+/** Move up / Move down: how touch and the keyboard reorder, and the drag's spelled-out twin. */
+function ProjectMenu({ group, order, touch }: { group: ProjectGroup; order: ProjectOrderControls; touch: boolean }) {
+  return (
+    <Menu
+      iconOnly
+      label={`More for ${group.name}`}
+      icon={<More />}
+      align="end"
+      touch={touch}
+      // hover reveals it like the gear; keyboard focus and an open menu keep it
+      className={cn(!touch && "hidden group-focus-within/project:inline-flex group-hover/project:inline-flex data-[popup-open]:inline-flex")}
+    >
+      <MenuItem disabled={!order.canMoveUp} hint={touch ? undefined : `${MOVE_KEY}↑`} onClick={() => order.onMove(-1)}>
+        Move up
+      </MenuItem>
+      <MenuItem disabled={!order.canMoveDown} hint={touch ? undefined : `${MOVE_KEY}↓`} onClick={() => order.onMove(1)}>
+        Move down
+      </MenuItem>
+    </Menu>
+  )
+}
+
 /** One project: a 28px header row over its task list. */
 export function ProjectSection({
   group,
@@ -100,6 +146,7 @@ export function ProjectSection({
   onConfigureProject,
   verification = false,
   touch = false,
+  order,
 }: {
   group: ProjectGroup
   /** the group's tasks as the sidebar draws them: nested, or flat */
@@ -113,16 +160,26 @@ export function ProjectSection({
   onConfigureProject: (repoPath: string, section?: "verification") => void
   verification?: boolean
   touch?: boolean
+  /** absent: this project does not reorder (an older daemon, or a repo known only from tasks) */
+  order?: ProjectOrderControls
 }) {
   const [open, setOpen] = useState(true)
+  const dragging = order?.dragging === true
   return (
     <section className="mt-2 first:mt-0">
       <div
         className={cn(
           "group/project flex items-center gap-1.5 rounded-md pr-1.5 pl-2 hover:bg-hover",
-          touch ? "h-11" : "h-7"
+          touch ? "h-11" : "h-7",
+          order && "wisp-lift",
+          dragging && "relative z-10 bg-popover"
         )}
         data-project-path={group.path}
+        data-project-header=""
+        data-orderable={order ? "" : undefined}
+        data-dragging={dragging ? "" : undefined}
+        onPointerDown={order?.onPointerDown}
+        onKeyDown={order ? (event) => moveKey(event, order) : undefined}
       >
         <button
           type="button"
@@ -195,9 +252,11 @@ export function ProjectSection({
         >
           <Plus />
         </Button>
+        {order && <ProjectMenu group={group} order={order} touch={touch} />}
       </div>
 
-      {open && (
+      {/* a dragged project folds its tasks away, so the drop slots stay close together */}
+      {open && !dragging && (
         <div className="mt-px flex flex-col gap-px pl-0.5">
           {group.tasks.length > 0 ? (
             <TaskTree

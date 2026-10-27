@@ -23,6 +23,8 @@ export type WispEvent =
   | { type: "terminals"; taskId: string }
   /** a project was added or removed, or its settings or verification recipe changed */
   | { type: "project"; action: "add" | "remove" | "update"; path: string }
+  /** the configured projects were put in a new order, given in full */
+  | { type: "project"; action: "reorder"; paths: string[] }
   | { type: "harnesses" }
   | { type: "settings" }
   /** The daemon checked one harness's plan limits after a turn ended; clients re-ask its shared cache. */
