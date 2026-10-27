@@ -513,7 +513,8 @@ function AppShell({
   // The summary card stands beside the reading column while the centre pane
   // has room for both, measured on the pane (a tool opening narrows it), and
   // folds into the top bar's chip otherwise, or when a person folded it (§5n).
-  const { setPane, roomy, placement } = useSummaryPlacement(task !== null && firstRun === null)
+  // …and while the tool panel glides, by the width the pane lands at: it folds once
+  const { setPane, roomy, placement, setSettling } = useSummaryPlacement(task !== null && firstRun === null)
   // Below `md`, the three-pane grid is replaced rather than squeezed, so no
   // resizable group applies phone dimensions to desktop geometry.
   if (mobile) {
@@ -562,7 +563,7 @@ function AppShell({
           centre={
             // the card takes its own column, so it can never cover the reading column or the composer;
             // the conversation's scroller alone runs under it, out to the pane's edge
-            <main ref={setPane} className={cn("flex h-full min-w-0 bg-background", placement === "card" && "[--summary-gutter:258px]")}>
+            <main ref={setPane} className={cn("wisp-centre flex h-full min-w-0 bg-background", placement === "card" && "[--summary-gutter:258px]")}>
               <div className="flex h-full min-w-0 flex-1 flex-col">
                 {firstRun ?? (
                   <>
@@ -572,7 +573,7 @@ function AppShell({
                   </>
                 )}
               </div>
-              {placement === "card" && task && <TaskSummaryGutter task={task} pullRequest={pullRequest} turns={turns} />}
+              {placement !== null && task && <TaskSummaryGutter task={task} pullRequest={pullRequest} turns={turns} shown={placement === "card"} />}
             </main>
           }
           panel={
@@ -582,9 +583,7 @@ function AppShell({
               terminalKey={task?.id ?? ""}
               toolOpen={tools.layout.tool !== null}
               terminalOpen={tools.layout.terminal}
-              onCloseTool={() => {
-                if (tools.layout.tool) tools.close(tools.layout.tool)
-              }}
+              onCloseTool={() => tools.layout.tool && tools.close(tools.layout.tool)}
               onCloseTerminal={() => tools.close("terminal")}
             />
           }
@@ -593,6 +592,7 @@ function AppShell({
           // being restored (no task selected means nothing open)
           panelOpen={tools.open}
           onPanelDraggedShut={tools.closePanel}
+          onCentreSettling={setSettling}
         />
         {dialogs}
       </div>

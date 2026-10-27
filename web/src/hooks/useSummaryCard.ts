@@ -90,8 +90,10 @@ export function useSummaryRows(): { isOpen: (row: SummaryRow) => boolean; set: (
  * (a ResizeObserver), never the window: opening a tool narrows the centre
  * without the window changing at all, and that is the common way to cross
  * the line. Read once before paint, so a wide pane never flashes the chip.
+ * While the tool panel glides, `settling` is the width the pane will land
+ * at, and it decides: the pane passing the line mid-glide changes nothing.
  */
-export function usePaneFitsCard(pane: HTMLElement | null): boolean {
+export function usePaneFitsCard(pane: HTMLElement | null, settling: number | null = null): boolean {
   const [fits, setFits] = useState(false)
   useLayoutEffect(() => {
     if (!pane) return
@@ -105,20 +107,23 @@ export function usePaneFitsCard(pane: HTMLElement | null): boolean {
     observer.observe(pane)
     return () => observer.disconnect()
   }, [pane])
-  return fits
+  return settling === null ? fits : settling >= SUMMARY_CARD_MIN_PANE
 }
 
 /**
  * Where the shell draws the summary: the card beside the reading column while
  * the centre pane has room for both and nobody folded it, the top bar's chip
- * otherwise, nothing while no task is shown. `setPane` takes the pane.
+ * otherwise, nothing while no task is shown. `setPane` takes the pane;
+ * `setSettling` the pane's width at the end of a tool panel's glide, and
+ * null once it lands (`Shell`'s `onCentreSettling`).
  */
 export function useSummaryPlacement(shown: boolean) {
   const [pane, setPane] = useState<HTMLElement | null>(null)
-  const roomy = usePaneFitsCard(pane)
+  const [settling, setSettling] = useState<number | null>(null)
+  const roomy = usePaneFitsCard(pane, settling)
   const [folded] = useSummaryFolded()
   const placement: "card" | "chip" | null = !shown ? null : roomy && !folded ? "card" : "chip"
-  return { setPane, roomy, placement }
+  return { setPane, roomy, placement, setSettling }
 }
 
 /** Test seam: forget the stored choices and reread them. */

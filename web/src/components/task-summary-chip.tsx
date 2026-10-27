@@ -2,18 +2,18 @@ import { Popover } from "@base-ui/react/popover"
 import { useRef, useState, type ReactNode } from "react"
 
 import { BranchRequest, ChevronDown } from "@/components/icons"
-import { POPOVER_SURFACE, StateDot } from "@/components/primitives"
+import { POPOVER_SURFACE } from "@/components/primitives"
 import { SummaryCard } from "@/components/task-summary-card"
 import { useSummaryFolded } from "@/hooks/useSummaryCard"
 import { useTaskSummary } from "@/hooks/useTaskSummary"
 import { PULL_REQUEST_ICON_TONE, pullRequestIconTone } from "@/lib/pull-request-tone"
-import { outcomeWord, pausedOnNetwork } from "@/lib/state"
+import { outcomeWord } from "@/lib/state"
 import type { ApiTask, PullRequestStatus, Turn } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 /**
  * The summary card folded into the top bar, beside the title (frontend §5n):
- * `● Running · ⎇ #318 ⌄`. The shell draws it instead of the card when the
+ * `Running · ⎇ #318 ⌄`. The state's dot stays with the title, before it. The shell draws it instead of the card when the
  * centre pane is too narrow for the card beside the reading column, or when
  * a person folded the card. It opens the same card as a popover, grown from
  * the chip; nothing opens it but a click.
@@ -85,12 +85,11 @@ export function SummaryChip({ task, pullRequest, popup, defaultOpen = false, pop
       <Popover.Trigger
         aria-label={`Task summary: ${word}${found ? ` · PR #${found.number}` : ""}`}
         className={cn(
-          "flex h-[22px] min-w-0 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-[12px] whitespace-nowrap text-fg-secondary",
+          "wisp-chip flex h-[22px] min-w-0 shrink-0 items-center gap-1.5 rounded-md border border-border px-2 text-[12px] whitespace-nowrap text-fg-secondary",
           "transition-colors hover:bg-hover hover:text-foreground data-[popup-open]:bg-hover",
           "focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none",
         )}
       >
-        <StateDot state={task.state} background={task.background} pausedOnNetwork={pausedOnNetwork(task)} />
         <span className={cn(waiting && "text-state-needs-input")}>{word}</span>
         {found && (
           <>

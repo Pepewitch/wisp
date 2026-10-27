@@ -633,13 +633,65 @@
 }
 /* The tool panel's width glides open and shut (panes.tsx). Only while
    `data-glide` is on the group, which is only while the panel opens or
-   closes: a divider drag follows the pointer and never eases after it. */
+   closes: a divider drag follows the pointer and never eases after it.
+   Shutting is quicker, but on the same curve: --dur-out is a popup's, too
+   short for a pane-wide edge to be seen travelling. The content keeps the
+   width it has at rest open (--tool-pin), so it slides with the divider
+   rather than rewrapping on every frame. */
 [data-glide] > [data-panel] {
   transition: flex-grow var(--dur-size) var(--ease-glide);
 }
 [data-glide="out"] > [data-panel] {
-  transition-duration: var(--dur-out);
-  transition-timing-function: var(--ease-out);
+  transition-duration: var(--dur-in);
+}
+[data-glide] [data-tool-pin] {
+  width: var(--tool-pin);
+  flex: none;
+}
+
+/* The summary card's gutter (task-summary-card.tsx) folds shut and opens
+   again in width, fading as it goes, so the reading column beside it
+   re-centres instead of jumping 129px. The width is --summary-gutter, which
+   the conversation also pads by; registered as a length, it glides on the
+   pane itself, so the gutter and the padding move as one. It glides ONLY
+   beside a panel glide (`data-glide`), on the panel's own timing, so the
+   column's room changes on one curve. Everything else moves it at once: a
+   divider dragged or keyed by hand (a drag that shuts the panel included), a
+   window resize. Easing it behind a hand that already moved swings the
+   column out and back. */
+@property --summary-gutter {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+[data-glide] .wisp-centre {
+  transition: --summary-gutter var(--dur-size) var(--ease-glide);
+}
+[data-glide] .wisp-gutter {
+  transition: opacity var(--dur-size) var(--ease-out);
+}
+[data-glide="out"] .wisp-centre,
+[data-glide="out"] .wisp-gutter {
+  transition-duration: var(--dur-in);
+}
+.wisp-gutter[data-folded] {
+  opacity: 0;
+}
+
+/* The top bar's chip (task-summary-chip.tsx) arrives as the card leaves. */
+.wisp-chip {
+  /* the whole list: this rule outranks the chip's own `transition-colors` */
+  transition:
+    opacity var(--dur-in) var(--ease-out),
+    translate var(--dur-in) var(--ease-out),
+    color var(--dur-in) var(--ease-out),
+    background-color var(--dur-in) var(--ease-out);
+}
+@starting-style {
+  .wisp-chip {
+    opacity: 0;
+    translate: -4px 0;
+  }
 }
 
 /* The summary card (task-summary-card.tsx). Coming back into the gutter it
@@ -790,6 +842,9 @@
   [role="alertdialog"],
   .bg-scrim,
   [data-glide] > [data-panel],
+  [data-glide] .wisp-centre,
+  [data-glide] .wisp-gutter,
+  .wisp-chip,
   .wisp-summary-card,
   .wisp-unfold,
   .wisp-turn,
