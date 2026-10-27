@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react"
 
 import { useSubtaskDisclosure, type SubtaskDisclosure } from "@/hooks/useSubtaskDisclosure"
 import { sidebarLists, visibleTaskIds, type SidebarList } from "@/lib/subtask-tree"
+import { shownRepos } from "@/lib/project-order-queue"
 import { groupTasksByProject, type ProjectGroup } from "@/lib/projects"
 import type { ApiTask, RepoInfo } from "@/lib/types"
 
@@ -31,14 +32,19 @@ export const FLAT_VIEW: SubtaskTreeView = { disclosure: { isOpen: () => false, t
  * the sidebar and the keyboard alike. `nest` is the daemon advertising
  * `features.subtasks`; without it every task is a root, as before subtasks.
  */
-export function useSidebarTree({ connectionId, tasks, repos, nest, selectedId }: {
+export function useSidebarTree({ connectionId, tasks, repos, order = null, nest, selectedId }: {
   connectionId: string
   tasks: ApiTask[]
   repos: RepoInfo[] | undefined
+  /** a reorder still being saved, laid over the daemon's order (ProjectOrderQueue) */
+  order?: readonly string[] | null
   nest: boolean
   selectedId: string | null
 }): SidebarTree {
-  const groups = useMemo(() => groupTasksByProject(tasks.filter((t) => !t.archived), repos ?? []), [tasks, repos])
+  const groups = useMemo(
+    () => groupTasksByProject(tasks.filter((t) => !t.archived), shownRepos(repos ?? [], order)),
+    [tasks, repos, order]
+  )
   const archivedTasks = useMemo(() => tasks.filter((t) => t.archived), [tasks])
   const all = tasks
   const disclosure = useSubtaskDisclosure(connectionId, nest ? all : [], selectedId)

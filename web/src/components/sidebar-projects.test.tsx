@@ -41,6 +41,7 @@ function mount(projectOrder?: ProjectOrder) {
 
 const order = (overrides: Partial<ProjectOrder> = {}): ProjectOrder => ({
   onReorder: vi.fn(),
+  pending: null,
   error: null,
   onDismissError: vi.fn(),
   ...overrides,

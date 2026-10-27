@@ -6,6 +6,7 @@ import type { SubtaskTreeView } from "@/hooks/useSidebarTree"
 import type { ProjectMove } from "@/lib/project-order-queue"
 import type { ProjectGroup } from "@/lib/projects"
 import type { SidebarList } from "@/lib/subtask-tree"
+import { closeTitleTip } from "@/lib/title-tips"
 import type { PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
 
 /**
@@ -55,7 +56,10 @@ export function ProjectList({
       canMoveUp: index > 0,
       canMoveDown: index < paths.length - 1,
       onMove: (step, keyboard) => {
-        if (keyboard) refocus.current = group.path
+        if (keyboard) {
+          refocus.current = group.path
+          closeTitleTip()
+        }
         onReorder(group.path, { step })
       },
       dragging: drag.dragging === group.path,

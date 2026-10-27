@@ -1749,14 +1749,20 @@ order; nothing about it lives in `localStorage`. Gated on
   with their keys: **Alt+↑ / Alt+↓** (⌥ on Apple) on a focused header. Touch
   has no drag; the phone uses the menu.
 - **Optimistic, one save at a time** (`ProjectOrderQueue`, one per
-  connection). The repos cache takes the new order at once, each move worked
-  out from the cache rather than the last render. A move made while a save is
-  out waits as the queued order, and a later one replaces it, so only the
-  latest is sent. Until the queue drains, a repos read that lands (an SSE
-  refetch) gets the shown order put back over it, and nothing invalidates the
-  list. A refusal (the daemon's 409 when a project was added or removed
-  meanwhile) puts back the last order the daemon accepted, drops the queued
-  one, and says why on the pane's inline error line, with Dismiss.
+  connection, owned by the QueryClient so a connection switch and back finds
+  the same one). The repos cache is never written: it holds what the daemon
+  last said. The order being saved is the queue's `pending`, a small external
+  store, and `useSidebarTree` lays it over the cache (`shownRepos`): a
+  project added meanwhile goes after the ordered ones, one removed is gone.
+  Each move works from what is shown, not the last render. A move made while
+  a save is out waits as the queued order, and a later one replaces it, so
+  only the latest is sent, with any added or removed project folded in. When
+  the queue drains the list is read once and `pending` clears. A refusal
+  clears `pending`, drops the queued order, reads the list again and says why
+  on the pane's inline error line, with Dismiss (a 409 says the project list
+  changed meanwhile).
+- A keyboard move closes the header's path tooltip, which would otherwise
+  stay where the row was.
 - A repo known only from its tasks never moves and has no menu: it has no
   config entry to put anywhere.
 

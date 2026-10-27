@@ -92,6 +92,13 @@ describe("reordering", () => {
     // a group knows which it is, so only those offer a move
     expect(groupTasksByProject([makeTask("t1", "/stray")], repos).map((g) => g.configured)).toEqual([true, true, true, false, false]);
   });
+
+  it("an order that predates an added or removed project still lays over the list", () => {
+    const history = { ...repo("/old/history"), configured: false };
+    // two was removed and four added since the order was picked
+    const repos = [repo("/a/one"), repo("/a/three"), repo("/a/four"), history];
+    expect(reorderRepos(repos, ["/a/three", "/a/two", "/a/one"]).map((r) => r.path)).toEqual(["/a/three", "/a/one", "/a/four", "/old/history"]);
+  });
 });
 
 describe("pathBasename", () => {

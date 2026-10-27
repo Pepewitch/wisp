@@ -315,6 +315,7 @@ function MainView({
     connectionId: runtime.connectionId,
     tasks,
     repos: reposQuery.data,
+    order: projectOrder?.pending,
     nest: searchFeature.data?.subtasks === true,
     selectedId,
   })
