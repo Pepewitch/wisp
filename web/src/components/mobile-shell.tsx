@@ -14,6 +14,7 @@ import { TOOL_NAMES, type ToolName } from "@/lib/tools"
 import type { ApiTask, PullRequestStatus, Turn } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
+import { useDrawerSwipe } from "@/hooks/useDrawerSwipe"
 import { useMobileViewport } from "@/hooks/use-mobile-viewport"
 import { useSubtaskCount } from "@/hooks/useSubtasks"
 
@@ -24,7 +25,8 @@ type Surface = "chat" | ToolName
  * Below the `md` breakpoint (useIsMobile). The three-pane grid does not shrink
  * into a phone, so it is replaced rather than squeezed:
  *
- *  - the sidebar becomes a swipe-dismissable drawer, reached from one hamburger
+ *  - the sidebar becomes a drawer, reached from one hamburger or a sideways
+ *    drag anywhere on the shell, and closed by dragging it back
  *  - the task is three layers (frontend §6b): a header that is the title over
  *    ONE status line, a task sheet (task-sheet.tsx) that is the summary card's
  *    rows plus the tools and the verbs, and a tool full screen with a way
@@ -110,6 +112,7 @@ export function MobileShell({
   const [drawer, setDrawer] = useState(false)
   const [sheet, setSheet] = useState(false)
   const viewportRef = useMobileViewport(!desktop)
+  const { popupRef, backdropRef, request: requestDrawer } = useDrawerSwipe(viewportRef, drawer, setDrawer)
   const hasSubtasks = useSubtaskCount(task?.id ?? null) > 0
   const tools = offeredTools(autopilot !== undefined, workflows !== undefined, subtasks !== undefined && hasSubtasks)
   // a tool can leave while it is open (the last subtask archived
@@ -153,7 +156,7 @@ export function MobileShell({
         <div className="flex items-center gap-1 px-1">
           <button
             type="button"
-            onClick={() => setDrawer(true)}
+            onClick={() => requestDrawer(true)}
             aria-label="Open tasks"
             className="flex size-11 shrink-0 items-center justify-center rounded-lg text-fg-secondary active:bg-hover"
           >
@@ -242,17 +245,18 @@ export function MobileShell({
         />
       )}
 
-      <Drawer.Root open={drawer} onOpenChange={setDrawer} swipeDirection="left">
+      <Drawer.Root open={drawer} onOpenChange={requestDrawer} swipeDirection="left">
         <Drawer.Portal>
-          <Drawer.Backdrop className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
+          <Drawer.Backdrop ref={backdropRef} className="fixed inset-0 z-(--z-backdrop) bg-scrim" />
           <Drawer.Popup
+            ref={popupRef}
             className={cn(
               "mobile-task-drawer fixed inset-y-0 left-0 z-(--z-modal) flex w-[86vw] max-w-[340px] flex-col",
               "border-r border-border-strong bg-sidebar outline-none",
             )}
           >
             <Drawer.Title className="sr-only">Tasks</Drawer.Title>
-            {sidebar(() => setDrawer(false))}
+            {sidebar(() => requestDrawer(false))}
           </Drawer.Popup>
         </Drawer.Portal>
       </Drawer.Root>

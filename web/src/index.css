@@ -75,6 +75,16 @@
   /* The sidebar already owns its top and bottom safe areas. */
   padding-left: env(safe-area-inset-left);
 }
+/* The browser keeps vertical panning and pinch over the phone's main view; the
+   sideways axis is the drawer's (useDrawerSwipe). A scroller starts
+   touch-action afresh for what it holds, so the vertical ones say it again; a
+   sideways one (a code block) keeps its own pan. Not on a pinched-in page
+   (useMobileViewport sets data-pinched), where a sideways pan is how a
+   reader looks around. */
+.mobile-shell:not([data-pinched]) main,
+.mobile-shell:not([data-pinched]) main .overflow-y-auto {
+  touch-action: pan-y pinch-zoom;
+}
 /* The model picker's per-row hide button. It is not a resting control: the
    star beside it says "this is preferred" all the time, but an eye that is
    always on would put two glyphs on every one of 150 rows. So it appears on
@@ -766,6 +776,20 @@ body[data-project-drag] * {
   transition-duration: var(--dur-out);
 }
 
+/* The phone's task drawer slides in from the left edge the same way. A thumb
+   dragging it (useDrawerSwipe) writes its transform, and the backdrop's
+   opacity, inline; that wins over these rules until the settle is over. */
+.mobile-task-drawer {
+  transition: transform var(--dur-in) var(--ease-out);
+}
+.mobile-task-drawer[data-starting-style],
+.mobile-task-drawer[data-ending-style] {
+  transform: translateX(-100%);
+}
+.mobile-task-drawer[data-ending-style] {
+  transition-duration: var(--dur-out);
+}
+
 /* Wisp's own tooltip (lib/title-tips.ts) stands in for every `title` in the
    app. It opens as a hairline from the side that faces what you point at,
    then unfolds to its height with the small spring. The box is a ::before,
@@ -867,6 +891,7 @@ body[data-project-drag] * {
   .wisp-unfold,
   .wisp-turn,
   .wisp-sheet,
+  .mobile-task-drawer,
   .wisp-lift {
     transition: none;
   }
