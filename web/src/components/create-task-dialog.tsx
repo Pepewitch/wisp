@@ -36,6 +36,8 @@ import { cn } from "@/lib/utils"
  *    type: ModelChoice.model is a string, so an unnamed model cannot be built.
  *  - A model-row star remembers the opening choice for FUTURE dialogs only.
  *    It never silently changes the selection in the composer already open.
+ *    An effort-row star is the same contract for one harness · model: it seeds
+ *    a fresh dialog or a switch to that model, never the level already picked.
  *  - Effort is a PICK too, but only from levels that demonstrably exist here:
  *    the configured default plus anything used before (lib/effort.ts). No
  *    hardcoded ladder — the daemon's own tests assert codex taking `xhigh`, so
@@ -152,7 +154,8 @@ function ProjectForm({
   const {
     prompt, setPrompt, choice, setChoice, effort, setEffort, fast, setFast,
     mode, setMode, base, setBase, autopilot, suffixPromptId, setSuffixPromptId,
-    harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForHarness,
+    harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForChoice,
+    preferredEffort, togglePreferredEffort,
   } = useCreateTaskComposer(connectionId, repoPath, harnesses, preferredChoice)
   const [suffixPromptModalOpen, setSuffixPromptModalOpen] = useState(false)
 
@@ -191,7 +194,7 @@ function ProjectForm({
   const pickChoice = (value: string) => {
     const next = decode(value)
     setChoice(next)
-    reseedForHarness(next.harness)
+    reseedForChoice(next)
   }
 
   const togglePreferredChoice = (next: ModelChoice) => {
@@ -358,6 +361,7 @@ function ProjectForm({
         choice={choice}
         preferredChoice={preferredChoice}
         effort={effort}
+        preferredEffort={preferredEffort}
         fast={fast}
         suffixPromptId={suffixPromptId}
         ready={ready}
@@ -368,6 +372,7 @@ function ProjectForm({
         onPreferredChange={setPreferredChoice}
         onReprobe={() => reprobe.mutate()}
         onEffortChange={setEffort}
+        onTogglePreferredEffort={togglePreferredEffort}
         onFastChange={setFast}
         onRestoreComposer={restoreComposer}
         onSuffixPromptChange={setSuffixPromptId}

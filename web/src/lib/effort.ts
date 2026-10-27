@@ -1,7 +1,9 @@
 import type { HarnessInfo } from "@/lib/types"
 import {
   readConnectionStorage,
+  removeConnectionStorage,
   type ReadWriteStorage,
+  type WritableStorage,
   writeConnectionStorage,
 } from "@/lib/connection-storage"
 
@@ -104,4 +106,109 @@ export function effortOptions(
     out.push(value)
   }
   return out
+}
+
+/**
+ * The starred effort per harness + model, seeding future create dialogs the
+ * way the model star does. One level per pair: the same level means different
+ * things on another harness or model, so a star never spreads.
+ */
+const PREFERRED_KEY = "wisp_preferred_effort"
+const PREFERRED_STORAGE_NAME = "preferred_effort"
+
+export type PreferredEfforts = Record<string, string>
+
+// a NUL cannot occur in a harness name or a model id
+const pairKey = (harness: string, model: string) => `${harness}\u0000${model}`
+
+export function loadPreferredEfforts(
+  connectionId: string,
+  storage?: ReadWriteStorage
+): PreferredEfforts {
+  try {
+    const raw = readConnectionStorage(
+      connectionId,
+      PREFERRED_STORAGE_NAME,
+      PREFERRED_KEY,
+      storage
+    )
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as unknown
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      return {}
+    // hand-editable storage is untrusted: keep only "harness\0model" → level
+    const out: PreferredEfforts = {}
+    for (const [pair, level] of Object.entries(
+      parsed as Record<string, unknown>
+    )) {
+      const [harness, model, ...rest] = pair.split("\u0000")
+      if (!harness || !model || rest.length > 0) continue
+      if (typeof level === "string" && level.trim() !== "") out[pair] = level
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+export function preferredEffortFor(
+  preferred: PreferredEfforts,
+  harness: string,
+  model: string
+): string | null {
+  return preferred[pairKey(harness, model)] ?? null
+}
+
+/** Star `level` for one pair, or clear the pair's star with `null`; returns the new map. */
+export function savePreferredEffort(
+  connectionId: string,
+  preferred: PreferredEfforts,
+  harness: string,
+  model: string,
+  level: string | null,
+  storage?: WritableStorage
+): PreferredEfforts {
+  const next = { ...preferred }
+  if (level) next[pairKey(harness, model)] = level
+  else delete next[pairKey(harness, model)]
+  if (Object.keys(next).length > 0) {
+    writeConnectionStorage(
+      connectionId,
+      PREFERRED_STORAGE_NAME,
+      PREFERRED_KEY,
+      JSON.stringify(next),
+      storage
+    )
+  } else {
+    removeConnectionStorage(
+      connectionId,
+      PREFERRED_STORAGE_NAME,
+      PREFERRED_KEY,
+      storage
+    )
+  }
+  return next
+}
+
+/**
+ * The effort a fresh selection of `harness · model` opens with: its star while
+ * the menu still offers that level, else the configured default ("" leaves it
+ * to the adapter). A stale star is skipped, never sent.
+ */
+export function seededEffort(
+  connectionId: string,
+  harness: HarnessInfo | undefined,
+  model: string | undefined,
+  preferred: PreferredEfforts,
+  storage?: ReadWriteStorage
+): string {
+  if (!harness) return ""
+  const starred = model ? preferredEffortFor(preferred, harness.name, model) : null
+  if (
+    starred &&
+    harness.hasEffort &&
+    effortOptions(connectionId, harness, storage).includes(starred)
+  )
+    return starred
+  return harness.defaults.reasoningEffort ?? ""
 }

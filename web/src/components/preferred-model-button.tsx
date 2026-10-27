@@ -20,9 +20,33 @@ export function PreferButton({
 }) {
   const choice = { harness: harness.name, model }
   const preferred = sameChoice(preferredChoice, choice)
-  const label = preferred
-    ? `Clear preferred model ${harness.name} · ${model}`
-    : `Prefer ${harness.name} · ${model} for new tasks`
+  return (
+    <StarButton
+      preferred={preferred}
+      label={
+        preferred
+          ? `Clear preferred model ${harness.name} · ${model}`
+          : `Prefer ${harness.name} · ${model} for new tasks`
+      }
+      onToggle={() => onTogglePreferred(choice)}
+    />
+  )
+}
+
+/**
+ * The star itself, for any menu row whose pick can seed future dialogs. The
+ * row is a base-ui RadioItem: the stopped events keep a press on the star from
+ * also picking the row.
+ */
+export function StarButton({
+  preferred,
+  label,
+  onToggle,
+}: {
+  preferred: boolean
+  label: string
+  onToggle: () => void
+}) {
   return (
     <button
       type="button"
@@ -35,7 +59,7 @@ export function PreferButton({
       }}
       onClick={(event) => {
         event.stopPropagation()
-        onTogglePreferred(choice)
+        onToggle()
       }}
       className={cn(
         "flex size-6 items-center justify-center rounded-md",

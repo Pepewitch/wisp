@@ -7,6 +7,7 @@ const LOCAL_LEGACY_KEYS = [
   "wisp_selected_task",
   "wisp_preferred_model",
   "wisp_effort_recents",
+  "wisp_preferred_effort",
   "wisp_shell_tabs_v1",
 ] as const
 
