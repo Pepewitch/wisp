@@ -188,6 +188,37 @@ describe("GET /api/projects/entries", () => {
     expect(names).toContain("src-link");
   });
 
+  test("a submodule's own rules hide its ignored entries, and a link into it hides nothing it should not", async () => {
+    const { root } = makeProject();
+    // a real submodule: mode 160000 in the root's index, with its own .gitignore
+    const upstream = realpathSync(mkdtempSync(join(tmpdir(), "wisp-entries-upstream-")));
+    git(upstream, ["init", "-q"]);
+    writeFileSync(join(upstream, ".gitignore"), "node_modules/\n*.log\n");
+    writeFileSync(join(upstream, "index.ts"), "export {}\n");
+    git(upstream, ["add", "-A"]);
+    git(upstream, ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
+    git(root, ["-c", "protocol.file.allow=always", "submodule", "add", "-q", upstream, "vendor"]);
+    const staged = Bun.spawnSync({ cmd: ["git", "ls-files", "-s", "vendor"], cwd: root, stdout: "pipe" });
+    expect(staged.stdout.toString()).toStartWith("160000 ");
+    mkdirSync(join(root, "vendor/node_modules"));
+    writeFileSync(join(root, "vendor/debug.log"), "noise\n");
+    // the root's own build alias (ignored by name) and a link whose target only the submodule can answer for
+    writeFileSync(join(root, ".gitignore"), "node_modules/\n*.log\ndist\nsrc/generated/\nbuild\n");
+    symlinkSync(join(root, "src"), join(root, "build"));
+    symlinkSync(join(root, "vendor/index.ts"), join(root, "vendor-entry"));
+    const base = await startServer([root]);
+
+    const vendor = (await listing(await entries(base, root, "vendor"))).entries.map((entry) => entry.name);
+    expect(vendor).toContain("index.ts");
+    expect(vendor).not.toContain("node_modules");
+    expect(vendor).not.toContain("debug.log");
+
+    const top = (await listing(await entries(base, root))).entries.map((entry) => entry.name);
+    expect(top).toContain("vendor");
+    expect(top).toContain("vendor-entry");
+    for (const hidden of ["node_modules", "debug.log", "build", "dist"]) expect(top, hidden).not.toContain(hidden);
+  });
+
   test("q narrows before the cap, so a name past the first rows is reachable", async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "wisp-entries-filter-")));
     for (let i = 0; i <= ENTRY_CAP; i += 1) writeFileSync(join(root, `file${String(i).padStart(3, "0")}.txt`), "");

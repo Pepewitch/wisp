@@ -1,7 +1,7 @@
 import { opendir, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import type { ProjectEntriesResponse, ProjectEntry } from "../../shared/api/project-entries";
-import { READ_TIMEOUT_MS, runBounded } from "./subprocess";
+import { ignoredAsks, type IgnoreAsk } from "./project-ignore";
 
 /**
  * One directory of a registered project, for the composer's `@` list.
@@ -13,9 +13,9 @@ import { READ_TIMEOUT_MS, runBounded } from "./subprocess";
  * way, so the list never offers a path the next request would refuse.
  *
  * `.git` is never listed or listable, by name or by a link's real path, nor
- * is anything git ignores: one `git check-ignore --stdin` call per listing
- * answers for every candidate at once, and tracked files stay listed even
- * when a pattern matches them (git's own rule). A folder git ignores can
+ * is anything git ignores (project-ignore.ts: asked in the repository that
+ * owns each candidate, submodules included, and failing closed), and tracked
+ * files stay listed even when a pattern matches them (git's own rule). A folder git ignores can
  * still be named outright (`dir=node_modules/react`); it is only never
  * offered.
  */
@@ -68,9 +68,9 @@ export async function listProjectEntries(
   if (inside(join(realRoot, ".git"), realDir)) return { status: 403, error: "dir resolves into .git" };
 
   const scanned = await scanDirectory(realRoot, realDir, filter.toLowerCase());
-  const ignored = await ignoredPaths(realRoot, scanned.entries.flatMap((entry) => entry.gitPaths));
+  const ignored = await ignoredAsks(scanned.entries.flatMap((entry) => entry.asks));
   const kept = scanned.entries
-    .filter((entry) => !entry.gitPaths.some((path) => ignored.has(path)))
+    .filter((entry) => !entry.asks.some(ignored))
     .map(({ name, kind }): ProjectEntry => ({ name, kind }))
     .sort(compareEntries);
   return {
@@ -83,20 +83,17 @@ export async function listProjectEntries(
 }
 
 /**
- * A scanned row, and what git is asked about it, all root-relative real paths:
- * the entry itself, with the trailing `/` that lets `dir/` patterns match a
- * folder; and for a link, also where it leads, so a link to `node_modules` is
- * ignored like `node_modules`. The link is asked about as itself (git sees a
- * symlink as a file), never through itself: git answers a path beyond a
- * symlink with a fatal error that would fail the whole batch. The entry is
- * left out when ANY of its paths is ignored.
+ * A scanned row, and what git is asked about it (see project-ignore.ts): the
+ * entry by its own name in the listed folder, with the trailing `/` that lets
+ * `dir/` patterns match a folder; and for a link, also its target, by name in
+ * the target's own folder, so a link to `node_modules` is ignored like
+ * `node_modules`. A link's own name is asked about as a file, which is what
+ * git sees. The entry is left out when ANY answer is "ignored".
  */
-type ScannedEntry = ProjectEntry & { gitPaths: string[] };
+type ScannedEntry = ProjectEntry & { asks: IgnoreAsk[] };
 
-function gitPathFor(realRoot: string, realPath: string, kind: ProjectEntry["kind"]): string | null {
-  const path = relative(realRoot, realPath).split(sep).join("/");
-  if (path === "") return null;
-  return kind === "dir" ? `${path}/` : path;
+function askFor(realPath: string, kind: ProjectEntry["kind"]): IgnoreAsk {
+  return { cwd: dirname(realPath), path: kind === "dir" ? `${basename(realPath)}/` : basename(realPath) };
 }
 
 function compareEntries(a: ProjectEntry, b: ProjectEntry): number {
@@ -126,7 +123,7 @@ async function scanDirectory(
       const path = join(realDir, dirent.name);
       const entry = dirent.isSymbolicLink()
         ? await linkEntry(realRoot, path, dirent.name)
-        : direntEntry(realRoot, path, dirent.name, dirent.isDirectory() ? "dir" : dirent.isFile() ? "file" : null);
+        : direntEntry(path, dirent.name, dirent.isDirectory() ? "dir" : dirent.isFile() ? "file" : null);
       if (entry) entries.push(entry);
     }
   } finally {
@@ -136,9 +133,8 @@ async function scanDirectory(
   return { entries, truncated };
 }
 
-function direntEntry(realRoot: string, path: string, name: string, kind: ProjectEntry["kind"] | null): ScannedEntry | null {
-  const gitPath = kind ? gitPathFor(realRoot, path, kind) : null;
-  return kind ? { name, kind, gitPaths: gitPath === null ? [] : [gitPath] } : null;
+function direntEntry(path: string, name: string, kind: ProjectEntry["kind"] | null): ScannedEntry | null {
+  return kind ? { name, kind, asks: [askFor(path, kind)] } : null;
 }
 
 /** A symlink is listed as what it leads to, and only when that stays inside the project and out of .git. */
@@ -147,30 +143,13 @@ async function linkEntry(realRoot: string, path: string, name: string): Promise<
     const target = await realpath(path);
     if (!inside(realRoot, target) || inside(join(realRoot, ".git"), target)) return null;
     const info = await stat(target);
-    const entry = direntEntry(realRoot, target, name, info.isDirectory() ? "dir" : info.isFile() ? "file" : null);
-    // the link's own path, as the file git sees it: `ln -s src build` is ignored by `build`
-    const own = gitPathFor(realRoot, path, "file");
-    return entry && own !== null ? { ...entry, gitPaths: [own, ...entry.gitPaths] } : entry;
+    const kind = info.isDirectory() ? "dir" : info.isFile() ? "file" : null;
+    if (!kind) return null;
+    // its own name, as the file git sees: `ln -s src build` is ignored by `build`;
+    // and where it leads, unless that is the root itself, which nothing ignores
+    const asks = [askFor(path, "file"), ...(target === realRoot ? [] : [askFor(target, kind)])];
+    return { name, kind, asks };
   } catch {
     return null;
   }
-}
-
-/**
- * The subset of `paths` git ignores, in one process. A folder that is not a
- * git checkout (exit 128), or a git that fails, hides nothing beyond `.git`:
- * the list is a convenience, and an empty one would be the worse answer.
- */
-async function ignoredPaths(realRoot: string, paths: string[]): Promise<Set<string>> {
-  if (paths.length === 0) return new Set();
-  const result = await runBounded({
-    cmd: ["git", "check-ignore", "--stdin", "-z"],
-    cwd: realRoot,
-    env: { GIT_TERMINAL_PROMPT: "0" },
-    input: paths.map((path) => `${path}\0`).join(""),
-    timeoutMs: READ_TIMEOUT_MS,
-  });
-  // 0: some are ignored, 1: none are
-  if (result.exitCode !== 0 || result.truncated) return new Set();
-  return new Set(result.out.split("\0").filter((path) => path !== ""));
 }

@@ -330,8 +330,11 @@ address's last new wrong token. The web UI is served at `/`.
   folders first, at most 500 rows (`truncated` when more match); `q` keeps
   names containing it (case-insensitive) before that cap. A folder with more
   than 5,000 entries is read only that far, and says so in `incompleteAfter`
-  (otherwise `null`). `.git` and git-ignored entries are left out; a symlink
-  is left out when its own path or where it leads is ignored.
+  (otherwise `null`). `.git` and git-ignored entries are left out, each
+  by the rules of the repository that owns it (a submodule's own
+  `.gitignore` inside a submodule); a symlink is left out when its own path
+  or where it leads is ignored, and an entry git cannot answer for is left
+  out too.
   An absolute `dir`, a `..` or `.git` segment is `400`, a `dir` that resolves
   outside the project or into `.git` is `403`, and a path that is not a
   registered project, or a missing folder, is `404`
