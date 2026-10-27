@@ -168,7 +168,10 @@ function validateFastMode(raw: unknown, label: string): AdapterDef["fastMode"] {
  * so a user list that lacks it changes nothing. Without discovery, the static
  * list is the only evidence. There, a user list that replaces the builtin's
  * without the inherited default drops it (with a warning) rather than failing
- * the boot, and a default the user names must be in their list.
+ * the boot, and a default the user names must be in their list. A default the
+ * user names against the builtin's own list is different: that list moves
+ * when Wisp refreshes a lineup, so a default it no longer offers falls back to
+ * the builtin's (with a warning) instead of stopping an upgraded daemon.
  * `defaultModel: null` clears an inherited default.
  */
 function applyDefaultModel(
@@ -178,6 +181,7 @@ function applyDefaultModel(
   warn: (msg: string) => void,
 ): void {
   const inherited = raw.defaultModel === undefined;
+  const builtinDefault = merged.defaultModel;
   if (raw.defaultModel === null) {
     delete merged.defaultModel;
   } else if (!inherited) {
@@ -199,8 +203,15 @@ function applyDefaultModel(
     return;
   }
   if (merged.staticModels.includes(wanted)) return;
-  if (!inherited) {
+  if (!inherited && raw.staticModels !== undefined) {
     throw new Error(`${label}.defaultModel '${wanted}' is not in staticModels — the default must be one of the offered models`);
+  }
+  if (!inherited) {
+    const fallback = builtinDefault !== undefined && merged.staticModels.includes(builtinDefault) ? builtinDefault : undefined;
+    warn(`${label}: Wisp no longer offers '${wanted}' (offered: ${merged.staticModels.join(", ")}) — ${fallback ? `using Wisp's default '${fallback}'` : "no default"}; ${silence}`);
+    if (fallback) merged.defaultModel = fallback;
+    else delete merged.defaultModel;
+    return;
   }
   warn(`${label}: staticModels does not include the inherited default '${wanted}' — dropping it; ${silence}`);
   delete merged.defaultModel;

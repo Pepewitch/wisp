@@ -331,6 +331,20 @@ describe("defaultModel in adapters.json overrides", () => {
     );
   });
 
+  test("a named default the builtin's refreshed lineup dropped falls back to Wisp's default instead of failing the boot", () => {
+    for (const stale of ["claude-sonnet-5", "claude-haiku-4-5-20251001"]) {
+      const { out, warnings } = validate({ claude: { defaultModel: stale } });
+      expect(out.claude!.defaultModel).toBe("claude-opus-5-5");
+      expect(warnings).toEqual([
+        `adapters.json: adapter 'claude': Wisp no longer offers '${stale}' (offered: claude-fable-5-1, claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5) — using Wisp's default 'claude-opus-5-5'; set defaultModel to one of your models to pin one, or to null for none`,
+      ]);
+    }
+    expect(validate({ claude: { defaultModel: "claude-sonnet-5-5" } })).toEqual({
+      out: expect.objectContaining({ claude: expect.objectContaining({ defaultModel: "claude-sonnet-5-5" }) }),
+      warnings: [],
+    });
+  });
+
   test("a defaultModel that can never apply warns, and an inherited one is dropped", () => {
     const named = validate({ foo: { bin: "foo", exec: [], parse: { format: "text" }, defaultModel: "m" } });
     expect(named.out.foo!.defaultModel).toBe("m");

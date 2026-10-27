@@ -17,10 +17,10 @@ const HARNESSES: HarnessInfo[] = [
     hasModel: true,
     hasEffort: true,
     hasImage: true,
-    defaults: { model: "claude-opus-5" },
+    defaults: { model: "claude-opus-5-5" },
     models: {
       list: ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
-      defaultModel: "claude-opus-5",
+      defaultModel: "claude-opus-5-5",
       probedAt: "2026-09-22T00:00:00.000Z",
     },
   },
@@ -57,7 +57,7 @@ const HIDDEN: HiddenModels = {
 }
 
 const TASK_DEFAULTS: ModelTaskDefaultsMap = {
-  claude: { "claude-opus-5": { autoFix: true, autoMerge: true } },
+  claude: { "claude-opus-5-5": { autoFix: true, autoMerge: true } },
   codex: { "gpt-5.6-luna": { autoFix: true } },
 }
 
@@ -72,7 +72,7 @@ export function ModelVisibilitySpecimen() {
   const [hidden, setHidden] = useState<HiddenModels>(HIDDEN)
   const [taskDefaults, setTaskDefaults] = useState<ModelTaskDefaultsMap>(TASK_DEFAULTS)
   const [revealed, setRevealed] = useState(false)
-  const selected = { harness: "claude", model: "claude-opus-5" }
+  const selected = { harness: "claude", model: "claude-opus-5-5" }
 
   return (
     <section className="mt-9">
