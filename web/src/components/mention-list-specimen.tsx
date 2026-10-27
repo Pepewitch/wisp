@@ -35,9 +35,9 @@ export function MentionListSpecimens() {
         One rule for every row: <span className="font-mono">↵</span> or a click inserts its absolute path as plain
         text (a project's own checkout, never a task worktree), quoted when it has a space, so an agent in one
         project can be pointed at another without searching the disk for it.{" "}
-        <span className="font-mono">⇥</span>, <span className="font-mono">→</span>, a{" "}
-        <span className="font-mono">/</span> after the name, or the chevron opens a project or folder and lists its
-        children. What git ignores is not offered. An <span className="font-mono">@</span> inside a word, or one no
+        <span className="font-mono">⇥</span>, <span className="font-mono">→</span> or the chevron opens a project or
+        folder and lists its children; typing <span className="font-mono">@name/</span> opens the project named
+        exactly that. What git ignores is not offered. An <span className="font-mono">@</span> inside a word, or one no
         project answers, opens nothing.
       </p>
     </div>

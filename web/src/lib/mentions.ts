@@ -13,8 +13,9 @@ import type { RepoInfo } from "@/lib/types"
  *   `@superapp/src/co`  the entries of `src/` matching `co`
  *
  * One rule for every row: Enter (or a click) INSERTS its absolute path,
- * quoted when it contains whitespace; Tab, →, typing `/` after its name, or
- * the row's chevron OPENS a project or folder and lists its children. Once
+ * quoted when it contains whitespace; Tab, →, or the row's chevron OPENS a
+ * project or folder and lists its children (and Tab on a file inserts it).
+ * Typing `@name/` opens the project whose handle is exactly `name`. Once
  * something is opened, the picker remembers which project and folder it is
  * (`MentionNav`), so a folder called `My Docs` or two projects both called
  * `app` never depend on re-reading the draft: the draft only shows where you
@@ -230,8 +231,13 @@ export function mentionOptionId(index: number): string {
 
 /** The keys the textarea hands to an open `@` list instead of acting on them. */
 export const MENTION_NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"])
-/** Tab always opens; → and `/` only at the end of the word, where they would otherwise just type or move */
-export const MENTION_OPEN_KEYS = new Set(["Tab", "ArrowRight", "/"])
+/**
+ * The explicit picks that open the highlighted project or folder: Tab, and a
+ * plain → at the end of the word. A typed `/` is never one: it is a character,
+ * and the parse decides what `@name/` means, so `@super/` opens `super`, never
+ * the highlighted `superapp`, and `@types/` with no project `types` is left alone.
+ */
+export const MENTION_OPEN_KEYS = new Set(["Tab", "ArrowRight"])
 
 /**
  * The draft after a pick, where the caret goes, and what the picker has open

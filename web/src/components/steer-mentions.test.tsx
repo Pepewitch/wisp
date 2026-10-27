@@ -73,14 +73,15 @@ const LISTINGS: Record<string, ProjectEntriesResponse> = {
   ]),
   "/work/superapp|My Docs": listing("/work/superapp", "My Docs", [{ name: "guide.md", kind: "file" }]),
   "/work/other/app|": listing("/work/other/app", "", [{ name: "lib", kind: "dir" }]),
+  "/work/super|": listing("/work/super", "", [{ name: "only-in-super", kind: "dir" }]),
   "/work/superapp|vendor": { ...listing("/work/superapp", "vendor", [{ name: "a.js", kind: "file" }]), incompleteAfter: 5000 },
 }
 
-function mount(node: ReactNode) {
+function mount(node: ReactNode, repos: RepoInfo[] = REPOS) {
   const paths: string[] = []
   const request: DaemonTransport["request"] = async <T,>(path: string) => {
     paths.push(path)
-    if (path === "/api/repos") return { repos: REPOS } as T
+    if (path === "/api/repos") return { repos } as T
     if (path.startsWith("/api/projects/entries?")) {
       const query = new URLSearchParams(path.slice(path.indexOf("?") + 1))
       if (query.get("project") === "/work/slow") return new Promise<T>(() => {})
@@ -143,9 +144,9 @@ describe("the @ list", () => {
     expect(screen.queryByTestId("mention-list")).toBeNull()
   })
 
-  it("Tab, → at the end of the word, and `/` after a name open the highlighted project", async () => {
+  it("Tab and a plain → at the end of the word open the highlighted project", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
-    for (const opener of ["Tab", "ArrowRight", "/"]) {
+    for (const opener of ["Tab", "ArrowRight"]) {
       type("@supe")
       await waitFor(() => expect(options()).toEqual(["superapp/work/superapp"]))
       key(opener)
@@ -154,15 +155,42 @@ describe("the @ list", () => {
     }
   })
 
-  it("→ in the middle of the word and `/` right after the @ only move and type", async () => {
+  it("→ in the middle of the word, or with a modifier, stays a caret shortcut", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
     type("@supe", 2)
     await waitFor(() => expect(options()).toHaveLength(1))
-    key("ArrowRight")
-    expect(box()).toHaveValue("@supe")
-    type("@")
-    await waitFor(() => expect(options()).toHaveLength(5))
+    expect(fireEvent.keyDown(box(), { key: "ArrowRight" })).toBe(true)
+    type("@supe")
+    for (const modifier of ["metaKey", "ctrlKey", "altKey", "shiftKey"]) {
+      expect(fireEvent.keyDown(box(), { key: "ArrowRight", [modifier]: true }), modifier).toBe(true)
+      expect(box()).toHaveValue("@supe")
+    }
+  })
+
+  it("a typed `/` is just a character: `@super/` opens super, never the highlighted superapp", async () => {
+    const both = [repo("superapp", "/work/superapp"), repo("super", "/work/super")]
+    mount(<SteerBox task={task()} onSend={async () => {}} />, both)
+    type("look in @super")
+    await waitFor(() => expect(options()).toEqual(["superapp/work/superapp", "super/work/super"]))
     expect(fireEvent.keyDown(box(), { key: "/" })).toBe(true)
+    type("look in @super/")
+    await waitFor(() => expect(options()).toEqual(["only-in-super/"]))
+    key("Enter")
+    expect(box()).toHaveValue("look in /work/super/only-in-super ")
+  })
+
+  it("`@types/` with only a typescript-lib project leaves the text alone, and Enter sends it", async () => {
+    const onSend = vi.fn(async () => {})
+    mount(<SteerBox task={task()} onSend={onSend} />, [repo("typescript-lib", "/work/typescript-lib")])
+    type("npm i @types")
+    await waitFor(() => expect(options()).toEqual(["typescript-lib/work/typescript-lib"]))
+    expect(fireEvent.keyDown(box(), { key: "/" })).toBe(true)
+    type("npm i @types/")
+    await waitFor(() => expect(screen.queryByTestId("mention-list")).toBeNull())
+    type("npm i @types/node")
+    key("Enter")
+    expect(box()).toHaveValue("npm i @types/node")
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("npm i @types/node", undefined))
   })
 
   it("a click inserts, and the chevron opens", async () => {
@@ -220,7 +248,7 @@ describe("the @ list", () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledWith("npm i @types/node", undefined))
   })
 
-  it("@project/ lists its root; Tab opens a folder, Enter inserts a folder or a file", async () => {
+  it("@project/ lists its root; Tab opens a folder, Enter inserts a folder, Tab inserts a file", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
     type("see @superapp/")
     await waitFor(() => expect(options()).toEqual(["My Docs/", "src/", "README.md"]))
@@ -232,9 +260,8 @@ describe("the @ list", () => {
     expect(box()).toHaveValue("see /work/superapp/src/components ")
     type("see @superapp/src/conf")
     await waitFor(() => expect(options()).toEqual(["config.ts"]))
+    // Tab on a file inserts it, like Enter
     key("Tab")
-    expect(box()).toHaveValue("see @superapp/src/conf")
-    key("Enter")
     expect(box()).toHaveValue("see /work/superapp/src/config.ts ")
   })
 

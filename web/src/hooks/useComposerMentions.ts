@@ -135,15 +135,16 @@ export function useComposerMentions({
       if (row && !event.metaKey && !event.ctrlKey) pick(row, "insert")
       return true
     }
-    if (!MENTION_OPEN_KEYS.has(event.key)) return false
-    // → and `/` stand in for "open" only at the end of the word, with a row to open;
-    // `/` also needs a name typed before it, or `@` + `/` could never be typed
-    const box = event.currentTarget
-    const atEnd = box.selectionStart === live.end && box.selectionEnd === live.end
-    const typed = event.key !== "/" || (query !== null && query.filter !== "")
-    if (event.key !== "Tab" && !(atEnd && row?.open && typed)) return false
+    if (!MENTION_OPEN_KEYS.has(event.key) || event.metaKey || event.ctrlKey) return false
+    if (event.key === "ArrowRight") {
+      // a plain → opens only at the end of the word and with a row to open; anywhere
+      // else, and with a modifier (⌘→, ⌥→), it stays a caret shortcut
+      const box = event.currentTarget
+      if (!row?.open || box.selectionStart !== live.end || box.selectionEnd !== live.end) return false
+    }
     event.preventDefault()
-    if (row) pick(row, "open")
+    // Tab on a file inserts it, like Enter: there is nothing under it to open
+    if (row) pick(row, row.open ? "open" : "insert")
     return true
   }
 
