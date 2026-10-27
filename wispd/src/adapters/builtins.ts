@@ -139,10 +139,11 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // the documented exception. Full ids only — `--model` also takes the
     // aliases 'opus'/'sonnet'/'fable', but an alias silently re-points at
     // whatever is newest, and wisp policy is an EXPLICIT model per task.
-    // Baked ids rechecked on claude-code 2.1.285; the zero-token `/model`
-    // read accepted Opus 5.5 on that version. Fable 5.1 replaced legacy Fable
-    // 5, and Opus 5.5 replaced Opus 5 in the curated current lineup.
-    staticModels: ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+    // Baked ids rechecked on claude-code 2.1.311; the zero-token `/model`
+    // read accepted Sonnet 5.5 and Haiku 5.5 on that version. Fable 5.1
+    // replaced legacy Fable 5, Opus 5.5 replaced Opus 5, and Sonnet 5.5 and
+    // Haiku 5.5 replaced Sonnet 5 and Haiku 4.5 in the curated current lineup.
+    staticModels: ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
     // Wisp's default for new claude tasks (owner decision, 2026-09-30).
     defaultModel: "claude-opus-5-5",
     // images arrive via the stdin envelope, not argv (spike ts7efd): on an

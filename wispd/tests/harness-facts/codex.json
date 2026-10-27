@@ -4,7 +4,7 @@
   "surfaces": {
     "effortLevels": {
       "cost": "free",
-      "verifiedAgainst": "0.159.2",
+      "verifiedAgainst": "0.164.0",
       "source": "union of supported_reasoning_levels across 'codex debug models'",
       "note": "codex's effort enum is per-model; this union is what the picker may offer",
       "lists": {
@@ -36,7 +36,7 @@
     },
     "flags": {
       "cost": "free",
-      "verifiedAgainst": "0.159.2",
+      "verifiedAgainst": "0.164.0",
       "source": "flag tokens parsed out of 'codex exec --json --dangerously-bypass-approvals-and-sandbox --help'",
       "lists": {
         "values": [
@@ -45,6 +45,7 @@
           "--cd",
           "--color",
           "--config",
+          "--cyber-access-program",
           "--dangerously-bypass-approvals-and-sandbox",
           "--dangerously-bypass-hook-trust",
           "--disable",
@@ -82,7 +83,7 @@
     },
     "markerPresence": {
       "cost": "free",
-      "verifiedAgainst": "0.159.2",
+      "verifiedAgainst": "0.164.0",
       "source": "case-insensitive fixed-string search of the installed codex binary",
       "note": "'missing' markers cannot fire: the phrase no longer appears in the shipped CLI",
       "lists": {
@@ -100,18 +101,18 @@
     },
     "models": {
       "cost": "free",
-      "verifiedAgainst": "0.159.2",
+      "verifiedAgainst": "0.164.0",
       "source": "'codex debug models' catalog, in codex's own priority order",
       "lists": {
         "ids": [
-          "gpt-5.5",
           "gpt-5.6-luna",
           "gpt-5.6-sol",
           "gpt-5.6-terra",
           "gpt-6-astra",
           "gpt-6-luna",
           "gpt-6-sol",
-          "gpt-6.1-sol"
+          "gpt-6.1-sol",
+          "gpt-6.1-terra"
         ]
       },
       "scalars": {

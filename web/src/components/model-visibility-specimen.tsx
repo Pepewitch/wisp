@@ -19,7 +19,7 @@ const HARNESSES: HarnessInfo[] = [
     hasImage: true,
     defaults: { model: "claude-opus-5" },
     models: {
-      list: ["claude-fable-5-1", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"],
+      list: ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
       defaultModel: "claude-opus-5",
       probedAt: "2026-09-22T00:00:00.000Z",
     },
@@ -51,7 +51,7 @@ const HARNESSES: HarnessInfo[] = [
 ]
 
 const HIDDEN: HiddenModels = {
-  claude: ["claude-fable-5-1", "claude-haiku-4-5-20251001"],
+  claude: ["claude-fable-5-1", "claude-haiku-5-5"],
   codex: ["gpt-5.6-luna-codex", "gpt-6-astra-mini", "o4-mini"],
   cursor: ["auto", "composer-2.5", "cursor-muse-1", "claude-opus-4-8-high", "gpt-5.6-sol"],
 }

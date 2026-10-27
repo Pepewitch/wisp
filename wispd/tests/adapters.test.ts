@@ -116,8 +116,8 @@ describe("buildArgv", () => {
     expect(claude.staticModels).toEqual([
       "claude-fable-5-1",
       "claude-opus-5-5",
-      "claude-sonnet-5",
-      "claude-haiku-4-5-20251001",
+      "claude-sonnet-5-5",
+      "claude-haiku-5-5",
     ]);
     expect(droid.staticModels).toBeUndefined();
     expect(codex.staticModels).toBeUndefined();
