@@ -172,7 +172,7 @@ export function ProjectSection({
           "group/project flex items-center gap-1.5 rounded-md pr-1.5 pl-2 hover:bg-hover",
           touch ? "h-11" : "h-7",
           order && "wisp-lift",
-          dragging && "relative z-10 bg-popover"
+          dragging && "relative z-(--z-pane) bg-popover"
         )}
         data-project-path={group.path}
         data-project-header=""

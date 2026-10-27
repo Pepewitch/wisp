@@ -112,6 +112,15 @@ describe("PUT /api/repos/order", () => {
     });
   }
 
+  test("a relative path is a 400, not read against the daemon's cwd", async () => {
+    const cfg = config();
+    writeConfig(cfg);
+    const response = await reorder(cfg, { paths: [GAMMA.path, "projects/beta", ALPHA.path] });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: "path must be absolute: projects/beta" });
+    expect(cfg.repos).toEqual([ALPHA, BETA, GAMMA]);
+  });
+
   test("the daemon advertises it", async () => {
     const url = new URL("http://wisp.test/api/harnesses");
     const response = await route(new Request(url), url, url.pathname, testRouteContext(config(), BUILTIN_ADAPTERS));

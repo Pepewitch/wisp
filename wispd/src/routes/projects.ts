@@ -403,6 +403,9 @@ export function reorderReposRoute(req: Request, cfg: WispConfig): Promise<Respon
     if (!Array.isArray(paths) || paths.some((value) => typeof value !== "string" || value.length === 0)) {
       return err(`paths must be an array of project paths, got ${typeName(paths)}`, 400);
     }
+    // resolve() would read a relative path against the daemon's own cwd
+    const relative = (paths as string[]).find((path) => !isAbsolute(path));
+    if (relative !== undefined) return err(`path must be absolute: ${relative}`, 400);
     // a config may list one project twice (a string and an object entry):
     // GET /api/repos shows it once, so it moves as one, every entry kept
     const byPath = new Map<string, RepoEntry[]>();

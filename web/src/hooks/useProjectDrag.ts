@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react"
 
-import { moveProject } from "@/lib/projects"
+import type { ProjectMove } from "@/lib/project-order-queue"
 
 /** How far a press travels before it is a drag: under it, a press stays a click. */
 export const DRAG_THRESHOLD_PX = 4
@@ -52,7 +52,7 @@ export function useProjectDrag({
   /** the configured projects, in their order */
   paths: readonly string[]
   /** undefined: no drag at all */
-  onReorder?: (paths: string[]) => void
+  onReorder?: (path: string, move: ProjectMove) => void
 }): ProjectDrag {
   const [dragging, setDragging] = useState<string | null>(null)
   const [lineTop, setLineTop] = useState<number | null>(null)
@@ -124,10 +124,9 @@ export function useProjectDrag({
         if (!current || e.pointerId !== current.pointerId) return
         if (current.started) {
           swallowNextClick()
-          const order = latest.current.paths
-          const at = order.indexOf(current.path)
+          const at = latest.current.paths.indexOf(current.path)
           const to = current.slot > at ? current.slot - 1 : current.slot
-          if (!current.cancelled && at >= 0 && to !== at) latest.current.onReorder?.(moveProject(order, at, to))
+          if (!current.cancelled && at >= 0 && to !== at) latest.current.onReorder?.(current.path, { to })
         }
         end()
       }

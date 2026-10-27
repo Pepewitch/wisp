@@ -91,12 +91,12 @@ describe("reordering projects", () => {
     fireEvent.click(screen.getByRole("button", { name: "More for alpha" }))
     expect(await screen.findByRole("menuitem", { name: /Move up/ })).toHaveAttribute("aria-disabled", "true")
     fireEvent.click(screen.getByRole("menuitem", { name: /Move down/ }))
-    expect(projectOrder.onReorder).toHaveBeenLastCalledWith(["/src/beta", "/src/alpha", "/src/gamma"])
+    expect(projectOrder.onReorder).toHaveBeenLastCalledWith("/src/alpha", { step: 1 })
 
     fireEvent.click(screen.getByRole("button", { name: "More for gamma" }))
     expect(await screen.findByRole("menuitem", { name: /Move down/ })).toHaveAttribute("aria-disabled", "true")
     fireEvent.click(screen.getByRole("menuitem", { name: /Move up/ }))
-    expect(projectOrder.onReorder).toHaveBeenLastCalledWith(["/src/alpha", "/src/gamma", "/src/beta"])
+    expect(projectOrder.onReorder).toHaveBeenLastCalledWith("/src/gamma", { step: -1 })
   })
 
   it("a project known only from its tasks has no menu and does not drag", () => {
@@ -111,9 +111,9 @@ describe("reordering projects", () => {
     mount(projectOrder)
 
     fireEvent.keyDown(toggle("beta"), { key: "ArrowUp", altKey: true })
-    expect(projectOrder.onReorder).toHaveBeenLastCalledWith(["/src/beta", "/src/alpha", "/src/gamma"])
+    expect(projectOrder.onReorder).toHaveBeenLastCalledWith("/src/beta", { step: -1 })
     fireEvent.keyDown(toggle("beta"), { key: "ArrowDown", altKey: true })
-    expect(projectOrder.onReorder).toHaveBeenLastCalledWith(["/src/alpha", "/src/gamma", "/src/beta"])
+    expect(projectOrder.onReorder).toHaveBeenLastCalledWith("/src/beta", { step: 1 })
 
     fireEvent.keyDown(toggle("alpha"), { key: "ArrowUp", altKey: true })
     fireEvent.keyDown(toggle("gamma"), { key: "ArrowDown", altKey: true })
@@ -142,7 +142,7 @@ describe("reordering projects", () => {
     expect(dropLine()).toHaveStyle({ top: "76px" })
 
     release(60)
-    expect(projectOrder.onReorder).toHaveBeenCalledWith(["/src/beta", "/src/alpha", "/src/gamma"])
+    expect(projectOrder.onReorder).toHaveBeenCalledWith("/src/alpha", { to: 1 })
     expect(dropLine()).toBeNull()
     // the release's own click does not fold the project it landed on
     fireEvent.click(toggle("alpha"))

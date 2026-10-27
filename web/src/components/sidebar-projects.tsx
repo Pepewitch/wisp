@@ -3,7 +3,8 @@ import { useLayoutEffect, useMemo, useRef } from "react"
 import { ProjectSection, type ProjectOrderControls } from "@/components/sidebar-sections"
 import { useProjectDrag } from "@/hooks/useProjectDrag"
 import type { SubtaskTreeView } from "@/hooks/useSidebarTree"
-import { moveProject, type ProjectGroup } from "@/lib/projects"
+import type { ProjectMove } from "@/lib/project-order-queue"
+import type { ProjectGroup } from "@/lib/projects"
 import type { SidebarList } from "@/lib/subtask-tree"
 import type { PullRequestOverviewEntry, StatusEntry } from "@/lib/types"
 
@@ -22,7 +23,7 @@ export function ProjectList({
 }: {
   groups: ProjectGroup[]
   lists: readonly SidebarList[]
-  onReorder?: (paths: string[]) => void
+  onReorder?: (path: string, move: ProjectMove) => void
   view: SubtaskTreeView
   status: Record<string, StatusEntry>
   pullRequests: Record<string, PullRequestOverviewEntry>
@@ -54,10 +55,8 @@ export function ProjectList({
       canMoveUp: index > 0,
       canMoveDown: index < paths.length - 1,
       onMove: (step, keyboard) => {
-        const to = index + step
-        if (to < 0 || to >= paths.length) return
         if (keyboard) refocus.current = group.path
-        onReorder(moveProject(paths, index, to))
+        onReorder(group.path, { step })
       },
       dragging: drag.dragging === group.path,
       onPointerDown: (event) => drag.onPointerDown(group.path, event),

@@ -204,8 +204,9 @@ vi.mock("@/hooks/mutations", () => ({
   useSaveReviewJudgeKey: () => ({ mutate: vi.fn(), isPending: false, error: null }),
   useSaveFactoryKey: () => ({ mutate: vi.fn(), isPending: false, error: null }),
   useRefreshHarnessLimits: () => ({ mutate: vi.fn(), isPending: false }),
-  useReorderProjects: () => ({ mutate: vi.fn(), reset: vi.fn(), error: null }),
 }))
+
+vi.mock("@/hooks/useProjectOrder", () => ({ useProjectOrder: () => undefined }))
 
 vi.mock("@/hooks/useLogStream", () => ({
   useLogStream: mocks.useLogStream,
