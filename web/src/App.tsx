@@ -583,9 +583,7 @@ function AppShell({
               terminalKey={task?.id ?? ""}
               toolOpen={tools.layout.tool !== null}
               terminalOpen={tools.layout.terminal}
-              onCloseTool={() => {
-                if (tools.layout.tool) tools.close(tools.layout.tool)
-              }}
+              onCloseTool={() => tools.layout.tool && tools.close(tools.layout.tool)}
               onCloseTerminal={() => tools.close("terminal")}
             />
           }

@@ -286,7 +286,7 @@ describe("the panel's glide", () => {
   const toolPanel = () => [...outer().children].filter((child) => child.hasAttribute("data-panel")).at(-1)!
   const landed = () => act(() => void fireEvent.transitionEnd(toolPanel(), { propertyName: "flex-grow" }))
 
-  it("tells the centre where it will land, pins the tool's width, and keeps the tool on screen while it shuts", async () => {
+  it("tells the centre where it will land, and pins the tool's width while it glides", async () => {
     const restore = laidOut()
     const settling = vi.fn()
     const shell = (open: boolean) => (
@@ -318,17 +318,61 @@ describe("the panel's glide", () => {
       view.rerender(shell(false))
       await act(async () => {})
       expect(outer()).toHaveAttribute("data-glide", "out")
-      // what slides out is the tool, not an empty box; nothing in it takes a click
-      expect(document.querySelector('[data-tool-region="tool"]')).not.toHaveClass("hidden")
-      expect(document.querySelector("[data-tool-pin]")).toHaveAttribute("inert")
+      expect(settling).toHaveBeenLastCalledWith(expect.any(Number))
       await landed()
-      expect(document.querySelector('[data-tool-region="tool"]')).toHaveClass("hidden")
+      expect(outer()).not.toHaveAttribute("data-glide")
+      expect(settling).toHaveBeenLastCalledWith(null)
     } finally {
       restore()
     }
   })
 
-  it("does not glide, pin or hold anything under reduced motion", async () => {
+  it("never starts the next task's terminal when a task with its Terminal open gives way to one without", async () => {
+    const restore = laidOut()
+    mounts.mockClear()
+    const shell = (key: string, open: boolean) => (
+      <PaneShell sidebar={<div />} centre={<div />} panel={panel({ terminalKey: key, toolOpen: false, terminalOpen: open })} panelOpen={open} />
+    )
+    try {
+      const view = render(shell("A", true))
+      await act(async () => {})
+      // selecting B, which has nothing open, glides A's panel shut
+      view.rerender(shell("B", false))
+      await act(async () => {})
+      expect(outer()).toHaveAttribute("data-glide", "out")
+      await landed()
+      expect(mounts.mock.calls).toEqual([["A"]])
+    } finally {
+      restore()
+    }
+  })
+
+  it("ends the glide at once when the divider has already dragged the panel shut", async () => {
+    const restore = laidOut()
+    const shut = vi.fn()
+    const shell = (open: boolean) => (
+      <PaneShell sidebar={<div />} centre={<div />} panel={<div>tools</div>} panelOpen={open} onPanelDraggedShut={shut} />
+    )
+    try {
+      const view = render(shell(false))
+      await act(async () => {})
+      view.rerender(shell(true))
+      await act(async () => {})
+      await landed()
+      const divider = screen.getAllByRole("separator").find((s) => s.nextElementSibling === toolPanel())!
+      divider.focus()
+      await act(async () => void fireEvent.keyDown(divider, { key: "End" }))
+      expect(shut).toHaveBeenCalledOnce()
+      view.rerender(shell(false))
+      await act(async () => {})
+      // nothing is left to glide, so a reopening straight after is not eased by a stale mark
+      expect(outer()).not.toHaveAttribute("data-glide")
+    } finally {
+      restore()
+    }
+  })
+
+  it("does not glide or pin anything under reduced motion", async () => {
     const settling = vi.fn()
     const shell = (open: boolean) => (
       <PaneShell sidebar={<div />} centre={<div />} panel={panel({ terminalKey: "t", toolOpen: open, terminalOpen: false })} panelOpen={open} onCentreSettling={settling} />

@@ -1705,7 +1705,9 @@ and the notification, never the layout.
 **Motion.** The card's gutter folds in width rather than vanishing: it
 narrows to nothing and fades with the card still in it (`.wisp-gutter`), and
 opens the same way, so the reading column re-centres instead of jumping
-129px. Beside a tool panel glide it keeps the panel's timing, so the column's
+129px. The width is `--summary-gutter` itself, registered as a length
+(`@property`) and transitioned on the pane (`.wisp-centre`), so the gutter
+and the conversation's matching padding move as one. Beside a tool panel glide it keeps the panel's timing, so the column's
 room changes on one curve. The chip fades in as the card goes. The card eases
 up from 97% as it comes back (`--dur-in`, `--ease-out`, no spring: a surface); a row's panel grows to base-ui's
 `--collapsible-panel-height` on `--dur-size` / `--ease-glide` and closes on
@@ -1802,7 +1804,7 @@ quicker `--dur-in`, both on `--ease-glide`, and only while it opens or closes
 is a popup's, too short to see a pane-wide edge travel.) While it glides the
 content keeps its resting width (`--tool-pin`), so it slides with the divider
 instead of rewrapping every frame and a Terminal refits once, when the size
-settles; closing keeps the tool on screen until the panel is shut. Instant
+settles. A drag that shut the panel leaves nothing to glide. Instant
 under `prefers-reduced-motion`, where nothing waits on a glide. A reload
 restores the layout without performing it.
 
