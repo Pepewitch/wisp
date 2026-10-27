@@ -21,8 +21,8 @@ the phone's sidebar and task sheet follow your thumb when you drag them.
   step. Images claude and droid open, and codex's MCP results, image views and
   generated images, are captured while the turn runs (droid's and codex's are
   new; codex's generated images used to be lost to the transcript's size cap).
-  A \`wisp output add\` gets a step only when exactly one command is running.
-  \`wisp output list\` and \`wisp show\` name each image's step.
+  A `wisp output add` gets a step only when exactly one command is running.
+  `wisp output list` and `wisp show` name each image's step.
 - **Phone sidebar by drag** (#463). A sideways drag anywhere on the main view
   opens the sidebar under the thumb, and dragging it back closes it; it settles
   on release by distance and speed. Vertical scrolls, text fields, code blocks
@@ -33,7 +33,7 @@ the phone's sidebar and task sheet follow your thumb when you drag them.
 - **Harness pins** (#461). Claude, codex and cursor are re-verified against
   their current CLIs (claude 2.1.311, codex 0.164.0, cursor 2026.10.22).
   Claude's picker offers Sonnet 5.5 and Haiku 5.5 instead of Sonnet 5 and
-  Haiku 4.5; an \`adapters.json\` default naming a dropped id falls back to
+  Haiku 4.5; an `adapters.json` default naming a dropped id falls back to
   Opus 5.5 with a warning instead of stopping the daemon.
 
 ## Install or upgrade
