@@ -1,7 +1,7 @@
 import { opendir, realpath, stat } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, sep } from "node:path";
+import { isAbsolute, join, sep } from "node:path";
 import type { ProjectEntriesResponse, ProjectEntry } from "../../shared/api/project-entries";
-import { ignoredAsks, type IgnoreAsk } from "./project-ignore";
+import { GIT, ignoredNames, IgnoreRulesUnreadable, type IgnoreGit } from "./project-ignore";
 
 /**
  * One directory of a registered project, for the composer's `@` list.
@@ -13,9 +13,10 @@ import { ignoredAsks, type IgnoreAsk } from "./project-ignore";
  * way, so the list never offers a path the next request would refuse.
  *
  * `.git` is never listed or listable, by name or by a link's real path, nor
- * is anything git ignores (project-ignore.ts: asked in the repository that
- * owns each candidate, submodules included, and failing closed), and tracked
- * files stay listed even when a pattern matches them (git's own rule). A folder git ignores can
+ * is anything git ignores (project-ignore.ts: one check in the repository
+ * that owns the folder, submodules included; a git that cannot answer fails
+ * the request), and tracked files stay listed even when a pattern matches
+ * them (git's own rule). A symlink is judged by its own name. A folder git ignores can
  * still be named outright (`dir=node_modules/react`); it is only never
  * offered.
  */
@@ -25,7 +26,7 @@ export const ENTRY_CAP = 500;
 /** The most directory entries read before filtering, so a huge folder costs a bounded scan. */
 export const SCAN_CAP = 5_000;
 
-export type EntriesRefusal = { status: 400 | 403 | 404; error: string };
+export type EntriesRefusal = { status: 400 | 403 | 404 | 500; error: string };
 
 /** `dir` as path segments, or why it may not be listed. `""` and `"."` are the root. */
 export function projectDirSegments(dir: string): string[] | EntriesRefusal {
@@ -46,6 +47,7 @@ export async function listProjectEntries(
   root: string,
   dir: string,
   filter = "",
+  ignoreGit: IgnoreGit = GIT,
 ): Promise<ProjectEntriesResponse | EntriesRefusal> {
   const segments = projectDirSegments(dir);
   if (!Array.isArray(segments)) return segments;
@@ -68,9 +70,16 @@ export async function listProjectEntries(
   if (inside(join(realRoot, ".git"), realDir)) return { status: 403, error: "dir resolves into .git" };
 
   const scanned = await scanDirectory(realRoot, realDir, filter.toLowerCase());
-  const ignored = await ignoredAsks(scanned.entries.flatMap((entry) => entry.asks));
+  let ignored: Set<string>;
+  try {
+    ignored = await ignoredNames(realDir, scanned.entries.map((entry) => entry.asked), ignoreGit);
+  } catch (e) {
+    // never an unfiltered listing because git could not read the rules
+    if (e instanceof IgnoreRulesUnreadable) return { status: 500, error: e.message };
+    throw e;
+  }
   const kept = scanned.entries
-    .filter((entry) => !entry.asks.some(ignored))
+    .filter((entry) => !ignored.has(entry.asked))
     .map(({ name, kind }): ProjectEntry => ({ name, kind }))
     .sort(compareEntries);
   return {
@@ -83,18 +92,11 @@ export async function listProjectEntries(
 }
 
 /**
- * A scanned row, and what git is asked about it (see project-ignore.ts): the
- * entry by its own name in the listed folder, with the trailing `/` that lets
- * `dir/` patterns match a folder; and for a link, also its target, by name in
- * the target's own folder, so a link to `node_modules` is ignored like
- * `node_modules`. A link's own name is asked about as a file, which is what
- * git sees. The entry is left out when ANY answer is "ignored".
+ * A scanned row, and the name git is asked about in the listed folder (see
+ * project-ignore.ts): a folder with the trailing `/` that `dir/` patterns
+ * need; a symlink by its own name, as the file git sees, whatever it leads to.
  */
-type ScannedEntry = ProjectEntry & { asks: IgnoreAsk[] };
-
-function askFor(realPath: string, kind: ProjectEntry["kind"]): IgnoreAsk {
-  return { cwd: dirname(realPath), path: kind === "dir" ? `${basename(realPath)}/` : basename(realPath) };
-}
+type ScannedEntry = ProjectEntry & { asked: string };
 
 function compareEntries(a: ProjectEntry, b: ProjectEntry): number {
   if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
@@ -123,7 +125,7 @@ async function scanDirectory(
       const path = join(realDir, dirent.name);
       const entry = dirent.isSymbolicLink()
         ? await linkEntry(realRoot, path, dirent.name)
-        : direntEntry(path, dirent.name, dirent.isDirectory() ? "dir" : dirent.isFile() ? "file" : null);
+        : direntEntry(dirent.name, dirent.isDirectory() ? "dir" : dirent.isFile() ? "file" : null);
       if (entry) entries.push(entry);
     }
   } finally {
@@ -133,8 +135,8 @@ async function scanDirectory(
   return { entries, truncated };
 }
 
-function direntEntry(path: string, name: string, kind: ProjectEntry["kind"] | null): ScannedEntry | null {
-  return kind ? { name, kind, asks: [askFor(path, kind)] } : null;
+function direntEntry(name: string, kind: ProjectEntry["kind"] | null): ScannedEntry | null {
+  return kind ? { name, kind, asked: kind === "dir" ? `${name}/` : name } : null;
 }
 
 /** A symlink is listed as what it leads to, and only when that stays inside the project and out of .git. */
@@ -144,11 +146,8 @@ async function linkEntry(realRoot: string, path: string, name: string): Promise<
     if (!inside(realRoot, target) || inside(join(realRoot, ".git"), target)) return null;
     const info = await stat(target);
     const kind = info.isDirectory() ? "dir" : info.isFile() ? "file" : null;
-    if (!kind) return null;
-    // its own name, as the file git sees: `ln -s src build` is ignored by `build`;
-    // and where it leads, unless that is the root itself, which nothing ignores
-    const asks = [askFor(path, "file"), ...(target === realRoot ? [] : [askFor(target, kind)])];
-    return { name, kind, asks };
+    // listed as what it leads to; judged by git as itself
+    return kind ? { name, kind, asked: name } : null;
   } catch {
     return null;
   }

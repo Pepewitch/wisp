@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react"
 
 import { useProjectEntries, useRepos } from "@/hooks/queries"
+import { useDebouncedValue } from "@/hooks/useDebouncedValue"
 import {
   applyMention,
   entryRows,
@@ -18,6 +19,9 @@ import {
   type MentionRow,
   type MentionToken,
 } from "@/lib/mentions"
+
+/** How long typing pauses before a folder listing is asked for. */
+const ENTRIES_DEBOUNCE_MS = 150
 
 export interface ComposerMentions {
   /** the list to float above the composer; null = closed */
@@ -75,7 +79,10 @@ export function useComposerMentions({
   const projects = useMemo(() => mentionProjects(repos.data ?? []), [repos.data])
   const query = live ? parseMention(live, projects) : null
   const folder = query?.kind === "entries" ? query : null
-  const entries = useProjectEntries(folder?.project.path ?? null, folder?.dir ?? "", folder?.filter ?? "")
+  // a request per pause in typing, not per key: the listing costs the daemon a git process
+  const asked = useDebouncedValue(folder ? JSON.stringify([folder.project.path, folder.dir, folder.filter]) : null, ENTRIES_DEBOUNCE_MS)
+  const [askedProject, askedDir, askedFilter] = asked ? (JSON.parse(asked) as [string, string, string]) : [null, "", ""]
+  const entries = useProjectEntries(askedProject, askedDir, askedFilter)
   const { rows, status } = mentionRows(query, entries)
   // a folder you opened or named always answers, even with nothing in it;
   // a project filter that matches nothing is no list, so `@scope/pkg` sends
@@ -173,17 +180,19 @@ function mentionRows(
   if (query?.kind === "projects") return { rows: projectRows(query.projects, query.filter), status: null }
   if (!query) return { rows: [], status: null }
   const where = query.dir || query.project.name
-  if (!entries.data) {
+  // an answer for another folder (the debounce has not caught up yet) is no answer
+  const data = entries.data?.project === query.project.path && entries.data.dir === query.dir ? entries.data : null
+  if (!data) {
     return { rows: [], status: entries.isError ? `Couldn't list ${where}: ${entries.error.message}` : "Listing…" }
   }
-  const rows = entryRows(query, entries.data.project, entries.data.entries)
-  const { incompleteAfter, truncated } = entries.data
+  const rows = entryRows(query, data.project, data.entries)
+  const { incompleteAfter, truncated } = data
   // said before anything else: when the scan stopped, narrowing cannot find the rest
   if (typeof incompleteAfter === "number") {
     return { rows, status: `This folder has more than ${incompleteAfter.toLocaleString("en-US")} entries; not all are searchable` }
   }
   if (rows.length === 0) return { rows, status: `Nothing in ${where} matches “${query.filter}”` }
-  return { rows, status: truncated ? `Showing the first ${entries.data.entries.length}: type more to narrow` : null }
+  return { rows, status: truncated ? `Showing the first ${data.entries.length}: type more to narrow` : null }
 }
 
 /**

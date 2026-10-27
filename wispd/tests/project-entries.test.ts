@@ -13,7 +13,8 @@ import { join } from "node:path";
 import type { ProjectEntriesResponse } from "../../shared/api/project-entries";
 import { CONFIG_PATH, type WispConfig } from "../src/config";
 import { serve } from "../src/daemon";
-import { ENTRY_CAP, projectDirSegments, SCAN_CAP } from "../src/project-entries";
+import { ENTRY_CAP, listProjectEntries, projectDirSegments, SCAN_CAP } from "../src/project-entries";
+import { GIT, type IgnoreGit } from "../src/project-ignore";
 
 const token = "project-entries-token";
 let server: Awaited<ReturnType<typeof serve>> | null = null;
@@ -162,7 +163,7 @@ describe("GET /api/projects/entries", () => {
     expect(body.truncated).toBe(true);
   });
 
-  test("a link into .git is neither listed nor listable, and a link to an ignored folder is ignored", async () => {
+  test("a link into .git is neither listed nor listable; any other link is judged by its own name", async () => {
     const { root } = makeProject();
     symlinkSync(join(root, ".git"), join(root, "gitlink"));
     symlinkSync(join(root, ".git/HEAD"), join(root, "head-link"));
@@ -171,14 +172,15 @@ describe("GET /api/projects/entries", () => {
     const names = (await listing(await entries(base, root))).entries.map((entry) => entry.name);
     expect(names).not.toContain("gitlink");
     expect(names).not.toContain("head-link");
-    expect(names).not.toContain("deps");
+    // `deps` leads to the ignored node_modules, but its own name is not ignored
+    expect(names).toContain("deps");
     const refused = await entries(base, root, "gitlink");
     expect(refused.status).toBe(403);
     expect(await refused.text()).not.toContain("HEAD");
     expect((await entries(base, root, "gitlink/refs")).status).toBe(403);
   });
 
-  test("a link is ignored by its own name too, not only by where it leads", async () => {
+  test("a link is ignored by its own name", async () => {
     const { root } = makeProject();
     writeFileSync(join(root, ".gitignore"), "node_modules/\n*.log\ndist\nsrc/generated/\nbuild\n");
     symlinkSync(join(root, "src"), join(root, "build"));
@@ -217,6 +219,62 @@ describe("GET /api/projects/entries", () => {
     expect(top).toContain("vendor");
     expect(top).toContain("vendor-entry");
     for (const hidden of ["node_modules", "debug.log", "build", "dist"]) expect(top, hidden).not.toContain(hidden);
+  });
+
+  test("a farm of 2,000 links into 2,000 folders costs one git process", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "wisp-entries-farm-")));
+    git(root, ["init", "-q"]);
+    mkdirSync(join(root, "links"));
+    for (let i = 0; i < 2_000; i += 1) {
+      mkdirSync(join(root, "dirs", `d${i}`), { recursive: true });
+      writeFileSync(join(root, "dirs", `d${i}`, "x"), "");
+      symlinkSync(join(root, "dirs", `d${i}`, "x"), join(root, "links", `l${i}`));
+    }
+    let calls = 0;
+    let inFlight = 0;
+    let peak = 0;
+    const counting: IgnoreGit = {
+      async checkIgnore(cwd, paths) {
+        calls += 1;
+        peak = Math.max(peak, (inFlight += 1));
+        try {
+          return await GIT.checkIgnore(cwd, paths);
+        } finally {
+          inFlight -= 1;
+        }
+      },
+      async outsideRepository(cwd) {
+        calls += 1;
+        return GIT.outsideRepository(cwd);
+      },
+    };
+    const body = await listProjectEntries(root, "links", "", counting);
+    expect("entries" in body && body.entries.length).toBe(ENTRY_CAP);
+    expect(calls).toBeLessThanOrEqual(2);
+    expect(peak).toBe(1);
+  });
+
+  test("a name that looks like pathspec magic is still just a name", async () => {
+    const { root } = makeProject();
+    writeFileSync(join(root, ":(exclude)x.log"), "");
+    writeFileSync(join(root, ":kept.ts"), "");
+    const base = await startServer([root]);
+    const names = (await listing(await entries(base, root))).entries.map((entry) => entry.name);
+    expect(names).toContain(":kept.ts");
+    expect(names).not.toContain(":(exclude)x.log");
+    expect(names).not.toContain("debug.log");
+  });
+
+  test("a repository git cannot read fails the listing, never serves it unfiltered", async () => {
+    const { root } = makeProject();
+    writeFileSync(join(root, ".git/config"), "[core\n\tbroken = = =\n");
+    const base = await startServer([root]);
+    const response = await entries(base, root);
+    expect(response.status).toBe(500);
+    const text = await response.text();
+    expect(text).toContain("couldn't read this project's ignore rules");
+    expect(text).not.toContain("node_modules");
+    expect(text).not.toContain("debug.log");
   });
 
   test("q narrows before the cap, so a name past the first rows is reachable", async () => {

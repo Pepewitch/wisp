@@ -265,6 +265,16 @@ describe("the @ list", () => {
     expect(box()).toHaveValue("see /work/superapp/src/config.ts ")
   })
 
+  it("asks the daemon once per pause in typing, not once per key", async () => {
+    const paths = mount(<SteerBox task={task()} onSend={async () => {}} />)
+    type("@superapp/R")
+    type("@superapp/RE")
+    type("@superapp/REA")
+    await waitFor(() => expect(options()).toEqual(["README.md"]))
+    const asked = paths.filter((path) => path.startsWith("/api/projects/entries?"))
+    expect(asked).toEqual(["/api/projects/entries?project=%2Fwork%2Fsuperapp&dir=&q=REA"])
+  })
+
   it("a folder with a space in its name opens, and its paths arrive quoted", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
     type("see @superapp/My")

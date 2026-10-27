@@ -330,14 +330,13 @@ address's last new wrong token. The web UI is served at `/`.
   folders first, at most 500 rows (`truncated` when more match); `q` keeps
   names containing it (case-insensitive) before that cap. A folder with more
   than 5,000 entries is read only that far, and says so in `incompleteAfter`
-  (otherwise `null`). `.git` and git-ignored entries are left out, each
-  by the rules of the repository that owns it (a submodule's own
-  `.gitignore` inside a submodule); a symlink is left out when its own path
-  or where it leads is ignored, and an entry git cannot answer for is left
-  out too.
+  (otherwise `null`). `.git` and git-ignored entries are left out, by one
+  `git check-ignore` in the repository that owns the folder (a submodule's
+  own `.gitignore` inside a submodule); a symlink is judged by its own name.
   An absolute `dir`, a `..` or `.git` segment is `400`, a `dir` that resolves
-  outside the project or into `.git` is `403`, and a path that is not a
-  registered project, or a missing folder, is `404`
+  outside the project or into `.git` is `403`, a path that is not a
+  registered project, or a missing folder, is `404`, and a repository whose
+  ignore rules git cannot read is `500` (never an unfiltered listing)
 - `GET|POST /api/suffix-prompts` ·
   `PATCH|DELETE /api/suffix-prompts/:id`
 - `GET /api/harnesses` (capabilities, effort levels, offered models per
