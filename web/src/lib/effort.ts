@@ -1,9 +1,9 @@
 import type { HarnessInfo } from "@/lib/types"
 import {
+  connectionStorageKey,
   readConnectionStorage,
   removeConnectionStorage,
   type ReadWriteStorage,
-  type WritableStorage,
   writeConnectionStorage,
 } from "@/lib/connection-storage"
 
@@ -113,7 +113,6 @@ export function effortOptions(
  * way the model star does. One level per pair: the same level means different
  * things on another harness or model, so a star never spreads.
  */
-const PREFERRED_KEY = "wisp_preferred_effort"
 const PREFERRED_STORAGE_NAME = "preferred_effort"
 
 export type PreferredEfforts = Record<string, string>
@@ -126,10 +125,11 @@ export function loadPreferredEfforts(
   storage?: ReadWriteStorage
 ): PreferredEfforts {
   try {
+    // new with this key, so there is no pre-connection value to adopt
     const raw = readConnectionStorage(
       connectionId,
       PREFERRED_STORAGE_NAME,
-      PREFERRED_KEY,
+      null,
       storage
     )
     if (!raw) return {}
@@ -159,36 +159,38 @@ export function preferredEffortFor(
   return preferred[pairKey(harness, model)] ?? null
 }
 
-/** Star `level` for one pair, or clear the pair's star with `null`; returns the new map. */
+/**
+ * Star `level` for one pair, or clear the pair's star with `null`; returns the
+ * stored map. The map is re-read here rather than taken from the caller: another
+ * composer or tab may have starred other pairs since this one loaded.
+ */
 export function savePreferredEffort(
   connectionId: string,
-  preferred: PreferredEfforts,
   harness: string,
   model: string,
   level: string | null,
-  storage?: WritableStorage
+  storage?: ReadWriteStorage
 ): PreferredEfforts {
-  const next = { ...preferred }
+  const next = loadPreferredEfforts(connectionId, storage)
   if (level) next[pairKey(harness, model)] = level
   else delete next[pairKey(harness, model)]
   if (Object.keys(next).length > 0) {
     writeConnectionStorage(
       connectionId,
       PREFERRED_STORAGE_NAME,
-      PREFERRED_KEY,
+      null,
       JSON.stringify(next),
       storage
     )
   } else {
-    removeConnectionStorage(
-      connectionId,
-      PREFERRED_STORAGE_NAME,
-      PREFERRED_KEY,
-      storage
-    )
+    removeConnectionStorage(connectionId, PREFERRED_STORAGE_NAME, null, storage)
   }
   return next
 }
+
+/** The storage key a `storage` event names when another tab changes the stars. */
+export const preferredEffortsStorageKey = (connectionId: string) =>
+  connectionStorageKey(connectionId, PREFERRED_STORAGE_NAME)
 
 /**
  * The effort a fresh selection of `harness · model` opens with: its star while

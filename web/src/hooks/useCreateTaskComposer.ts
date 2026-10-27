@@ -13,6 +13,7 @@ import {
 import {
   loadPreferredEfforts,
   preferredEffortFor,
+  preferredEffortsStorageKey,
   savePreferredEffort,
   seededEffort,
   type PreferredEfforts,
@@ -93,12 +94,21 @@ export function useCreateTaskComposer(
  */
 function usePreferredEfforts(connectionId: string) {
   const [preferred, setPreferred] = useState<PreferredEfforts>(() => loadPreferredEfforts(connectionId))
+  useEffect(() => {
+    const key = preferredEffortsStorageKey(connectionId)
+    // `key` is null when another tab cleared the whole store
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === key || event.key === null) setPreferred(loadPreferredEfforts(connectionId))
+    }
+    window.addEventListener("storage", onStorage)
+    return () => window.removeEventListener("storage", onStorage)
+  }, [connectionId])
   const starFor = (choice: ModelChoice | null) =>
     choice ? preferredEffortFor(preferred, choice.harness, choice.model) : null
   const toggle = (choice: ModelChoice | null, level: string) => {
     if (!choice) return
     const next = starFor(choice) === level ? null : level
-    setPreferred(savePreferredEffort(connectionId, preferred, choice.harness, choice.model, next))
+    setPreferred(savePreferredEffort(connectionId, choice.harness, choice.model, next))
   }
   return { preferred, starFor, toggle }
 }

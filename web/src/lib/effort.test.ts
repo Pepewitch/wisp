@@ -188,19 +188,48 @@ describe("preferred effort per harness · model", () => {
     connectionStorageKey(connectionId, SCOPED_PREFERRED_NAME)
 
   it("stores one level per pair, and clearing the last one removes the key", () => {
-    let preferred = savePreferredEffort(LOCAL_CONNECTION, {}, "claude", "opus", "high")
-    preferred = savePreferredEffort(LOCAL_CONNECTION, preferred, "droid", "opus", "low")
-    preferred = savePreferredEffort(LOCAL_CONNECTION, preferred, "claude", "opus", "max")
+    savePreferredEffort(LOCAL_CONNECTION, "claude", "opus", "high")
+    savePreferredEffort(LOCAL_CONNECTION, "droid", "opus", "low")
+    const preferred = savePreferredEffort(LOCAL_CONNECTION, "claude", "opus", "max")
     expect(loadPreferredEfforts(LOCAL_CONNECTION)).toEqual(preferred)
     expect(preferredEffortFor(preferred, "claude", "opus")).toBe("max")
     expect(preferredEffortFor(preferred, "droid", "opus")).toBe("low")
     expect(preferredEffortFor(preferred, "claude", "sonnet")).toBeNull()
     expect(loadPreferredEfforts(REMOTE_CONNECTION)).toEqual({})
 
-    preferred = savePreferredEffort(LOCAL_CONNECTION, preferred, "claude", "opus", null)
-    preferred = savePreferredEffort(LOCAL_CONNECTION, preferred, "droid", "opus", null)
-    expect(preferred).toEqual({})
+    savePreferredEffort(LOCAL_CONNECTION, "claude", "opus", null)
+    expect(savePreferredEffort(LOCAL_CONNECTION, "droid", "opus", null)).toEqual({})
     expect(localStorage.getItem(scoped(LOCAL_CONNECTION))).toBeNull()
+  })
+
+  it("a save from one tab keeps the stars another tab saved since it loaded", () => {
+    // two composers (or tabs) load before either stars anything
+    const tabA = loadPreferredEfforts(LOCAL_CONNECTION)
+    const tabB = loadPreferredEfforts(LOCAL_CONNECTION)
+    expect(tabA).toEqual(tabB)
+    savePreferredEffort(LOCAL_CONNECTION, "claude", "opus", "high")
+    savePreferredEffort(LOCAL_CONNECTION, "claude", "sonnet", "low")
+    const stored = loadPreferredEfforts(LOCAL_CONNECTION)
+    expect(preferredEffortFor(stored, "claude", "opus")).toBe("high")
+    expect(preferredEffortFor(stored, "claude", "sonnet")).toBe("low")
+  })
+
+  it("a star cleared in one tab is not brought back by another tab's save", () => {
+    savePreferredEffort(LOCAL_CONNECTION, "claude", "opus", "high")
+    // tab B loaded while claude · opus was still starred
+    const tabB = loadPreferredEfforts(LOCAL_CONNECTION)
+    expect(preferredEffortFor(tabB, "claude", "opus")).toBe("high")
+    savePreferredEffort(LOCAL_CONNECTION, "claude", "opus", null)
+    savePreferredEffort(LOCAL_CONNECTION, "droid", "opus", "low")
+    expect(loadPreferredEfforts(LOCAL_CONNECTION)).toEqual({ "droid\u0000opus": "low" })
+  })
+
+  it("never adopts or writes an unscoped key", () => {
+    localStorage.setItem("wisp_preferred_effort", JSON.stringify({ "claude\u0000opus": "high" }))
+    expect(loadPreferredEfforts(LOCAL_CONNECTION)).toEqual({})
+    savePreferredEffort(LOCAL_CONNECTION, "claude", "opus", "low")
+    expect(localStorage.getItem("wisp_preferred_effort")).toBe(JSON.stringify({ "claude\u0000opus": "high" }))
+    expect(localStorage.getItem(scoped(LOCAL_CONNECTION))).toBe(JSON.stringify({ "claude\u0000opus": "low" }))
   })
 
   it("survives hand-edited garbage in storage", () => {

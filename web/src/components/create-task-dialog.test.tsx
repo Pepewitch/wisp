@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest"
 import { clearRememberedAttachments } from "@/lib/attachments"
 import { createDesktopTransport } from "@/lib/desktop-transport"
 import { clearConnectionDrafts, connectionLocalData } from "@/lib/drafts"
-import { savePreferredEffort } from "@/lib/effort"
+import { preferredEffortsStorageKey, savePreferredEffort } from "@/lib/effort"
 import type { DaemonTransport } from "@/lib/transport"
 import type { HarnessInfo, RepoInfo } from "@/lib/types"
 import { sameOriginWebTransport } from "@/lib/web-transport"
@@ -558,7 +558,9 @@ describe("preferred effort", () => {
     )
   }
   const effortButton = (level: string) => screen.findByRole("button", { name: level })
-  const closeMenu = () => fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
+  // Escape from the open menu itself: focus may sit on a star, outside base-ui's item handling
+  const closeMenu = () =>
+    fireEvent.keyDown(screen.queryByRole("menu") ?? document.activeElement ?? document.body, { key: "Escape" })
   async function pickModel(harnessName: string, model: string) {
     fireEvent.click(await screen.findByRole("button", { name: /^(claude|droid)\b/ }))
     const group = await screen.findByRole("group", { name: harnessName })
@@ -596,7 +598,7 @@ describe("preferred effort", () => {
   })
 
   it("a model switch takes that pair's star, else the harness default, and switching back restores it", async () => {
-    savePreferredEffort("test-connection", {}, "claude", "opus", "high")
+    savePreferredEffort("test-connection", "claude", "opus", "high")
     mount()
     expect(await effortButton("high")).toBeInTheDocument()
 
@@ -623,7 +625,7 @@ describe("preferred effort", () => {
   })
 
   it("never overwrites a level picked by hand, and the filled star clears it", async () => {
-    savePreferredEffort("test-connection", {}, "claude", "opus", "high")
+    savePreferredEffort("test-connection", "claude", "opus", "high")
     const first = mount()
     fireEvent.click(await effortButton("high"))
     // a radio row keeps its menu open, so the star sits right beside the pick
@@ -646,8 +648,30 @@ describe("preferred effort", () => {
     expect(await effortButton("medium")).toBeInTheDocument()
   })
 
+  it("picks up a star another tab saved, for the next model switch", async () => {
+    mount()
+    expect(await effortButton("medium")).toBeInTheDocument()
+    // another tab stars claude · sonnet: this composer's own save path never ran
+    savePreferredEffort("test-connection", "claude", "sonnet", "max")
+    window.dispatchEvent(new StorageEvent("storage", { key: preferredEffortsStorageKey("test-connection") }))
+    await pickModel("claude", "sonnet")
+    expect(await effortButton("max")).toBeInTheDocument()
+    // and this tab's own star keeps the other tab's
+    fireEvent.click(await effortButton("max"))
+    fireEvent.click(await screen.findByRole("button", { name: "Prefer effort low for claude · sonnet" }))
+    closeMenu()
+    await pickModel("claude", "opus")
+    fireEvent.click(await effortButton("medium"))
+    fireEvent.click(await screen.findByRole("button", { name: "Prefer effort high for claude · opus" }))
+    closeMenu()
+    expect(JSON.parse(localStorage.getItem(preferredEffortsStorageKey("test-connection"))!)).toEqual({
+      "claude\u0000sonnet": "low",
+      "claude\u0000opus": "high",
+    })
+  })
+
   it("ignores a star the harness no longer offers, and does not send it", async () => {
-    savePreferredEffort("test-connection", {}, "claude", "opus", "ultra")
+    savePreferredEffort("test-connection", "claude", "opus", "ultra")
     mount()
     expect(await effortButton("medium")).toBeInTheDocument()
     fireEvent.click(await effortButton("medium"))

@@ -7,7 +7,6 @@ const LOCAL_LEGACY_KEYS = [
   "wisp_selected_task",
   "wisp_preferred_model",
   "wisp_effort_recents",
-  "wisp_preferred_effort",
   "wisp_shell_tabs_v1",
 ] as const
 
@@ -82,7 +81,7 @@ export function writeConnectionStorage(
 export function removeConnectionStorage(
   connectionId: string,
   name: string,
-  legacyKey: string,
+  legacyKey: string | null,
   storage?: WritableStorage
 ): void {
   let target: WritableStorage
@@ -96,7 +95,7 @@ export function removeConnectionStorage(
   } catch {
     // Keep trying the independent legacy cleanup below.
   }
-  if (connectionId !== LOCAL_CONNECTION_ID) return
+  if (connectionId !== LOCAL_CONNECTION_ID || legacyKey === null) return
   try {
     target.removeItem(legacyKey)
   } catch {
