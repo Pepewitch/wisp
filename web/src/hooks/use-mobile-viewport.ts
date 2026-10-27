@@ -8,6 +8,8 @@ export function useMobileViewport(enabled: boolean) {
     const viewport = window.visualViewport
     if (!enabled || !element || !viewport) return
     const update = () => {
+      // index.css hands a pinched page its sideways pan back
+      element.toggleAttribute("data-pinched", viewport.scale !== 1)
       // Let pinch zoom pan naturally; shrinking the app during zoom traps content.
       if (viewport.scale !== 1) return
       element.style.setProperty("--mobile-height", `${viewport.height}px`)
@@ -26,6 +28,7 @@ export function useMobileViewport(enabled: boolean) {
       viewport.removeEventListener("resize", update)
       viewport.removeEventListener("scroll", update)
       for (const name of ["--mobile-height", "--mobile-top", "--mobile-bottom", "--mobile-viewport-extension"]) element.style.removeProperty(name)
+      element.removeAttribute("data-pinched")
     }
   }, [enabled])
   return ref

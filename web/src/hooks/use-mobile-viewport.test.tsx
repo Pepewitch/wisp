@@ -17,6 +17,7 @@ it("keeps the composer within the keyboard viewport, respects zoom and cleans up
   const shell = view.getByTestId("shell")
   expect(shell.style.getPropertyValue("--mobile-height")).toBe("800px")
   expect(shell.style.getPropertyValue("--mobile-viewport-extension")).toBe("")
+  expect(shell).not.toHaveAttribute("data-pinched")
   act(() => {
     viewport.height = 460
     viewport.offsetTop = 30
@@ -34,7 +35,10 @@ it("keeps the composer within the keyboard viewport, respects zoom and cleans up
   expect(shell.style.getPropertyValue("--mobile-viewport-extension")).toBe("")
   act(() => { viewport.scale = 2; viewport.height = 230; viewport.dispatchEvent(new Event("resize")) })
   expect(shell.style.getPropertyValue("--mobile-height")).toBe("800px")
+  // a pinched page gets its sideways pan back from the drawer (index.css)
+  expect(shell).toHaveAttribute("data-pinched")
   view.unmount()
+  expect(shell).not.toHaveAttribute("data-pinched")
   act(() => { viewport.scale = 1; viewport.dispatchEvent(new Event("resize")) })
   expect(shell.style.getPropertyValue("--mobile-height")).toBe("")
 })
