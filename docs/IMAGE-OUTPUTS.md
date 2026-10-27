@@ -3,9 +3,9 @@
 A turn's images come in two kinds, and Browser and Desktop show them apart:
 
 - **Shown to you** (`published`): images the agent chose to share with
-  `wisp output add` or `wisp capture`. They appear below the turn's reply,
-  each captioned with the step that shared it (`from: wisp output add
-  before.png`).
+  `wisp output add` or `wisp capture`, and images a Codex agent generated.
+  They appear below the turn's reply, each captioned with the step that
+  shared it (`from: wisp output add before.png`, `from: image generation`).
 - **Looked at** (`native`): images a tool showed the agent, such as reading a
   screenshot. They do not pile up after the reply. The collapsed steps row
   counts them (`looked at 8 images`); expanding the steps shows each one under
@@ -48,7 +48,7 @@ when there was none):
 |---|---|
 | Claude | base64 image parts of a `tool_result`, e.g. from `Read`; the bytes are replaced in the transcript |
 | Droid | base64 image parts of a `tool_result`, e.g. from `Read`; the bytes are replaced in the transcript |
-| Codex | MCP image content; `image_view` files (copied from their path); `image_generation` results (their base64 bytes; the copy in Codex's own home is not read) |
+| Codex | MCP image content; `image_view` files (copied from their path); `image_generation` results, recorded as **shared** since the agent made them for you (the whole base64 `result`, captured before the transcript is bounded; the copy in Codex's own home is not read) |
 | Cursor | image files read by `readToolCall` (copied from their path) |
 | OpenCode | data-URL image attachments on a completed `read` tool |
 

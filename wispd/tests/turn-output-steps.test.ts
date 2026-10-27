@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { closeSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { outputImageNoteId } from "../../shared/api/outputs";
+import { outputImageNote, outputImageNoteId } from "../../shared/api/outputs";
 import { samplePng } from "../scripts/harness/image-output-probe";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
 import { createOutputImageCapture } from "../src/adapters/output-images";
@@ -75,8 +75,31 @@ test("codex copies an image_view file from the worktree and keeps a generated im
   expect(JSON.stringify(result)).not.toContain(generated.toString("base64"));
   const [viewed, made] = outputs(f.turnId);
   expect(viewed).toEqual(expect.objectContaining({ name: "installed.png", step: { id: "exec-view-1", label: `image_view ${path}` } }));
-  expect(made).toEqual(expect.objectContaining({ name: "exec-gen-1.png", step: { id: "exec-gen-1", label: "image_generation" } }));
+  expect(viewed!.source).toBe("native");
+  expect(made).toEqual(expect.objectContaining({ name: "exec-gen-1.png", source: "published", step: { id: "exec-gen-1", label: "image generation" } }));
   expect(readFileSync(outputImagePath(f.task.id, 1, made!.id))).toEqual(generated);
+});
+
+test("a codex image_generation result far over the transcript's 16 KB bound is captured whole, as shared", () => {
+  const f = fixture();
+  const outFd = openSync(f.log, "a"), errFd = openSync(`${f.log}.err`, "a");
+  try {
+    const recorder = new TurnRecorder(f.turnId, BUILTIN_ADAPTERS.codex!, { ...loadConfig(), diagnosticEnabled: false }, outFd, errFd);
+    // a valid PNG followed by padding, the size of a real generated image
+    const bytes = Buffer.concat([samplePng(), Buffer.alloc(1_000_000, 7)]);
+    const result = bytes.toString("base64");
+    expect(result.length).toBeGreaterThan(16 * 1024);
+    recorder.recordStdoutLine(JSON.stringify({ type: "item.completed", item: { id: "ig_01", type: "image_generation", status: "completed", revised_prompt: "A chart", result, savedPath: "/elsewhere/.codex/generated_images/ig_01.png" } }));
+    recorder.recordEvent({ type: "item.completed", item: { type: "agent_message", text: "Here is the chart." } });
+    recorder.recordEvent({ type: "turn.completed" });
+    recorder.finish();
+    const [image] = outputs(f.turnId);
+    expect(image).toEqual(expect.objectContaining({ name: "ig_01.png", size: bytes.length, source: "published", step: { id: "ig_01", label: "image generation" } }));
+    expect(readFileSync(outputImagePath(f.task.id, 1, image!.id))).toEqual(bytes);
+    const log = readFileSync(f.log, "utf8");
+    expect(log).not.toContain(result.slice(0, 4096));
+    expect(log).toContain(outputImageNote(image!));
+  } finally { closeSync(outFd); closeSync(errFd); }
 });
 
 test("cursor copies a completed readToolCall of an image in the task's own files", () => {

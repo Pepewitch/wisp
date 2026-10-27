@@ -109,6 +109,15 @@ describe("a turn's images", () => {
     expect(screen.queryByRole("img")).not.toBeInTheDocument()
   })
 
+  it("show a generated image after the answer, uncounted among the looked-at", () => {
+    const generated = image(5, "ig_01.png", "published", { id: "ig_01", label: "image generation" })
+    draw(task({ outputs: [looked, generated] }))
+    const after = screen.getByLabelText("Agent output images")
+    expect(names(after)).toEqual(["ig_01.png"])
+    expect(within(after).getByText("from: image generation")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Show activity/ })).toHaveTextContent("looked at 1 image")
+  })
+
   it("say one image in the singular, and nothing when the agent only shared", () => {
     const view = draw(task({ outputs: [looked, shared] }))
     expect(screen.getByRole("button", { name: /Show activity/ })).toHaveTextContent("looked at 1 image")

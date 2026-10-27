@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import { outputImageNote, type OutputStep } from "../../../shared/api/outputs";
+import { outputImageNote, type OutputImage, type OutputStep } from "../../../shared/api/outputs";
 import { readViewedImage } from "../output-files";
 import { decodeOutputImage, outputStep, publishOutputImage } from "../outputs";
 import { record, string } from "./activity-value";
@@ -48,10 +48,10 @@ export function createOutputImageCapture(def: AdapterDef, turnId: number, note: 
     }
   };
   /** Inline base64 bytes, named after the call's file when it read one. */
-  const inline = (data: unknown, declaredType: unknown, callId: string | null, fallbackLabel: string, path: string | null = null): RecordValue => {
+  const inline = (data: unknown, declaredType: unknown, callId: string | null, fallbackLabel: string, path: string | null = null, source: OutputImage["source"] = "native"): RecordValue => {
     const extension = declaredType === "image/jpeg" ? "jpg" : declaredType === "image/gif" ? "gif" : declaredType === "image/webp" ? "webp" : "png";
     const file = path ?? (callId ? calls.get(callId)?.path : null) ?? null;
-    return saved(() => publishOutputImage(turnId, decodeOutputImage(data), file ? basename(file) : `image.${extension}`, "native", stepOf(callId, fallbackLabel)));
+    return saved(() => publishOutputImage(turnId, decodeOutputImage(data), file ? basename(file) : `image.${extension}`, source, stepOf(callId, fallbackLabel)));
   };
   /** A file the harness reports the agent viewed; the event keeps its path and gains a note. */
   const viewed = (path: string, callId: string | null, label: string): void => {
@@ -89,7 +89,7 @@ export function captureLoggedImages(def: AdapterDef, turnId: number, raw: string
 }
 
 type Remember = (id: string | null, name: string | null, input: unknown) => void;
-type Inline = (data: unknown, declaredType: unknown, callId: string | null, fallbackLabel: string, path?: string | null) => RecordValue;
+type Inline = (data: unknown, declaredType: unknown, callId: string | null, fallbackLabel: string, path?: string | null, source?: OutputImage["source"]) => RecordValue;
 type Viewed = (path: string, callId: string | null, label: string) => void;
 
 /** `tool_use` in an assistant message, then a `tool_result` with base64 image parts and the same `tool_use_id`. */
@@ -126,8 +126,10 @@ function droid(event: RecordValue, remember: Remember, inline: Inline): RecordVa
 
 /**
  * `item.completed` of an MCP image block, a local `image_view` (path only), or
- * an `image_generation` whose `result` is base64 PNG. Its `savedPath` lives in
- * codex's own home, so only its name is used.
+ * an `image_generation` whose `result` is the whole base64 PNG (often over a
+ * megabyte, so it must be captured before transcript bounding). A generated
+ * image is one the agent made for the person, so it is recorded as shared. Its
+ * `savedPath` lives in codex's own home, so only its name is used.
  */
 function codex(event: RecordValue, inline: Inline, viewed: Viewed): RecordValue {
   if (event.type !== "item.completed" || !isRecord(event.item)) return event;
@@ -146,7 +148,7 @@ function codex(event: RecordValue, inline: Inline, viewed: Viewed): RecordValue 
   }
   if (item.type === "image_generation" && typeof item.result === "string" && item.result.length > 0) {
     const saved = string(item.savedPath ?? item.saved_path);
-    const replaced = inline(item.result, "image/png", callId, "image_generation", saved);
+    const replaced = inline(item.result, "image/png", callId, "image generation", saved, "published");
     return { ...event, item: { ...item, result: replaced.text } };
   }
   return event;
