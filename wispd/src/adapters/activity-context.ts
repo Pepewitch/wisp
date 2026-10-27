@@ -19,6 +19,19 @@ export interface NormalizeContext {
   settled: Map<string, ActivityStatus>;
 }
 
+export function newNormalizeContext(id: (kind: string) => string): NormalizeContext {
+  return {
+    id,
+    subagents: new Set(),
+    background: new Map(),
+    toolParents: new Map(),
+    models: new Map(),
+    questions: new Set(),
+    rootThread: null,
+    settled: new Map(),
+  };
+}
+
 export function eventId(value: unknown, context: NormalizeContext, kind: string): string {
   return string(value) ?? context.id(kind);
 }

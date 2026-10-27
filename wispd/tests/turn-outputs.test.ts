@@ -3,7 +3,7 @@ import { closeSync, existsSync, openSync, readFileSync, readdirSync, rmSync } fr
 import { join } from "node:path";
 import { samplePng } from "../scripts/harness/image-output-probe";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
-import { externalizeOutputImages } from "../src/adapters/output-images";
+import { createOutputImageCapture } from "../src/adapters/output-images";
 import { LOG_DIR, TASKS_DIR, loadConfig } from "../src/config";
 import { subscribe } from "../src/events";
 import { decodeOutputImage, MAX_OUTPUT_IMAGE_BYTES, outputImagePath, parseOutputManifest, publishOutputImage } from "../src/outputs";
@@ -103,7 +103,7 @@ test("verified native shapes preserve adjacent text and subagent scope; unknown 
   for (const [name, event] of [["codex", codexImage()], ["claude", claudeImage()]] as const) {
     const f = fixture();
     const notes: string[] = [];
-    const output = externalizeOutputImages(event, BUILTIN_ADAPTERS[name]!, f.turnId, (note) => notes.push(note));
+    const output = createOutputImageCapture(BUILTIN_ADAPTERS[name]!, f.turnId, (note) => notes.push(note))(event);
     expect(JSON.stringify(output)).toContain("Synthetic stripes");
     expect(JSON.stringify(output)).not.toContain(samplePng().toString("base64"));
     expect(parseOutputManifest(getTurn(f.turnId)!.outputs_json)).toHaveLength(1);
@@ -111,9 +111,9 @@ test("verified native shapes preserve adjacent text and subagent scope; unknown 
     if (name === "claude") expect(output.parent_tool_use_id).toBe("child-agent");
   }
   const f = fixture(), event = codexImage();
-  expect(externalizeOutputImages(event, BUILTIN_ADAPTERS.cursor!, f.turnId, () => {})).toBe(event);
+  expect(createOutputImageCapture(BUILTIN_ADAPTERS.cursor!, f.turnId, () => {})(event)).toBe(event);
   expect(getTurn(f.turnId)!.outputs_json).toBeNull();
-  const output = externalizeOutputImages(codexImage("bad!"), BUILTIN_ADAPTERS.codex!, f.turnId, () => {});
+  const output = createOutputImageCapture(BUILTIN_ADAPTERS.codex!, f.turnId, () => {})(codexImage("bad!"));
   expect(JSON.stringify(output)).toContain("Image output unavailable");
   expect(JSON.stringify(output)).not.toContain("bad!");
 });

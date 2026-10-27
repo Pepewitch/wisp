@@ -1,4 +1,6 @@
+import { appendFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { captureLoggedImages } from "./adapters/output-images";
 import {
   createIncrementalOutcomeReducer,
   errorDetail,
@@ -45,6 +47,11 @@ async function indexProse(
   } catch (error) {
     console.error(`[wisp] turn ${turnId} prose index: ${error instanceof Error ? error.message : String(error)}`);
   }
+}
+
+/** A settle-time notice joins the end of the finished log, where the timeline reads it. */
+function appendNote(path: string, note: string): void {
+  try { appendFileSync(path, `${note}\n`); } catch { /* the notice is best effort; the turn still settles */ }
 }
 
 async function safeRead(path: string): Promise<string> {
@@ -272,6 +279,7 @@ export async function finalizeTurn(
   } else {
     rawOut = await safeRead(outPath);
     parsed = parseOutput(def, rawOut);
+    captureLoggedImages(def, turnId, rawOut, (note) => appendNote(outPath, note));
   }
 
   persistOutcomeMetadata(taskId, turnId, parsed);

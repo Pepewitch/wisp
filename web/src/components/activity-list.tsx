@@ -1,4 +1,4 @@
-import { useRef, useState } from "react"
+import { Fragment, useRef, useState, type ReactNode } from "react"
 
 import { Bot, ChevronRight } from "@/components/icons"
 import { Prose } from "@/components/prose"
@@ -24,10 +24,13 @@ export function ActivityList({
   items,
   onBeforeToggle,
   depth = 0,
+  stepImages,
 }: {
   items: ActivityItem[]
   onBeforeToggle: Compensate
   depth?: number
+  /** what to draw under a tool step: the images it produced */
+  stepImages?: (stepId: string) => ReactNode
 }) {
   return (
     <div className={cn("flex flex-col gap-0.5", depth > 0 && "mt-1")}>
@@ -40,7 +43,14 @@ export function ActivityList({
         if (item.kind === "thinking") {
           return <ThinkingRow key={item.id} item={item} onBeforeToggle={onBeforeToggle} />
         }
-        if (item.kind === "tool") return <ToolRow key={item.id} item={item} onBeforeToggle={onBeforeToggle} />
+        if (item.kind === "tool") {
+          return (
+            <Fragment key={item.id}>
+              <ToolRow item={item} onBeforeToggle={onBeforeToggle} />
+              {stepImages?.(item.id)}
+            </Fragment>
+          )
+        }
         if (item.kind === "question") return <QuestionRow key={item.id} item={item} />
         return (
           <SubagentRow
@@ -48,6 +58,7 @@ export function ActivityList({
             item={item}
             depth={depth}
             onBeforeToggle={onBeforeToggle}
+            stepImages={stepImages}
           />
         )
       })}
@@ -203,10 +214,12 @@ function SubagentRow({
   item,
   depth,
   onBeforeToggle,
+  stepImages,
 }: {
   item: SubagentActivityItem
   depth: number
   onBeforeToggle: Compensate
+  stepImages?: (stepId: string) => ReactNode
 }) {
   const [open, setOpen] = useState(false)
   const node = useRef<HTMLDivElement>(null)
@@ -274,7 +287,7 @@ function SubagentRow({
             </div>
           )}
           {item.items.length > 0 && (
-            <ActivityList items={item.items} depth={depth + 1} onBeforeToggle={onBeforeToggle} />
+            <ActivityList items={item.items} depth={depth + 1} onBeforeToggle={onBeforeToggle} stepImages={stepImages} />
           )}
           {item.status === "running" && item.items.length === 0 && (
             <p className="text-[11.5px] text-fg-secondary">This harness has not streamed child activity yet.</p>

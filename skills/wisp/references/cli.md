@@ -35,6 +35,10 @@ The task defaults to `WISP_TASK_ID`; use the turn number in Wisp's reminder.
 Images are copied into task storage, remain available after archive, and
 are included in export. PNG, JPEG, GIF and WebP are supported, up to 8 MiB
 per image and 32 images / 64 MiB per turn. `save` refuses to overwrite a file.
+Images you share appear after your reply, captioned with the step that shared
+them; images a tool showed you (a `Read` of a screenshot) appear under that
+step, not after the reply. `list` says which (`shared` / `looked at`) and the
+step's label; `--json` returns each image's `source` and `step` (`{id, label}`).
 See [Image outputs](../../../docs/IMAGE-OUTPUTS.md) for native capture support.
 
 ```sh

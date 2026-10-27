@@ -1,4 +1,4 @@
-import { outputCommand, saveCommand } from "./cli-output";
+import { outputCommand, outputProvenance, saveCommand } from "./cli-output";
 import { captureCommand } from "./cli-capture";
 import { type CommandName, offlineAnswer, respond, resolveCommand } from "./cli-help";
 import { ago, print, printError, printRaw } from "./cli-print";
@@ -192,7 +192,7 @@ function printTurn(
     const files = turn.attachments.map((attachment) => `${attachment.name} (${formatBytes(attachment.size)})`).join(", ");
     print(`  attached: ${files}${task.archived && !task.attachmentsRetained ? " — removed when this task was archived" : ""}`);
   }
-  for (const image of turn.outputs ?? []) print(`  output: ${image.name} (${formatBytes(image.size)})\n    ${saveCommand(task.id, turn.n, image)}`);
+  for (const image of turn.outputs ?? []) print(`  output: ${image.name} (${formatBytes(image.size)}, ${outputProvenance(image)})\n    ${saveCommand(task.id, turn.n, image)}`);
   if (turn.usage) print(`  usage: ${usageLine(turn.usage)}`);
   if (turn.result) print(`  agent: ${turn.result.slice(0, 400)}`);
 }

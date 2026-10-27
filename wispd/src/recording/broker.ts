@@ -1,3 +1,5 @@
+import type { OutputStep } from "../../../shared/api/outputs";
+
 export interface BrokerRecord {
   sequence: number;
   source: "stdout" | "stderr";
@@ -95,12 +97,16 @@ export interface TurnBrokerSubscription {
   close(): void;
 }
 
-/** One bounded fan-out channel for a recorder-owned running turn. */
+/**
+ * One bounded fan-out channel for a recorder-owned running turn, and the one
+ * live fact about that turn a request needs: which command step is running.
+ */
 export class TurnBroker {
   private readonly subscribers = new Set<BrokerSubscriber>();
   private highWaterSequence = 0;
   private primaryOffset = 0;
   private closed = false;
+  runningStep: OutputStep | null = null;
 
   publish(record: BrokerRecord): void {
     if (this.closed) return;
@@ -154,6 +160,11 @@ export function openTurnBroker(turnId: number): TurnBroker {
 
 export function subscribeTurnBroker(turnId: number): TurnBrokerSubscription | null {
   return brokers.get(turnId)?.subscribe() ?? null;
+}
+
+/** The latest started, unfinished command step of a running turn, if its recorder saw one. */
+export function runningTurnStep(turnId: number): OutputStep | null {
+  return brokers.get(turnId)?.runningStep ?? null;
 }
 
 export function closeTurnBroker(turnId: number): void {

@@ -1,7 +1,7 @@
 import { trunc } from "../text";
 import { steerActivityEvent } from "../turn-notes";
 import { codex } from "./activity-codex";
-import { eventId, type NormalizeContext, status } from "./activity-context";
+import { eventId, newNormalizeContext, type NormalizeContext, status } from "./activity-context";
 import { boundedInput, number, record, string, text, timestamp } from "./activity-value";
 import { formatParsedEvent } from "./format";
 import { parseQuestionnaire } from "./questionnaire";
@@ -573,18 +573,9 @@ export function createActivityFormatter(def?: AdapterDef): (line: string, record
   let sequence = 0;
   let suppliedSequence: number | null = null;
   let suppliedOrdinal = 0;
-  const context: NormalizeContext = {
-    id: (kind) => suppliedSequence === null
-      ? `${kind}-${++sequence}`
-      : `${kind}-${suppliedSequence}-${++suppliedOrdinal}`,
-    subagents: new Set(),
-    background: new Map(),
-    toolParents: new Map(),
-    models: new Map(),
-    questions: new Set(),
-    rootThread: null,
-    settled: new Map(),
-  };
+  const context = newNormalizeContext((kind) => suppliedSequence === null
+    ? `${kind}-${++sequence}`
+    : `${kind}-${suppliedSequence}-${++suppliedOrdinal}`);
   const normalizer = def?.activity ? ACTIVITY_NORMALIZERS[def.activity] : undefined;
   if (def?.activity && !normalizer) {
     const known = Object.keys(ACTIVITY_NORMALIZERS).join(", ");
