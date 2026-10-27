@@ -6,6 +6,7 @@ import { recipeComplaints } from "../verify/rounds";
 import { busyVerifyTask, draftTaskExists } from "../verify/status";
 import { emit, subscribe } from "../events";
 import { directoryExists, pathExists } from "../fsutil";
+import { listProjectEntries } from "../project-entries";
 import { beginProjectRemoval } from "../project-removals";
 import { listTasks } from "../store";
 import { Semaphore } from "../subprocess";
@@ -153,23 +154,28 @@ async function verificationSummary(repoPath: string): Promise<{ state: "none" | 
   };
 }
 
+/**
+ * The Projects list: cfg.repos pins + the repo_path of every active task,
+ * deduped by resolved path. Archived history stays available through
+ * ?archived=1, but does not keep an unregistered project in the list forever.
+ */
+function projectList(cfg: WispConfig): { path: string; entry: RepoEntry | undefined }[] {
+  const configured = cfg.repos.map((entry) => ({ path: repoEntryPath(entry), entry }));
+  const history = listTasks().map((t) => ({ path: t.repo_path, entry: undefined as RepoEntry | undefined }));
+  const seen = new Set<string>();
+  return [...configured, ...history].filter(({ path }) => {
+    const resolved = resolve(path);
+    if (seen.has(resolved)) return false;
+    seen.add(resolved);
+    return true;
+  });
+}
+
 /** GET /api/repos */
 export function reposRoute(cfg: WispConfig): Promise<Response> {
   return (async () => {
-    // cfg.repos pins + the repo_path of every active task, deduped by resolved
-    // path; exists-probes run concurrently. Archived history stays available
-    // through ?archived=1, but does not keep an unregistered project in the
-    // Projects list forever.
-    const activeTasks = listTasks();
-    const configured = cfg.repos.map((entry) => ({ path: repoEntryPath(entry), entry }));
-    const history = activeTasks.map((t) => ({ path: t.repo_path, entry: undefined as RepoEntry | undefined }));
-    const seen = new Set<string>();
-    const unique = [...configured, ...history].filter(({ path }) => {
-      const resolved = resolve(path);
-      if (seen.has(resolved)) return false;
-      seen.add(resolved);
-      return true;
-    });
+    // exists-probes run concurrently
+    const unique = projectList(cfg);
     const repos = await Promise.all(
       unique.map(async ({ path, entry }) => {
         const resolved = resolve(path);
@@ -197,6 +203,23 @@ export function reposRoute(cfg: WispConfig): Promise<Response> {
     );
     return json({ repos });
   })();
+}
+
+/**
+ * GET /api/projects/entries?project=<path>&dir=<relative>[&q=<text>] — one
+ * folder of a project in the Projects list, for the composer's `@` list; `q`
+ * keeps names containing it (case-insensitive) before the row cap. Only those roots
+ * may be listed; project-entries.ts owns containment and the ignore rules.
+ */
+export async function projectEntriesRoute(url: URL, cfg: WispConfig): Promise<Response> {
+  const project = url.searchParams.get("project");
+  if (!project || !isAbsolute(project)) return err("project must be a project's absolute path", 400);
+  const root = projectList(cfg)
+    .map(({ path }) => resolve(path))
+    .find((path) => path === resolve(project));
+  if (root === undefined) return err(`not a Wisp project: ${project}`, 404);
+  const listing = await listProjectEntries(root, url.searchParams.get("dir") ?? "", url.searchParams.get("q") ?? "");
+  return "error" in listing ? err(listing.error, listing.status) : json(listing);
 }
 
 interface ProjectUpdateBody {

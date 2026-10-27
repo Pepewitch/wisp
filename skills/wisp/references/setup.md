@@ -326,6 +326,19 @@ address's last new wrong token. The web UI is served at `/`.
   `POST /api/projects/copy-preview` ·
   `PUT /api/repos/order` (`{paths}`: every configured project once, by
   absolute path, in the new order; 409 when the list changed meanwhile)
+- `GET /api/projects/entries?project=<path>&dir=<relative>[&q=<text>]` — one
+  folder of a registered project for the composer's `@` list: `{project, dir,
+  entries: [{name, kind: "dir"|"file"}], truncated, incompleteAfter}`,
+  folders first, at most 500 rows (`truncated` when more match); `q` keeps
+  names containing it (case-insensitive) before that cap. A folder with more
+  than 5,000 entries is read only that far, and says so in `incompleteAfter`
+  (otherwise `null`). `.git` and git-ignored entries are left out, by one
+  `git check-ignore` in the repository that owns the folder (a submodule's
+  own `.gitignore` inside a submodule); a symlink is judged by its own name.
+  An absolute `dir`, a `..` or `.git` segment is `400`, a `dir` that resolves
+  outside the project or into `.git` is `403`, a path that is not a
+  registered project, or a missing folder, is `404`, and a repository whose
+  ignore rules git cannot read is `500` (never an unfiltered listing)
 - `GET|POST /api/suffix-prompts` ·
   `PATCH|DELETE /api/suffix-prompts/:id`
 - `GET /api/harnesses` (capabilities, effort levels, offered models per

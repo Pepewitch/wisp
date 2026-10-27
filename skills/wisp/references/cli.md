@@ -412,6 +412,22 @@ an idle task and, except for account-level Codex usage, an existing harness
 session. Missing capabilities stay absent rather than falling back to another
 report.
 
+## Web @ list
+
+In a task's composer, an `@` that starts a word lists the registered projects
+(name, then path). Typing filters by name and ↑/↓ move. One rule holds for
+every row: Enter, or a click, inserts its absolute path (a project's is its
+registered checkout, never a task worktree), in double quotes when it
+contains whitespace. Tab, a plain → at the end of the word, or the row's
+chevron opens a project or folder and lists its children; Tab on a file
+inserts it. Escape closes the list and keeps the text. A typed `/` is just a
+character: `@<name>/` opens the project whose name is exactly `<name>` (two
+projects with that name are both offered to choose from), and an `@name/` no
+project has is left as typed. `@<project>/src/co` opens `src/` filtered by
+`co` directly. `.git` and git-ignored entries are not listed. While the
+list is open, Enter never sends. An `@` inside a word, or one no project
+answers (`@scope/pkg`), opens nothing, so Enter still sends.
+
 ## Projects
 
 ```
