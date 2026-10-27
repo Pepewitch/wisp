@@ -2,10 +2,12 @@ import type { RefObject } from "react"
 
 import type { ComposerStatus } from "@/components/composer-status"
 import { CopyButton } from "@/components/copy-button"
+import { MentionList } from "@/components/mention-list"
 import { Meta, StateDot } from "@/components/primitives"
 import { ProbePanel } from "@/components/probe-panel"
 import { SlashPalette } from "@/components/slash-palette"
 import { TokensPanel } from "@/components/tokens-panel"
+import type { ComposerMentions } from "@/hooks/useComposerMentions"
 import type { ReportState, SteerNote } from "@/hooks/useSteerCommands"
 import { useTokensReport } from "@/hooks/useTokensReport"
 import { useTick } from "@/hooks/useTick"
@@ -23,6 +25,7 @@ export function SteerOverlays({
   groups,
   onPick,
   commandRef,
+  mentions,
   touch,
   runningSince,
   composerStatus,
@@ -36,6 +39,7 @@ export function SteerOverlays({
   groups: SlashGroup[]
   onPick: (entry: SlashEntry) => void
   commandRef: RefObject<HTMLDivElement | null>
+  mentions: ComposerMentions
   touch: boolean
   runningSince: string | null
   composerStatus: ComposerStatus | null
@@ -68,6 +72,16 @@ export function SteerOverlays({
           onPick={onPick}
           commandRef={commandRef}
           touch={touch}
+        />
+      )}
+      {mentions.list && (
+        <MentionList
+          rows={mentions.list.rows}
+          selected={mentions.list.selected}
+          status={mentions.list.status}
+          touch={touch}
+          onPick={mentions.pick}
+          onHover={mentions.hover}
         />
       )}
       <RunningRow startedAt={runningSince} status={composerStatus} />

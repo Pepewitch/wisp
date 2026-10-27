@@ -33,6 +33,7 @@ import { SettingsSpecimen } from "@/components/settings-dialog"
 import { PromptBubbleSpecimens } from "@/components/prompt-bubble-specimens"
 import { PullRequestSpecimens } from "@/components/pull-request-specimens"
 import { SlashPaletteList } from "@/components/slash-palette"
+import { MentionListSpecimens } from "@/components/mention-list-specimen"
 import { RowArchiveButton, TaskCard, TaskRow } from "@/components/task-row"
 import { WispUpdateControl } from "@/components/update-control"
 import { UsageLimitsSpecimen } from "@/components/usage-limits-specimen"
@@ -431,6 +432,8 @@ function InteractionSpecimens() {
             </div>
           </div>
       </Section>
+
+      <Section title="The @ list — projects, then their files"><MentionListSpecimens /></Section>
 
       <Section title="Search — two questions, two shapes">
         <SearchSpecimens />

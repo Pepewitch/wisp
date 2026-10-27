@@ -3,6 +3,7 @@ import { useEffect, useMemo } from "react";
 
 import type { AutoReviewRoundsResponse, VerificationStatus } from "../../../shared/api/auto-review";
 import type { AutopilotHistoryResponse } from "../../../shared/api/autopilot";
+import type { ProjectEntriesResponse } from "../../../shared/api/project-entries";
 import type { Workflow, WorkflowDefinition } from "../../../shared/workflows";
 import { ApiError } from "@/lib/api";
 import { prependConversationPage, refreshConversationPage } from "@/lib/conversation-pages";
@@ -394,13 +395,33 @@ export function useAttachCommand(id: string | null, session: string | null) {
   });
 }
 
-/** GET /api/repos — the sidebar's project groups and the create modal's project picker. */
-export function useRepos() {
+/** GET /api/repos — the sidebar's project groups, the create modal's project picker and the composer's `@` list. */
+export function useRepos(enabled = true) {
   const { transport, qk } = useDaemonRuntime();
   return useQuery({
     queryKey: qk.repos,
     queryFn: () => transport.request<{ repos: RepoInfo[] }>("/api/repos"),
     select: (data) => data.repos,
+    enabled,
+  });
+}
+
+/**
+ * GET /api/projects/entries — one folder of a project, for the composer's `@`
+ * list. Nested under the repos key so a project event refreshes it; kept for
+ * a short while because typing a filter re-asks for the same folder.
+ */
+export function useProjectEntries(project: string | null, dir: string) {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: [...qk.repos, "entries", project ?? "", dir],
+    queryFn: () =>
+      transport.request<ProjectEntriesResponse>(
+        `/api/projects/entries?project=${encodeURIComponent(project ?? "")}&dir=${encodeURIComponent(dir)}`,
+      ),
+    enabled: project !== null,
+    staleTime: 15_000,
+    retry: false,
   });
 }
 

@@ -13,6 +13,7 @@ import { FreshContextDialog } from "@/components/fresh-context-dialog"
 import { PendingAttachmentRows } from "@/components/pending-attachments"
 import { ResumeHint } from "@/components/resume-hint"
 import { SteerOverlays } from "@/components/steer-box-overlays"
+import { steerState, type SuffixSelection } from "@/components/steer-state"
 import { ComposerControls } from "@/components/steer-controls"
 import { type TaskAgentChoice } from "@/components/task-agent-picker"
 import {
@@ -25,6 +26,7 @@ import {
   type AgentSubmission,
 } from "@/hooks/useSteerSubmit"
 import { useAutosizeTextarea } from "@/hooks/useAutosizeTextarea"
+import { useComposerMentions, type ComposerMentions } from "@/hooks/useComposerMentions"
 import { useSteerDelivery, type QueueToggleState } from "@/hooks/useSteerDelivery"
 import { hasCoarsePointer } from "@/hooks/useMediaQuery"
 import { useTaskAgentSelection } from "@/hooks/useTaskAgentSelection"
@@ -80,7 +82,8 @@ import { cn } from "@/lib/utils"
  *
  *  - the `/` palette (A2) — a real keyboard picker, bound to the slash token
  *    under the caret. The palette never deletes what you typed; only PICKING
- *    an item consumes the token.
+ *    an item consumes the token. The `@` list (useComposerMentions) follows
+ *    the same rules for Wisp projects and their files.
  *  - Tier-1 dispatch — the wisp-native commands, every write through the hooks
  *    in hooks/mutations.ts.
  *  - the send itself, including its refusals. A refused send used to vanish
@@ -224,6 +227,7 @@ export function SteerBox({
   const commands = useSteerCommands({ task, status, setNote, setReport, setCompactingTaskId })
   const tools = useToolPanelControls()
   const archive = commands.archive
+  const mentions = useComposerMentions({ boxRef: box, caretRef: caret, value, setValue })
   useCaretRestore(box, caret)
   useComposerFocusRequests(box)
 
@@ -246,12 +250,13 @@ export function SteerBox({
     setNote,
     setPalette,
   })
-  const send = () => agent.requestSend(submit)
 
   /** Recompute what the caret is sitting in. The one place the palette opens. */
   const track = (value: string, at: number | null) => {
     if (disabled) return
     const token = at === null ? null : slashTokenAt(value, at)
+    // a `/` word is never an `@` one: only one list is bound at a time
+    mentions.track(value, token ? null : at)
     if (!token) {
       // the token is gone, so the dismissal that suppressed it is spent
       suppressed.current = null
@@ -323,6 +328,7 @@ export function SteerBox({
             groups={groups}
             onPick={pick}
             commandRef={command}
+            mentions={mentions}
             touch={touch}
             runningSince={runningSince}
             composerStatus={runtimeStatus}
@@ -346,6 +352,7 @@ export function SteerBox({
             canStop={canStop}
             touch={touch}
             palette={palette}
+            mentions={mentions}
             reportOpen={shownReport !== null}
             suffixPromptId={suffixPromptId}
             boxRef={box}
@@ -362,7 +369,7 @@ export function SteerBox({
             onDismissReport={dismissReport}
             onSuffixPromptChange={(value) => setSuffixSelection({ taskId, value })}
             onAgentChange={agent.setChoice}
-            onSend={send}
+            onSend={() => agent.requestSend(submit)}
             onStop={stop}
           />
         </div>
@@ -397,65 +404,6 @@ function runLocalSlashAction(
   else if (entry.compact) commands.compact()
   else if (entry.externalHref) openExternalLink(entry.externalHref)
   else if (tier1Command) commands.dispatch(tier1Command)
-}
-
-interface SuffixSelection {
-  taskId: string | null
-  value: string | null
-}
-
-function settledCompactionNote(note: SteerNote, turns?: Turn[]): SteerNote | null {
-  if (note.compactTurn === undefined) return note
-  const turn = turns?.find((turn) => turn.n === note.compactTurn)
-  // Once its recorded turn arrives, the transcript owns running, completion,
-  // and failure presentation. Keep this note only across the response-to-SSE
-  // handoff so there is never a moment with no feedback.
-  return turn ? null : note
-}
-
-function steerState({
-  task,
-  value,
-  sending,
-  note,
-  turns,
-  suffixSelection,
-  compactingTaskId,
-}: {
-  task: ApiTask | null
-  value: string
-  sending: boolean
-  note: SteerNote | null
-  turns?: Turn[]
-  suffixSelection: SuffixSelection
-  compactingTaskId: string | null
-}) {
-  const taskId = task?.id ?? null
-  const suffixPromptId =
-    suffixSelection.taskId === taskId ? suffixSelection.value : null
-  const disabled = !task || task.archived || task.state === "creating"
-  // A stuck task still owns a live turn; it must stop/steer like running,
-  // rather than offering a send the daemon will reject.
-  const blocked = task?.state === "running" || task?.state === "stuck"
-  const compacting = compactionIsRunning(taskId, note, turns, compactingTaskId)
-  const hasMessage = value.trim().length > 0
-  const canSend = hasMessage && !disabled && !sending && !compacting
-  const hasBackground = task?.background && task.background.state !== "none"
-  const canStop = (blocked || hasBackground) && !hasMessage && !disabled && !sending
-  const shown = note && task && note.taskId === task.id ? settledCompactionNote(note, turns) : null
-  return { taskId, suffixPromptId, disabled, blocked, compacting, canSend, canStop: Boolean(canStop), shown }
-}
-
-function compactionIsRunning(
-  taskId: string | null,
-  note: SteerNote | null,
-  turns: Turn[] | undefined,
-  compactingTaskId: string | null
-): boolean {
-  if (taskId !== null && compactingTaskId === taskId) return true
-  if (turns?.some((turn) => turn.operation === "compact" && turn.status === "running")) return true
-  if (note?.taskId !== taskId || note.compactTurn === undefined) return false
-  return !turns?.some((turn) => turn.n === note.compactTurn)
 }
 
 function slashGroups(
@@ -509,6 +457,7 @@ function SteerComposer({
   canStop,
   touch,
   palette,
+  mentions,
   reportOpen,
   suffixPromptId,
   boxRef,
@@ -538,6 +487,7 @@ function SteerComposer({
   canStop: boolean
   touch: boolean
   palette: SlashToken | null
+  mentions: ComposerMentions
   reportOpen: boolean
   suffixPromptId: string | null
   boxRef: RefObject<HTMLTextAreaElement | null>
@@ -614,7 +564,9 @@ function SteerComposer({
         }
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
+        {...mentions.aria}
         onKeyDown={(event) => {
+          if (mentions.onKeyDown(event)) return
           if (palette && !event.nativeEvent.isComposing) {
             if (event.key === "Escape") {
               event.preventDefault()
