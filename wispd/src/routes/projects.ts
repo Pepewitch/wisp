@@ -403,6 +403,52 @@ export function copyPreviewRoute(req: Request): Promise<Response> {
   })();
 }
 
+/** The refusal the sidebar shows when its drag was based on a list that has since changed. */
+const STALE_ORDER = "The project list changed since it was loaded. Reload and try again."
+
+/** A refusal names a few paths, never every one a body could carry. */
+function firstFew(paths: string[]): string {
+  return paths.length > 3 ? `${paths.slice(0, 3).join(", ")} and ${paths.length - 3} more` : paths.join(", ");
+}
+
+/**
+ * PUT /api/repos/order { paths } — put the configured projects in the order
+ * `paths` gives. `paths` must name every configured project exactly once
+ * (resolved, as GET /api/repos serves them); anything else means the client
+ * reordered a list that has since changed, and is refused rather than merged.
+ * Each entry object is kept as it is: only its position moves.
+ */
+export function reorderReposRoute(req: Request, cfg: WispConfig): Promise<Response> {
+  return (async () => {
+    const parsed = await jsonObjectBody(req);
+    if (parsed instanceof Response) return parsed;
+    const { paths } = parsed as { paths?: unknown };
+    if (!Array.isArray(paths) || paths.some((value) => typeof value !== "string" || value.length === 0)) {
+      return err(`paths must be an array of project paths, got ${typeName(paths)}`, 400);
+    }
+    // resolve() would read a relative path against the daemon's own cwd
+    const relative = (paths as string[]).find((path) => !isAbsolute(path));
+    if (relative !== undefined) return err(`path must be absolute: ${relative}`, 400);
+    // a config may list one project twice (a string and an object entry):
+    // GET /api/repos shows it once, so it moves as one, every entry kept
+    const byPath = new Map<string, RepoEntry[]>();
+    for (const entry of cfg.repos) {
+      const resolved = resolve(repoEntryPath(entry));
+      byPath.set(resolved, [...(byPath.get(resolved) ?? []), entry]);
+    }
+    const asked = (paths as string[]).map((path) => resolve(path));
+    const unique = new Set(asked);
+    if (unique.size !== asked.length) return err(`${STALE_ORDER} (a project is listed twice)`, 409);
+    const missing = [...byPath.keys()].filter((path) => !unique.has(path));
+    const extra = asked.filter((path) => !byPath.has(path));
+    if (extra.length > 0) return err(`${STALE_ORDER} (not a configured project: ${firstFew(extra)})`, 409);
+    if (missing.length > 0) return err(`${STALE_ORDER} (missing: ${firstFew(missing)})`, 409);
+    persistRepos(cfg, asked.flatMap((path) => byPath.get(path)!));
+    emit({ type: "project", action: "reorder", paths: asked });
+    return json({ paths: asked });
+  })();
+}
+
 /** DELETE /api/projects */
 export function removeProjectRoute(req: Request, cfg: WispConfig): Promise<Response> {
   return (async () => {

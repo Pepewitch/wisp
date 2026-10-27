@@ -1,6 +1,11 @@
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
+
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { useEffect, useState } from "react"
 import { describe, expect, it, vi } from "vitest"
+
+import { useToolPanelShortcuts, type ToolPanelControls } from "@/hooks/useToolPanel"
 
 import { Shell as PaneShell, ToolPanel } from "./panes"
 
@@ -25,6 +30,49 @@ function panel(props: { terminalKey: string; toolOpen: boolean; terminalOpen: bo
     />
   )
 }
+
+// As much of a browser's layout as the library reads: the shell's children
+// sit side by side in a 1600px row, a panel as wide as its flex-grow share,
+// a divider one pixel; an undisplayed element has no box, so it reads 0.
+// jsdom has no Tailwind, so `hidden` is declared here.
+const WIDTH = 1600
+function laidOutInDom() {
+  const style = document.createElement("style")
+  style.textContent = ".hidden { display: none }"
+  document.head.append(style)
+  const boxWidth = (el: HTMLElement) => {
+    if (getComputedStyle(el).display === "none") return 0
+    if (el.hasAttribute("data-panel")) {
+      const share = el.style.flexGrow === "" ? 100 / 3 : Number(el.style.flexGrow)
+      return Math.round((share / 100) * WIDTH)
+    }
+    return el.getAttribute("role") === "separator" ? 1 : WIDTH
+  }
+  const boxLeft = (el: HTMLElement) => {
+    if (getComputedStyle(el).display === "none") return 0
+    const siblings = [...(el.parentElement?.children ?? [])]
+    return siblings.slice(0, siblings.indexOf(el)).reduce((sum, sibling) => sum + boxWidth(sibling as HTMLElement), 0)
+  }
+  const spies = [
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return boxWidth(this)
+    }),
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(800),
+    vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
+      return boxLeft(this)
+    }),
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const x = boxLeft(this)
+      const width = boxWidth(this)
+      return { x, y: 0, left: x, top: 0, right: x + width, bottom: 800, width, height: 800, toJSON: () => ({}) } as DOMRect
+    }),
+  ]
+  return () => {
+    spies.forEach((spy) => spy.mockRestore())
+    style.remove()
+  }
+}
+
 
 describe("the tool panel", () => {
   it("does not start a task's terminal until it is first shown, then only hides it", () => {
@@ -259,49 +307,220 @@ describe("the dock's divider", () => {
   })
 })
 
-describe("the sidebar's divider", () => {
-  // As much of a browser's layout as the library reads: the shell's children
-  // sit side by side in a 1600px row, a panel as wide as its flex-grow share,
-  // a divider one pixel; an undisplayed element has no box, so it reads 0.
-  // jsdom has no Tailwind, so `hidden` is declared here.
-  const WIDTH = 1600
+describe("the panel's glide", () => {
+  /** a 1600px window whose panels' pixels follow their laid-out share, on a screen that allows motion */
   function laidOut() {
-    const style = document.createElement("style")
-    style.textContent = ".hidden { display: none }"
-    document.head.append(style)
-    const boxWidth = (el: HTMLElement) => {
-      if (getComputedStyle(el).display === "none") return 0
-      if (el.hasAttribute("data-panel")) {
-        const share = el.style.flexGrow === "" ? 100 / 3 : Number(el.style.flexGrow)
-        return Math.round((share / 100) * WIDTH)
-      }
-      return el.getAttribute("role") === "separator" ? 1 : WIDTH
-    }
-    const boxLeft = (el: HTMLElement) => {
-      if (getComputedStyle(el).display === "none") return 0
-      const siblings = [...(el.parentElement?.children ?? [])]
-      return siblings.slice(0, siblings.indexOf(el)).reduce((sum, sibling) => sum + boxWidth(sibling as HTMLElement), 0)
-    }
     const spies = [
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+        () => ({ x: 0, y: 0, top: 0, left: 0, right: 1600, bottom: 800, width: 1600, height: 800, toJSON: () => ({}) }) as DOMRect,
+      ),
       vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
-        return boxWidth(this)
+        const share = this.style.flexGrow === "" ? 100 / 3 : Number(this.style.flexGrow)
+        return Math.round((share / 100) * 1600)
       }),
       vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(800),
       vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
-        return boxLeft(this)
-      }),
-      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-        const x = boxLeft(this)
-        const width = boxWidth(this)
-        return { x, y: 0, left: x, top: 0, right: x + width, bottom: 800, width, height: 800, toJSON: () => ({}) } as DOMRect
+        return [...(this.parentElement?.children ?? [])].indexOf(this)
       }),
     ]
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }))
     return () => {
       spies.forEach((spy) => spy.mockRestore())
-      style.remove()
+      vi.unstubAllGlobals()
+      localStorage.removeItem("wisp_tool_panel_width")
     }
   }
+  const outer = () => document.getElementById("sidebar")!.parentElement!
+  const toolPanel = () => [...outer().children].filter((child) => child.hasAttribute("data-panel")).at(-1)!
+  const landed = () => act(() => void fireEvent.transitionEnd(toolPanel(), { propertyName: "flex-grow" }))
 
+  it("tells the centre where it will land, and pins the tool's width while it glides", async () => {
+    const restore = laidOut()
+    const settling = vi.fn()
+    const shell = (open: boolean) => (
+      <PaneShell
+        sidebar={<div />}
+        centre={<div />}
+        panel={panel({ terminalKey: "t", toolOpen: open, terminalOpen: false })}
+        panelOpen={open}
+        onCentreSettling={settling}
+      />
+    )
+    try {
+      localStorage.setItem("wisp_tool_panel_width", "400")
+      const view = render(shell(false))
+      await act(async () => {})
+      settling.mockClear()
+      view.rerender(shell(true))
+      await act(async () => {})
+      expect(outer()).toHaveAttribute("data-glide", "in")
+      // the content is laid out once, at the width it lands at, not on every frame
+      expect(outer().style.getPropertyValue("--tool-pin")).toMatch(/^\d+(\.\d+)?px$/)
+      const [[centre]] = settling.mock.calls as [[number]]
+      expect(centre).toBeGreaterThan(0)
+      expect(centre).toBeLessThan(1600 - 400)
+      await landed()
+      expect(outer()).not.toHaveAttribute("data-glide")
+      expect(settling).toHaveBeenLastCalledWith(null)
+
+      view.rerender(shell(false))
+      await act(async () => {})
+      expect(outer()).toHaveAttribute("data-glide", "out")
+      expect(settling).toHaveBeenLastCalledWith(expect.any(Number))
+      await landed()
+      expect(outer()).not.toHaveAttribute("data-glide")
+      expect(settling).toHaveBeenLastCalledWith(null)
+    } finally {
+      restore()
+    }
+  })
+
+  it("never starts the next task's terminal when a task with its Terminal open gives way to one without", async () => {
+    const restore = laidOut()
+    mounts.mockClear()
+    const shell = (key: string, open: boolean) => (
+      <PaneShell sidebar={<div />} centre={<div />} panel={panel({ terminalKey: key, toolOpen: false, terminalOpen: open })} panelOpen={open} />
+    )
+    try {
+      const view = render(shell("A", true))
+      await act(async () => {})
+      // selecting B, which has nothing open, glides A's panel shut
+      view.rerender(shell("B", false))
+      await act(async () => {})
+      expect(outer()).toHaveAttribute("data-glide", "out")
+      await landed()
+      expect(mounts.mock.calls).toEqual([["A"]])
+    } finally {
+      restore()
+    }
+  })
+
+  it("ends the glide at once when the divider has already dragged the panel shut", async () => {
+    const restore = laidOut()
+    const shut = vi.fn()
+    const shell = (open: boolean) => (
+      <PaneShell sidebar={<div />} centre={<div />} panel={<div>tools</div>} panelOpen={open} onPanelDraggedShut={shut} />
+    )
+    try {
+      const view = render(shell(false))
+      await act(async () => {})
+      view.rerender(shell(true))
+      await act(async () => {})
+      await landed()
+      const divider = screen.getAllByRole("separator").find((s) => s.nextElementSibling === toolPanel())!
+      divider.focus()
+      await act(async () => void fireEvent.keyDown(divider, { key: "End" }))
+      expect(shut).toHaveBeenCalledOnce()
+      view.rerender(shell(false))
+      await act(async () => {})
+      // nothing is left to glide, so a reopening straight after is not eased by a stale mark
+      expect(outer()).not.toHaveAttribute("data-glide")
+    } finally {
+      restore()
+    }
+  })
+
+  /** motion allowed, the DOM laid out, and nothing left saved or held for the next test */
+  async function withMotion(run: () => Promise<void>) {
+    const restore = laidOutInDom()
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }))
+    localStorage.setItem("wisp_tool_panel_width", "400")
+    try {
+      await run()
+    } finally {
+      // a failure mid-drag must not leave the library dragging into the next test
+      fireEvent.pointerUp(document, { pointerType: "mouse", button: 0 })
+      restore()
+      vi.unstubAllGlobals()
+      localStorage.removeItem("wisp_tool_panel_width")
+      localStorage.removeItem("react-resizable-panels:wisp-ui-main-v2")
+    }
+  }
+  const drag = async (from: Element, x0: number, x1: number) => {
+    fireEvent.pointerDown(from, { pointerType: "mouse", button: 0, buttons: 1, clientX: x0, clientY: 400 })
+    await act(async () => void fireEvent.pointerMove(document, { pointerType: "mouse", buttons: 1, clientX: x1, clientY: 400 }))
+    await act(async () => void fireEvent.pointerUp(document, { pointerType: "mouse", button: 0, clientX: x1, clientY: 400 }))
+  }
+  const panelDivider = () => screen.getAllByRole("separator").find((s) => s.nextElementSibling === toolPanel())!
+
+  it("glides on ⌘\\ pressed while a divider has the focus", async () => {
+    await withMotion(async () => {
+      function Chorded() {
+        const [open, setOpen] = useState(false)
+        const togglePanel = () => setOpen((value) => !value)
+        useToolPanelShortcuts({ toggle: () => {}, togglePanel } as unknown as ToolPanelControls, true)
+        return <PaneShell sidebar={<div />} centre={<main className="wisp-centre" />} panel={<div>tools</div>} panelOpen={open} />
+      }
+      render(<Chorded />)
+      await act(async () => {})
+      // the sidebar's divider: a drag or a Tab leaves the focus there
+      const sidebarDivider = document.getElementById("sidebar")!.nextElementSibling as HTMLElement
+      sidebarDivider.focus()
+      await act(async () => void fireEvent.keyDown(sidebarDivider, { key: "\\", code: "Backslash", metaKey: true }))
+      expect(outer()).toHaveAttribute("data-glide", "in")
+      await landed()
+      panelDivider().focus()
+      await act(async () => void fireEvent.keyDown(panelDivider(), { key: "\\", code: "Backslash", metaKey: true }))
+      expect(outer()).toHaveAttribute("data-glide", "out")
+    })
+  })
+
+  it("does not glide a drag that starts beside the divider, inside the library's hit area", async () => {
+    await withMotion(async () => {
+      render(<PaneShell sidebar={<div />} centre={<main className="wisp-centre" />} panel={<div>tools</div>} panelOpen />)
+      await act(async () => {})
+      const before = toolPanel().getBoundingClientRect().width
+      const at = panelDivider().getBoundingClientRect().x
+      // 3px into the panel: the event's target is the panel, not the separator
+      await drag(toolPanel(), at + 3, at - 57)
+      expect(toolPanel().getBoundingClientRect().width).toBeGreaterThan(before)
+      expect(outer()).not.toHaveAttribute("data-glide")
+    })
+  })
+
+  it("does not glide a drag that collapses the panel", async () => {
+    await withMotion(async () => {
+      let open = true
+      const shell = () => (
+        <PaneShell sidebar={<div />} centre={<main className="wisp-centre" />} panel={<div>tools</div>} panelOpen={open} onPanelDraggedShut={() => (open = false)} />
+      )
+      const view = render(shell())
+      await act(async () => {})
+      const at = panelDivider().getBoundingClientRect().x
+      // far past the panel's minimum: the library collapses it, and reports the shut on release
+      await drag(panelDivider(), at, 1590)
+      expect((toolPanel() as HTMLElement).style.flexGrow).toBe("0")
+      expect(open).toBe(false)
+      view.rerender(shell())
+      await act(async () => {})
+      expect(outer()).not.toHaveAttribute("data-glide")
+    })
+  })
+
+  it("lets the centre's gutter ease only beside a panel glide", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../index.css"), "utf8")
+    const rules = [...css.matchAll(/([^{}]*\.wisp-centre[^{}]*)\{([^}]*)\}/g)]
+    const easing = rules.filter(([, , body]) => /transition:\s*--summary-gutter/.test(body!)).map(([, selector]) => selector!.trim())
+    expect(easing).toEqual(["[data-glide] .wisp-centre"])
+  })
+
+  it("does not glide or pin anything under reduced motion", async () => {
+    const settling = vi.fn()
+    const shell = (open: boolean) => (
+      <PaneShell sidebar={<div />} centre={<div />} panel={panel({ terminalKey: "t", toolOpen: open, terminalOpen: false })} panelOpen={open} onCentreSettling={settling} />
+    )
+    // jsdom has no matchMedia, which reads as reduced motion
+    const view = render(shell(true))
+    await act(async () => {})
+    view.rerender(shell(false))
+    await act(async () => {})
+    expect(outer()).not.toHaveAttribute("data-glide")
+    expect(document.querySelector('[data-tool-region="tool"]')).toHaveClass("hidden")
+    expect(settling.mock.calls.every(([px]) => px === null)).toBe(true)
+  })
+})
+
+describe("the sidebar's divider", () => {
   const sidebarWidth = () => (Number(document.getElementById("sidebar")!.style.flexGrow) / 100) * WIDTH
   const divider = () => document.getElementById("sidebar")!.nextElementSibling as HTMLElement
   // the tool panel closed, as every task opens
@@ -310,7 +529,7 @@ describe("the sidebar's divider", () => {
   async function withShell(run: (errors: unknown[]) => Promise<void>) {
     // a saved sidebar with room to move both ways
     localStorage.setItem("react-resizable-panels:wisp-ui-main-v2", JSON.stringify({ sidebar: 18.75, centre: 81.25, tool: 0 }))
-    const restore = laidOut()
+    const restore = laidOutInDom()
     const errors: unknown[] = []
     const onError = (event: ErrorEvent) => errors.push(event.error)
     window.addEventListener("error", onError)

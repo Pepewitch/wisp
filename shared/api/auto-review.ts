@@ -199,9 +199,10 @@ export interface VerificationStatus {
   state: "none" | "active"
   /** the active recipe's version; null with none */
   version: string | null
+  /** when a person last activated a draft: the active recipe's age; null with none */
   activatedAt: string | null
   areas: VerificationArea[]
-  /** a recipe task's proposal waiting to be activated */
+  /** a recipe task's proposal waiting to be activated; a new recipe task starts from it, and savedAt is its age */
   draft: { taskId: string; savedAt: string; areas: { name: string; paths: string[]; status: "proven" | "unproven" }[] } | null
   /** the newest recipe task that is not archived */
   task: VerificationTask | null
@@ -233,4 +234,24 @@ export interface VerificationTaskBody {
   harness?: string
   model?: string
   effort?: string
+}
+
+/** A recipe draft named by its task, and when it was saved (ISO-8601). */
+export interface VerificationDraftRef {
+  taskId: string
+  savedAt: string
+}
+
+/** POST /api/projects/verification/tasks → 201 */
+export interface VerificationTaskCreated {
+  task: { id: string; title: string }
+  /** the waiting draft the new task starts from; null when it starts from the active recipe (or from scratch) */
+  draft: VerificationDraftRef | null
+}
+
+/** GET /api/projects/verification/checkout?path=[&draft=<task>|&active=1] */
+export interface VerificationCheckout {
+  files: { path: string; content: string }[]
+  /** the draft these files are, or null for the active recipe */
+  draft: VerificationDraftRef | null
 }

@@ -6,7 +6,7 @@ import { ModelMenuGroups } from "@/components/model-menu"
 import { Bot, Effort } from "@/components/icons"
 import { Button } from "@/components/primitives"
 import { useActivateVerification, useStartVerificationTask } from "@/hooks/mutations"
-import { useHarnesses, useProjectVerification } from "@/hooks/queries"
+import { useHarnesses, useHarnessFeatures, useProjectVerification } from "@/hooks/queries"
 import { useHiddenModels } from "@/hooks/useHiddenModels"
 import type { ReviewerFallbacks } from "@/hooks/useVerificationField"
 import { failureReason } from "@/lib/api"
@@ -75,6 +75,12 @@ export interface VerificationFieldsModel {
   activating: boolean
   /** a recipe task is already working on it: the daemon refuses a second */
   busy: boolean
+  /**
+   * The daemon starts a recipe task from the newest waiting draft
+   * (`features.recipeFromDraft`). Without it, a task starts from the active
+   * recipe even while a draft waits, and the section says so.
+   */
+  fromDraft: boolean
   message: VerificationMessage | null
   onStart: (mode: Mode, area?: string) => void
   onActivate: () => void
@@ -107,6 +113,8 @@ export function VerificationSection({
   const { connectionId } = useDaemonRuntime()
   const status = useProjectVerification(project.path, true)
   const harnesses = useHarnesses(true)
+  const features = useHarnessFeatures()
+  const fromDraft = features.data?.recipeFromDraft === true
   const { hidden } = useHiddenModels()
   const start = useStartVerificationTask()
   const activate = useActivateVerification()
@@ -136,9 +144,10 @@ export function VerificationSection({
         ...(runsOn.effort ? { effort: runsOn.effort } : {}),
       },
       {
-        onSuccess: ({ task }) => {
+        onSuccess: ({ task, draft }) => {
           setNote("")
-          setMessage({ tone: "info", text: `Started ${task.title}.`, taskId: task.id })
+          const from = fromDraft && draft ? `, starting from the draft from task ${draft.taskId}` : ""
+          setMessage({ tone: "info", text: `Started ${task.title}${from}.`, taskId: task.id })
           // the task is selected behind the dialog: closing it lands on the task
           openTask(task.id)
         },
@@ -199,6 +208,7 @@ export function VerificationSection({
       starting={pendingStart ? (pendingStart.mode === "fix" ? `fix:${pendingStart.area ?? ""}` : pendingStart.mode) : null}
       activating={activate.isPending}
       busy={project.verification?.busy === true}
+      fromDraft={fromDraft}
       message={message}
       onStart={onStart}
       onActivate={onActivate}
@@ -266,16 +276,13 @@ export function VerificationFields(model: VerificationFieldsModel) {
     )
   }
   const task = status.task && !status.task.archived ? status.task : null
+  const start = startAction(status, model.fromDraft)
   const working = task && (task.state === "running" || task.state === "creating")
 
   return (
     <div className="flex flex-col gap-3">
       <div>
-        <StateLine
-          dot={status.state === "none" ? "bg-border-strong" : "bg-state-done"}
-          text={verificationStateLine(status)}
-          after={status.activatedAt ? `activated ${fromNow(status.activatedAt, now)}` : null}
-        />
+        <StateLine dot={status.state === "none" ? "bg-border-strong" : "bg-state-done"} text={verificationStateLine(status)} after={null} />
         {status.areas.length > 0 && (
           <ul className="mt-1.5 flex flex-col gap-1 pl-[14px]">
             {status.areas.map((area) => (
@@ -310,26 +317,6 @@ export function VerificationFields(model: VerificationFieldsModel) {
           </div>
         )}
       </div>
-
-      {status.draft && (
-        <div className="flex flex-wrap items-center gap-2">
-          <StateLine
-            dot="bg-muted-foreground"
-            text={`Draft ready · ${status.draft.areas.length} ${status.draft.areas.length === 1 ? "area" : "areas"}`}
-            after={`saved ${fromNow(status.draft.savedAt, now)}`}
-          />
-          <span className="ml-auto flex items-center gap-1.5">
-            {onOpenTask && (
-              <Button type="button" size="lg" onClick={() => onOpenTask(status.draft!.taskId)}>
-                Open its task
-              </Button>
-            )}
-            <Button type="button" tone="outline" size="lg" disabled={model.activating} onClick={model.onActivate}>
-              {model.activating ? "Activating…" : "Activate draft"}
-            </Button>
-          </span>
-        </div>
-      )}
 
       {task && (
         <div className="flex items-center gap-2">
@@ -381,10 +368,75 @@ export function VerificationFields(model: VerificationFieldsModel) {
         )}
       />
 
+      {status.draft && (
+        <WaitingDraft
+          draft={status.draft}
+          now={now}
+          fromDraft={model.fromDraft}
+          // the recipe task row above already opens the same task
+          onOpenTask={task?.id === status.draft.taskId ? undefined : onOpenTask}
+        />
+      )}
+
       <div className="flex flex-wrap items-center gap-2">
-        {status.state === "none" ? startButton("setup", "Set up verification") : startButton("improve", "Improve")}
+        {startButton(start.mode, start.label)}
+        {status.draft ? (
+          <Button type="button" tone="outline" size="lg" disabled={model.activating} onClick={model.onActivate}>
+            {model.activating ? "Activating…" : "Activate draft"}
+          </Button>
+        ) : (
+          status.activatedAt && (
+            <span className="shrink-0 text-[11.5px] text-muted-foreground">Recipe updated {fromNow(status.activatedAt, now)}</span>
+          )
+        )}
         <ActionNote message={message} blocked={blocked} onOpenTask={onOpenTask} />
       </div>
+    </div>
+  )
+}
+
+/** The section's recipe task button: it names the draft only where the daemon starts a task from it. */
+function startAction(status: VerificationStatus, fromDraft: boolean): { mode: Mode; label: string } {
+  const onDraft = status.draft !== null && fromDraft
+  if (status.state === "none") return { mode: "setup", label: onDraft ? "Set up from the draft" : "Set up verification" }
+  return { mode: "improve", label: onDraft ? "Improve on the draft" : "Improve" }
+}
+
+/**
+ * A draft waiting for a person: whose it is and how old, and what a recipe
+ * task started now begins from. Its save replaces the draft either way.
+ */
+function WaitingDraft({ draft, now, fromDraft, onOpenTask }: {
+  draft: NonNullable<VerificationStatus["draft"]>
+  now: number
+  /** the daemon starts a recipe task from this draft; false on an older daemon, which starts from the active recipe */
+  fromDraft: boolean
+  onOpenTask?: (taskId: string) => void
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        {/* wraps rather than truncates: on a phone the task id is the part that must stay */}
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px]">
+          <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-muted-foreground" />
+          <span className="text-foreground">
+            Draft waiting from task <span className="font-mono">{draft.taskId}</span>
+          </span>
+          <span className="text-[11.5px] text-muted-foreground">
+            · {draft.areas.length} {draft.areas.length === 1 ? "area" : "areas"} · saved {fromNow(draft.savedAt, now)}
+          </span>
+        </div>
+        {onOpenTask && (
+          <Button type="button" size="lg" className="ml-auto" onClick={() => onOpenTask(draft.taskId)}>
+            Open its task
+          </Button>
+        )}
+      </div>
+      <p className="pl-[14px] text-[11px] leading-relaxed text-faint">
+        {fromDraft
+          ? "A recipe task started now begins from this draft, and its save replaces it. Activate first to keep this one apart."
+          : "A recipe task started now begins from the active recipe, not this draft, and its save replaces it. Activate this draft first to keep it."}
+      </p>
     </div>
   )
 }

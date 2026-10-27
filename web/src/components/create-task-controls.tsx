@@ -4,7 +4,7 @@ import { Effort, Enter, Local, Sparkle, Worktree } from "@/components/icons"
 import { Button } from "@/components/primitives"
 import { Menu, MenuAction, MenuNote, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
 import { ModelMenuFooter, ModelMenuGroups } from "@/components/model-menu"
-import { PreferButton } from "@/components/preferred-model-button"
+import { PreferButton, StarButton } from "@/components/preferred-model-button"
 import { ModelVisibilityDialog } from "@/components/model-visibility-dialog"
 import { useHiddenModels } from "@/hooks/useHiddenModels"
 import { hiddenTotal } from "@/lib/model-visibility"
@@ -32,6 +32,7 @@ export function TaskControls({
   choice,
   preferredChoice,
   effort,
+  preferredEffort,
   fast,
   suffixPromptId,
   ready,
@@ -42,6 +43,7 @@ export function TaskControls({
   onPreferredChange,
   onReprobe,
   onEffortChange,
+  onTogglePreferredEffort,
   onFastChange,
   onRestoreComposer,
   onSuffixPromptChange,
@@ -53,6 +55,8 @@ export function TaskControls({
   choice: ModelChoice | null
   preferredChoice: ModelChoice | null
   effort: string
+  /** The star of the current harness · model, if it has one. */
+  preferredEffort: string | null
   fast: boolean
   suffixPromptId: string | null
   ready: boolean
@@ -63,6 +67,7 @@ export function TaskControls({
   onPreferredChange: (next: ModelChoice | null) => void
   onReprobe: () => void
   onEffortChange: (value: string) => void
+  onTogglePreferredEffort: (level: string) => void
   onFastChange: (value: boolean) => void
   onRestoreComposer: () => void
   onSuffixPromptChange: (value: string | null) => void
@@ -88,9 +93,12 @@ export function TaskControls({
         {harness?.hasEffort && (
           <EffortPicker
             harness={harness}
+            model={choice?.model ?? null}
             effort={effort}
+            preferredEffort={preferredEffort}
             custom={customEffort}
             onEffortChange={onEffortChange}
+            onTogglePreferred={onTogglePreferredEffort}
             onCustomChange={setCustomEffort}
             onRestoreComposer={onRestoreComposer}
           />
@@ -210,16 +218,22 @@ function HarnessPicker({
 
 function EffortPicker({
   harness,
+  model,
   effort,
+  preferredEffort,
   custom,
   onEffortChange,
+  onTogglePreferred,
   onCustomChange,
   onRestoreComposer,
 }: {
   harness: HarnessInfo
+  model: string | null
   effort: string
+  preferredEffort: string | null
   custom: boolean
   onEffortChange: (value: string) => void
+  onTogglePreferred: (level: string) => void
   onCustomChange: (custom: boolean) => void
   onRestoreComposer: () => void
 }) {
@@ -257,13 +271,14 @@ function EffortPicker({
       >
         {options.length > 0 ? (
           options.map((level) => (
-            <MenuRadioItem
+            <EffortRow
               key={level}
-              value={level}
-              hint={level === harness.defaults.reasoningEffort ? "default" : undefined}
-            >
-              {level}
-            </MenuRadioItem>
+              harness={harness}
+              model={model}
+              level={level}
+              preferred={level === preferredEffort}
+              onTogglePreferred={onTogglePreferred}
+            />
           ))
         ) : (
           <MenuNote>
@@ -275,6 +290,45 @@ function EffortPicker({
         <MenuAction value={MENU_ACTION.custom}>Custom level…</MenuAction>
       </MenuRadioGroup>
     </Menu>
+  )
+}
+
+/** One level, with the star that seeds future dialogs on this harness · model. */
+function EffortRow({
+  harness,
+  model,
+  level,
+  preferred,
+  onTogglePreferred,
+}: {
+  harness: HarnessInfo
+  model: string | null
+  level: string
+  preferred: boolean
+  onTogglePreferred: (level: string) => void
+}) {
+  const item = (
+    <MenuRadioItem
+      value={level}
+      hint={level === harness.defaults.reasoningEffort ? "default" : undefined}
+      className={cn(model && "pr-8")}
+    >
+      {level}
+    </MenuRadioItem>
+  )
+  if (!model) return item
+  const pair = `${harness.name} · ${model}`
+  return (
+    <div className="relative">
+      {item}
+      <span className="absolute top-1/2 right-1 z-(--z-pane) flex -translate-y-1/2 items-center">
+        <StarButton
+          preferred={preferred}
+          label={preferred ? `Clear preferred effort ${level} for ${pair}` : `Prefer effort ${level} for ${pair}`}
+          onToggle={() => onTogglePreferred(level)}
+        />
+      </span>
+    </div>
   )
 }
 

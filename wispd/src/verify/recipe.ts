@@ -440,6 +440,11 @@ function savedAtOf(record: string): string {
   }
 }
 
+/** When one task's draft was saved: its record, else its directory's mtime, as latestDraft reads it. */
+export function draftSavedAt(repoPath: string, taskId: string): string {
+  return savedAtOf(join(draftsDir(repoPath), `${taskId}.json`)) || statSync(draftDir(repoPath, taskId)).mtime.toISOString()
+}
+
 /**
  * Throw away the activated draft and every draft saved before it. A draft
  * saved while the activation ran is newer, and stays to be activated next.

@@ -90,7 +90,7 @@ function mount(node: ReactNode, tasks: ApiTask[] = [TASK], tools?: Partial<ToolP
 }
 
 const card = (task: ApiTask, pullRequest?: PullRequestStatus, turns?: Turn[]) => (
-  <TaskSummaryGutter task={task} pullRequest={pullRequest} turns={turns} />
+  <TaskSummaryGutter task={task} pullRequest={pullRequest} turns={turns} shown />
 )
 const row = (name: RegExp) => screen.getByRole("button", { name })
 
@@ -294,9 +294,9 @@ describe("the fold point", () => {
     })
   })
 
-  function Pane() {
+  function Pane({ settling = null }: { settling?: number | null }) {
     const [pane, setPane] = useState<HTMLElement | null>(null)
-    return <main ref={setPane}>{usePaneFitsCard(pane) ? "card" : "chip"}</main>
+    return <main ref={setPane}>{usePaneFitsCard(pane, settling) ? "card" : "chip"}</main>
   }
 
   it("is the pane's own width: 999px folds, 1001px keeps the card", () => {
@@ -308,6 +308,108 @@ describe("the fold point", () => {
     act(() => observed.at(-1)!([{ contentRect: { width: 999 } }]))
     expect(screen.getByRole("main")).toHaveTextContent("chip")
   })
+
+  it("is the width a tool panel's glide lands at while it glides, whatever the pane passes on the way", () => {
+    const { rerender } = render(<Pane />)
+    act(() => observed.at(-1)!([{ contentRect: { width: 1172 } }]))
+    // opening a tool: the pane will land at 751px, so the card folds at the start
+    rerender(<Pane settling={751} />)
+    expect(screen.getByRole("main")).toHaveTextContent("chip")
+    act(() => observed.at(-1)!([{ contentRect: { width: 1050 } }]))
+    expect(screen.getByRole("main")).toHaveTextContent("chip")
+    // closing it again: the landing width keeps the card through the narrow frames
+    rerender(<Pane settling={1172} />)
+    act(() => observed.at(-1)!([{ contentRect: { width: 800 } }]))
+    expect(screen.getByRole("main")).toHaveTextContent("card")
+    // landed: the pane's own width again
+    act(() => observed.at(-1)!([{ contentRect: { width: 1172 } }]))
+    rerender(<Pane settling={null} />)
+    expect(screen.getByRole("main")).toHaveTextContent("card")
+  })
+})
+
+describe("the gutter", () => {
+  it("folds shut with the card still in it, then lets the card go", () => {
+    vi.useFakeTimers()
+    // a screen that allows motion
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }))
+    try {
+      daemon()
+      const { rerender, container } = mount(<TaskSummaryGutter task={TASK} turns={undefined} shown />)
+      const gutter = container.querySelector(".wisp-gutter")!
+      expect(gutter).not.toHaveAttribute("data-folded")
+      rerender(<TaskSummaryGutter task={TASK} turns={undefined} shown={false} />)
+      // narrowing and fading, the card still there to fade, and nothing in it reachable
+      expect(gutter).toHaveAttribute("data-folded")
+      expect(gutter).toHaveAttribute("inert")
+      expect(within(gutter as HTMLElement).getByTestId("task-summary")).toBeInTheDocument()
+      act(() => vi.advanceTimersByTime(400))
+      expect(within(gutter as HTMLElement).queryByTestId("task-summary")).toBeNull()
+    } finally {
+      vi.useRealTimers()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it("lets the card go at once under reduced motion", () => {
+    daemon()
+    const { rerender, container } = mount(<TaskSummaryGutter task={TASK} turns={undefined} shown />)
+    rerender(<TaskSummaryGutter task={TASK} turns={undefined} shown={false} />)
+    expect(container.querySelector('[data-testid="task-summary"]')).toBeNull()
+  })
+})
+
+describe("a wheel over the card", () => {
+  // the shell's centre pane: the conversation's scroller runs under the gutter
+  function pane() {
+    daemon()
+    mount(
+      <main>
+        <div data-testid="conversation-viewport" />
+        {card(TASK)}
+      </main>,
+    )
+    const conversation = screen.getByTestId("conversation-viewport")
+    conversation.scrollBy = vi.fn()
+    const scroller = screen.getByTestId("task-summary").parentElement!
+    return { conversation, scroller }
+  }
+
+  function overflowing(node: HTMLElement, scrollTop: number) {
+    node.style.overflowY = "auto"
+    Object.defineProperty(node, "clientHeight", { configurable: true, value: 300 })
+    Object.defineProperty(node, "scrollHeight", { configurable: true, value: 500 })
+    node.scrollTop = scrollTop
+  }
+
+  it("scrolls the conversation while the card has nothing to scroll", () => {
+    const { conversation } = pane()
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: 120 })
+    expect(conversation.scrollBy).toHaveBeenCalledWith({ top: 120 })
+    // Firefox's mouse wheel counts lines
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: -3, deltaMode: 1 })
+    expect(conversation.scrollBy).toHaveBeenLastCalledWith({ top: -48 })
+  })
+
+  it("leaves the wheel to the card while it can scroll that way, then hands it on at the end", () => {
+    const { conversation, scroller } = pane()
+    overflowing(scroller, 0)
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: 120 })
+    expect(conversation.scrollBy).not.toHaveBeenCalled()
+    // at the top, a wheel up belongs to the conversation
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: -120 })
+    expect(conversation.scrollBy).toHaveBeenCalledWith({ top: -120 })
+
+    overflowing(scroller, 200)
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: 120 })
+    expect(conversation.scrollBy).toHaveBeenLastCalledWith({ top: 120 })
+  })
+
+  it("never scrolls the conversation for a pinch", () => {
+    const { conversation } = pane()
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: 40, ctrlKey: true })
+    expect(conversation.scrollBy).not.toHaveBeenCalled()
+  })
 })
 
 describe("the chip", () => {
@@ -316,6 +418,8 @@ describe("the chip", () => {
     mount(<TaskSummaryChip task={{ ...TASK, state: "running", autopilot: WAITING }} pullRequest={FOUND} turns={undefined} roomy={false} />)
     const chip = screen.getByRole("button", { name: "Task summary: Running · PR #42" })
     expect(chip).toHaveTextContent("Running·#42")
+    // the state's dot stays with the title
+    expect(chip.querySelector("[data-state]")).toBeNull()
     fireEvent.click(chip)
     const popup = await screen.findByRole("dialog", { name: "Task summary" })
     expect(within(popup).getByRole("link", { name: /#42 · Open/ })).toHaveAttribute("href", PR_SPECIMEN.url)

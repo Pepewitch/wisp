@@ -453,6 +453,17 @@ describe("the reading column's axis", () => {
     )
     expect(column.querySelector("[data-turn='1']")).not.toBeNull()
   })
+
+  it("runs under the summary card's gutter and pads its content back by it", () => {
+    render(<Conversation task={task} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport()),
+    })
+
+    // the scrollbar keeps to the pane's edge, the column centres beside the card
+    const viewport = screen.getByTestId("conversation-viewport")
+    expect(viewport.className.split(/\s+/)).toContain("pr-(--summary-gutter)")
+    expect(viewport.parentElement!.className.split(/\s+/)).toContain("-mr-(--summary-gutter)")
+  })
 })
 
 describe("a steer that lands inside a running turn", () => {

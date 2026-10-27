@@ -323,7 +323,9 @@ address's last new wrong token. The web UI is served at `/`.
   (droid/codex; for claude send `/compact` as a dedicated recorded turn);
   `/send` returns 409 while either shape is still compacting
 - `GET /api/status` · `GET /api/repos` · `POST|DELETE /api/projects` ·
-  `POST /api/projects/copy-preview`
+  `POST /api/projects/copy-preview` ·
+  `PUT /api/repos/order` (`{paths}`: every configured project once, by
+  absolute path, in the new order; 409 when the list changed meanwhile)
 - `GET /api/projects/entries?project=<path>&dir=<relative>[&q=<text>]` — one
   folder of a registered project for the composer's `@` list: `{project, dir,
   entries: [{name, kind: "dir"|"file"}], truncated, incompleteAfter}`,

@@ -145,6 +145,7 @@ describe("every mutating route answers a malformed body with a named 4xx", () =>
     { name: "archive a task", path: `/api/tasks/${taskId}/archive`, method: "POST" },
     { name: "create a suffix prompt", path: "/api/suffix-prompts", method: "POST" },
     { name: "add a project", path: "/api/repos", method: "POST" },
+    { name: "reorder projects", path: "/api/repos/order", method: "PUT" },
     { name: "install an update", path: "/api/update", method: "POST" },
     // A route that EDITS rather than creates, so "no side effect" means more
     // than an unchanged row count (a review's note).

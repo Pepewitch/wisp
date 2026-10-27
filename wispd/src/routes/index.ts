@@ -21,7 +21,7 @@ import { getTask, listTasks } from "../store";
 import { harnessesRoute, outboxRoute } from "./harnesses";
 import { diagnosticsRoute } from "./diagnostics";
 import { err, json } from "./http";
-import { addProjectRoute, copyPreviewRoute, projectEntriesRoute, removeProjectRoute, reposRoute, statusRoute } from "./projects";
+import { addProjectRoute, copyPreviewRoute, projectEntriesRoute, removeProjectRoute, reorderReposRoute, reposRoute, statusRoute } from "./projects";
 import { eventStream, logStream } from "./stream";
 import {
   createSuffixPromptRoute,
@@ -102,6 +102,7 @@ function projectRoutes(
 ): Response | Promise<Response> | null {
   if (path === "/api/status" && method === "GET") return statusRoute(req);
   if (path === "/api/repos" && method === "GET") return reposRoute(cfg);
+  if (path === "/api/repos/order" && method === "PUT") return reorderReposRoute(req, cfg);
   if (path === "/api/projects" && method === "POST") return addProjectRoute(req, cfg, adapters);
   if (path === "/api/projects/copy-preview" && method === "POST") return copyPreviewRoute(req);
   if (path === "/api/projects/entries" && method === "GET") return projectEntriesRoute(new URL(req.url), cfg);

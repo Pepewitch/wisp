@@ -61,11 +61,15 @@ export function harnessesRoute(
       reviewPanel: true,
       // projects a fallback agent per reviewer, and reviews say when one stood in (verify/fallback.ts)
       reviewFallback: true,
+      // a recipe task starts from the newest waiting draft, and `wisp verify checkout` hands it that draft
+      recipeFromDraft: true,
       // POST /api/tasks/:id/capture, GET /api/tasks/:id/captures, and capture provenance on review evidence
       capture: true,
       // POST /api/tasks with parentTaskId, archive's `subtasks`, GET /api/tasks/:id/subtasks,
       // and reports to the parent; config.json's `subtasks: false` turns it off
       subtasks: subtasksEnabled(cfg),
+      // PUT /api/repos/order: the sidebar reorders the configured projects
+      projectOrder: true,
     },
     harnesses: Object.entries(adapters).map(([name, def]) => ({
       name,

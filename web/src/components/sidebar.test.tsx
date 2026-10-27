@@ -62,7 +62,7 @@ describe("the sidebar footer", () => {
 
 /** A project group with the shape `groupTasksByProject` produces. */
 function group(tasks: never[] = []) {
-  return { path: "/src/wisp", name: "wisp", exists: true, unlisted: false, tasks }
+  return { path: "/src/wisp", name: "wisp", exists: true, unlisted: false, configured: true, tasks }
 }
 
 function mountPane(props: Partial<Parameters<typeof Sidebar>[0]>) {

@@ -25,9 +25,9 @@ import { ProjectSettingsDialog, type ProjectSettingsTarget } from "@/components/
 import { SettingsDialog } from "@/components/settings-dialog"
 import { UsageLimitsControl } from "@/components/usage-limits-control"
 import { StartHere } from "@/components/start-here"
+import { TaskComposer } from "@/components/task-composer"
 import { Shell, ToolPanel } from "@/components/panes"
 import { Sidebar } from "@/components/sidebar"
-import { SteerBox } from "@/components/steer-box"
 import { TaskNotices } from "@/components/task-notices"
 import { TaskSummaryGutter } from "@/components/task-summary-card"
 import { TaskSummaryChip } from "@/components/task-summary-chip"
@@ -46,6 +46,7 @@ import {
 } from "@/hooks/queries"
 import { useFirstRunPanel } from "@/hooks/useFirstRunPanel"
 import { useProjectAddFlow } from "@/hooks/useProjectAddFlow"
+import { useProjectOrder } from "@/hooks/useProjectOrder"
 import { useHashRoute } from "@/hooks/useHashRoute"
 import { useProjectSearch } from "@/hooks/useProjectSearch"
 import { useSearchShortcuts } from "@/hooks/useSearchShortcuts"
@@ -76,12 +77,11 @@ import type {
   HarnessInfo,
   PullRequestStatus,
   RepoInfo,
-  StatusEntry,
-  TaskSkills,
   Turn,
 } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { useWispUpdateControl } from "@/lib/use-wisp-update-control"
+import { cn } from "@/lib/utils"
 
 const SHOW_ARCHIVED_KEY = "wisp_show_archived"
 const SHOW_ARCHIVED_SETTING = "show_archived"
@@ -242,6 +242,7 @@ function MainView({
   }, [selectedId])
 
   const searchFeature = useHarnessFeatures()
+  const projectOrder = useProjectOrder(searchFeature.data?.projectOrder === true)
   const [showArchived, setShowArchived] = useShowArchived(runtime.connectionId)
   // search can find an archived task whatever the switch says; the switch
   // decides whether the pane shows the row (and whether ↑/↓ can reach it)
@@ -314,6 +315,7 @@ function MainView({
     connectionId: runtime.connectionId,
     tasks,
     repos: reposQuery.data,
+    order: projectOrder?.pending,
     nest: searchFeature.data?.subtasks === true,
     selectedId,
   })
@@ -364,6 +366,7 @@ function MainView({
         opts?.afterSelect?.()
       }}
       verification={searchFeature.data?.autoReview === true}
+      projectOrder={projectOrder}
       onOpenSettings={() => {
         // dismiss and open in the same commit — the same pair a project's gear
         // already makes on touch, so the drawer is never left over the modal
@@ -512,7 +515,8 @@ function AppShell({
   // The summary card stands beside the reading column while the centre pane
   // has room for both, measured on the pane (a tool opening narrows it), and
   // folds into the top bar's chip otherwise, or when a person folded it (§5n).
-  const { setPane, roomy, placement } = useSummaryPlacement(task !== null && firstRun === null)
+  // …and while the tool panel glides, by the width the pane lands at: it folds once
+  const { setPane, roomy, placement, setSettling } = useSummaryPlacement(task !== null && firstRun === null)
   // Below `md`, the three-pane grid is replaced rather than squeezed, so no
   // resizable group applies phone dimensions to desktop geometry.
   if (mobile) {
@@ -559,8 +563,9 @@ function AppShell({
           // does not re-render the app on every frame
           onSidebarResize={(px) => barRef.current?.style.setProperty("--sidebar-width", `${px}px`)}
           centre={
-            // the card takes its own column, so it can never cover the reading column or the composer
-            <main ref={setPane} className="flex h-full min-w-0 bg-background">
+            // the card takes its own column, so it can never cover the reading column or the composer;
+            // the conversation's scroller alone runs under it, out to the pane's edge
+            <main ref={setPane} className={cn("wisp-centre flex h-full min-w-0 bg-background", placement === "card" && "[--summary-gutter:258px]")}>
               <div className="flex h-full min-w-0 flex-1 flex-col">
                 {firstRun ?? (
                   <>
@@ -570,7 +575,7 @@ function AppShell({
                   </>
                 )}
               </div>
-              {placement === "card" && task && <TaskSummaryGutter task={task} pullRequest={pullRequest} turns={turns} />}
+              {placement !== null && task && <TaskSummaryGutter task={task} pullRequest={pullRequest} turns={turns} shown={placement === "card"} />}
             </main>
           }
           panel={
@@ -580,9 +585,7 @@ function AppShell({
               terminalKey={task?.id ?? ""}
               toolOpen={tools.layout.tool !== null}
               terminalOpen={tools.layout.terminal}
-              onCloseTool={() => {
-                if (tools.layout.tool) tools.close(tools.layout.tool)
-              }}
+              onCloseTool={() => tools.layout.tool && tools.close(tools.layout.tool)}
               onCloseTerminal={() => tools.close("terminal")}
             />
           }
@@ -591,6 +594,7 @@ function AppShell({
           // being restored (no task selected means nothing open)
           panelOpen={tools.open}
           onPanelDraggedShut={tools.closePanel}
+          onCentreSettling={setSettling}
         />
         {dialogs}
       </div>
@@ -602,46 +606,6 @@ function queryError(tasksError: unknown, statusError: unknown): string | null {
   if (tasksError instanceof Error) return `tasks: ${tasksError.message}`
   if (statusError instanceof Error) return `status: ${statusError.message}`
   return null
-}
-
-function TaskComposer({
-  task,
-  harnesses,
-  skills,
-  status,
-  turns,
-  touch,
-}: {
-  task: ApiTask | null
-  harnesses: HarnessInfo[] | undefined
-  skills: TaskSkills | undefined
-  status: StatusEntry | undefined
-  turns: Turn[] | undefined
-  touch: boolean
-}) {
-  const features = useHarnessFeatures()
-  const harness = task
-    ? harnesses?.find((candidate) => candidate.name === task.harness)
-    : undefined
-  return (
-    <SteerBox
-      task={task}
-      harnesses={harnesses}
-      canSwitchAgent={features.data?.taskAgentSwitching === true}
-      canChooseDelivery={features.data?.steerDelivery === true}
-      hasImage={harness?.hasImage}
-      imageNote={harness?.imageNote}
-      probeCommands={harness?.probeCommands}
-      skills={skills}
-      compact={harness?.compact}
-      status={status}
-      turns={turns}
-      runningSince={
-        turns?.find((turn) => turn.status === "running")?.started_at ?? null
-      }
-      touch={touch}
-    />
-  )
 }
 
 function AppDialogs({

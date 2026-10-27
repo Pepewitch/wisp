@@ -85,7 +85,8 @@ The accent appears in exactly five places:
 2. the **one primary action** on a screen — `<Button tone="primary">`, and never
    two at once
 3. the **send** button in the steer box
-4. the **focus ring**
+4. the **focus ring**, and its kin while a project is dragged: the 2px drop
+   line that says where it will land (§5o)
 5. **inline code** in agent prose
 
 Selection and active tabs are a **background change** — `bg-accent`. They never
@@ -338,7 +339,9 @@ column is simply the pane, so nothing changes there.
 
 - **The scroller spans the pane; its CONTENT keeps to the measure.** A wheel
   over a margin still scrolls the transcript, the scrollbar stays at the
-  pane's edge, and rule 1's one scroller is untouched.
+  pane's edge, and rule 1's one scroller is untouched. That includes the
+  summary card's gutter (§5n): the scroller runs under it by
+  `--summary-gutter` and pads its content back by the same width.
 - **The composer keeps to the same measure,** and its `@container` sits inside
   it, so the control bar answers the column's width, not the pane's.
 - **What anchors to the conversation anchors to the column.** The jump-to-latest
@@ -545,7 +548,7 @@ control bar under it. Project, harness·model and effort are decisions you make
 rarely, so they are dropdowns in that bar — never a stack of labelled fields
 above the prompt, which buries the one thing you came to type.
 
-Five contract rules the modal must keep:
+Six contract rules the modal must keep:
 
 - **Never hardcode a model id or effort value *in the UI*.** Options come from
   `GET /api/harnesses`; the harness→model dropdown is ONE control, grouped by
@@ -578,6 +581,15 @@ Five contract rules the modal must keep:
   project's draft. A restored draft keeps its model until that project is
   successfully created. The preference is client-local and connection-scoped;
   a missing or retired model falls back normally for a new draft.
+- **Every effort row has the same star, for one harness · model.** Each pair
+  has at most one starred level (`wisp_connection:<id>:preferred_effort`).
+  A fresh dialog, or a switch to that model inside one, opens at the star
+  while the Effort menu still offers it, else at the configured default as
+  before. Starring never changes the level already in the open composer, and
+  a star the menu no longer offers is ignored, never sent. Only listed rows
+  carry a star, so a Custom level can be starred once it has run here. A
+  save re-reads the stored map and changes only its own pair, and an open
+  composer picks up another tab's stars from the `storage` event.
 
 An unfinished create composer stays in webview memory when the dialog closes:
 prompt, raw pending files and task choices restore for the same project on the
@@ -673,8 +685,7 @@ and the modal says so once at the top rather than four times.
 - **Verification** (`project-verification.tsx`, only with
   `features.autoReview`) is the project's verification recipe, which lives in
   the Wisp home and never in the repo: its state as a dot plus muted text, its
-  areas (proven or not, and what a reviewer reported), a waiting draft with
-  **Activate draft** (outline: the modal's one primary stays Save), the recipe
+  areas (proven or not, and what a reviewer reported), the recipe
   task at work with Open, the **Reviewer agent** (saved with Save as `verify`),
   the **Second reviewer** under it (only with `features.reviewPanel`: *Same
   agent as the reviewer* = null, *Off — one reviewer* = `"off"`, or a model
@@ -685,6 +696,16 @@ and the modal says so once at the top rather than four times.
   *None — the round needs you* = null, or a model from the same list; saved as
   `verifyFallback` and `verifySecondFallback`, each sent only once a person
   picked one), and a note with **Set up verification** / **Improve** and a per-area **Fix**.
+  A waiting draft sits beside that action with its task and age (and Open, unless
+  the recipe task row above already opens that task) next to **Activate draft**
+  (outline: the modal's one primary stays Save). With `features.recipeFromDraft`
+  a recipe task starts from the draft, so the button reads **Improve on the
+  draft** (**Set up from the draft** with no recipe yet) and the started message
+  names the draft; on an older daemon without it the button stays **Improve**
+  and the draft line says the task starts from the active recipe, so activate
+  the draft first to keep it. With no draft, the
+  button has the active recipe's age beside it ("Recipe updated 3d ago", from
+  `activatedAt`); nothing nags or schedules an improve.
   A named reviewer on an effort-capable harness has an effort menu beside its
   model: *Harness default*, which saves no `effort`, and the harness's levels
   (`effortOptions`, as the composer offers them); the current effort stays
@@ -1173,8 +1194,8 @@ and Copy branch name. The autopilot switches are the summary card's (§5n). The 
 with `Parent ›`: the parent opens the parent, is capped at 14rem and shrinks
 three times as fast as the title, so the task you are in stays readable.
 `Local` and `Archived` follow as quiet words, only when true. Where the centre
-is too narrow for the summary card, its chip sits right after the title and
-takes the title's dot with it (§5n).
+is too narrow for the summary card, its chip sits right after the title; the
+dot stays before the title in every state, so the fold never moves it (§5n).
 The dot's hover names background work, as everywhere (`StateDot`).
 
 Then **what you can open** for that task (`top-bar-tools.tsx`): the tool
@@ -1637,7 +1658,13 @@ at touch size, is the top of the task sheet (§6b).
 a hairline, no shadow: it sits beside the reading column, not over it. It is
 its own column of the pane's flex row (258px with its margin), so it can
 never cover the transcript or the composer, and the reading column centres
-in what is left. Box one is where the task stands, box two is the session:
+in what is left. The pane sets `--summary-gutter` (258px, 0 while folded);
+only the conversation's scroller runs under the gutter, so its scrollbar sits
+at the pane's edge as it does with the card folded. The gutter lets the
+pointer through everywhere but the card, and a wheel the card cannot take
+(nothing to scroll, or at its end) scrolls the conversation. The find bar and
+the jump-to-latest float keep clear of it. Box one is where the task stands,
+box two is the session:
 
 | Row | Says | Opens to |
 |---|---|---|
@@ -1671,10 +1698,14 @@ centre pane (`usePaneFitsCard`) keeps the card from 1000px
 (`SUMMARY_CARD_MIN_PANE`: the 680px measure plus the gutter, and room to
 breathe) and folds it below: 999px is the chip, 1001px the card. Opening a
 tool is the common way across the line, and it never changes the window. The
-first read happens before paint, so a wide pane never flashes the chip.
+first read happens before paint, so a wide pane never flashes the chip. While
+the tool panel glides, the pane's width at the glide's END decides
+(`Shell`'s `onCentreSettling`), so the card folds once, as the glide starts,
+and never flickers while the moving edge crosses the line.
 
-**The chip** is `● Running · ⎇ #318 ⌄` right after the title, and the
-title's own dot moves into it: each fact has one quick look on screen, card
+**The chip** is `Running · ⎇ #318 ⌄` right after the title. It carries the
+state's word and the PR; the state's dot stays with the title, so folding the
+card moves nothing in the bar. Each fact has one quick look on screen, card
 or chip, never both. It is a base-ui Popover (`POPOVER_SURFACE`,
 `--z-menu`) holding the same card, grown from the chip by the shared rule.
 It hangs from the top bar, so it never flips above it: it keeps its side
@@ -1690,8 +1721,17 @@ the chip's popover offers *Show beside the conversation* where it would fit.
 Nothing opens by itself: a task that needs you changes its dot, the lead row
 and the notification, never the layout.
 
-**Motion.** The card eases up from 97% as it comes back (`--dur-in`,
-`--ease-out`, no spring: a surface); a row's panel grows to base-ui's
+**Motion.** The card's gutter folds in width rather than vanishing: it
+narrows to nothing and fades with the card still in it (`.wisp-gutter`), and
+opens the same way, so the reading column re-centres instead of jumping
+129px. The width is `--summary-gutter` itself, registered as a length
+(`@property`) and transitioned on the pane (`.wisp-centre`), so the gutter
+and the conversation's matching padding move as one. It glides only beside
+a tool panel glide (`data-glide`); a divider moved by hand (pointer or key, a
+drag that shuts the panel included) or a window resize moves it at once: a
+drag adds no easing. Beside a tool panel glide it keeps the panel's timing, so the column's
+room changes on one curve. The chip fades in as the card goes. The card eases
+up from 97% as it comes back (`--dur-in`, `--ease-out`, no spring: a surface); a row's panel grows to base-ui's
 `--collapsible-panel-height` on `--dur-size` / `--ease-glide` and closes on
 `--dur-out`; the chevron turns. All of it is in index.css's Motion block
 and instant under `prefers-reduced-motion`.
@@ -1699,6 +1739,41 @@ and instant under `prefers-reduced-motion`.
 The gallery's *Summary card* section draws five states, open rows, the chip's
 popover and the 999px / 1001px panes from the real components, one
 `data-frame` each.
+
+## 5o. Project order — the daemon's, moved by hand
+
+The sidebar lists the configured projects in `config.json`'s `repos` order,
+then the repos Wisp knows only from tasks. Reordering writes that order
+(`PUT /api/repos/order`), so the browser, Desktop and the phone all show one
+order; nothing about it lives in `localStorage`. Gated on
+`features.projectOrder`: without it nothing drags and no row has a menu.
+
+- **Drag the header row**, the whole row, once the press has moved 4px; under
+  that it is still a click, so the chevron, gear and `+` keep working. The row
+  lifts (`wisp-lift`: the float shadow and a hair of scale on `--dur-in`, none
+  under reduced motion), its tasks fold away, and a 2px violet line sits in
+  the gap where it will land. Escape cancels; the release never folds the
+  project it lands on. Pointer events only, no library (`useProjectDrag`).
+- **The row's `⋯` menu** holds Move up and Move down, disabled at the ends,
+  with their keys: **Alt+↑ / Alt+↓** (⌥ on Apple) on a focused header. Touch
+  has no drag; the phone uses the menu.
+- **Optimistic, one save at a time** (`ProjectOrderQueue`, one per
+  connection, owned by the QueryClient so a connection switch and back finds
+  the same one). The repos cache is never written: it holds what the daemon
+  last said. The order being saved is the queue's `pending`, a small external
+  store, and `useSidebarTree` lays it over the cache (`shownRepos`): a
+  project added meanwhile goes after the ordered ones, one removed is gone.
+  Each move works from what is shown, not the last render. A move made while
+  a save is out waits as the queued order, and a later one replaces it, so
+  only the latest is sent, with any added or removed project folded in. When
+  the queue drains the list is read once and `pending` clears. A refusal
+  clears `pending`, drops the queued order, reads the list again and says why
+  on the pane's inline error line, with Dismiss (a 409 says the project list
+  changed meanwhile).
+- A keyboard move closes the header's path tooltip, which would otherwise
+  stay where the row was.
+- A repo known only from its tasks never moves and has no menu: it has no
+  config entry to put anywhere.
 
 ## 6. Panes and dividers
 
@@ -1780,10 +1855,15 @@ xterm keeps Ctrl+Tab for the shell and task switching would stop there
 (`claimTerminalFocus`). Closing a region that holds the focus hands it to the
 composer, since focus in a `hidden` box is focus nowhere.
 
-**Motion.** The panel's width glides open on `--dur-size` / `--ease-glide` and
-shut on `--dur-out` / `--ease-out`, and only while it opens or closes
-(`data-glide` on the group): a divider drag follows the pointer. Instant under
-`prefers-reduced-motion`. A reload restores the layout without performing it.
+**Motion.** The panel's width glides open on `--dur-size` and shut on the
+quicker `--dur-in`, both on `--ease-glide`, and only while it opens or closes
+(`data-glide` on the group): a divider drag follows the pointer. (`--dur-out`
+is a popup's, too short to see a pane-wide edge travel.) While it glides the
+content keeps its resting width (`--tool-pin`), so it slides with the divider
+instead of rewrapping every frame and a Terminal refits once, when the size
+settles. A drag that shut the panel leaves nothing to glide. Instant
+under `prefers-reduced-motion`, where nothing waits on a glide. A reload
+restores the layout without performing it.
 
 **Saved layouts.** The always-open column saved `wisp-ui-main` (with a `right`
 panel) and `wisp-ui-right` (Changes over Terminal). They moved once to

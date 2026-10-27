@@ -53,7 +53,7 @@ The UI reads or mutates these route families:
 - tasks and actions: `/api/tasks`, `/api/tasks/:id`, task action subroutes,
   `/api/status`, `/api/pull-requests`, and `/api/outbox` (the undelivered
   webhook queue);
-- daemon-owned configuration: `/api/repos`, `/api/projects`,
+- daemon-owned configuration: `/api/repos`, `/api/repos/order`, `/api/projects`,
   `/api/projects/copy-preview`, `/api/harnesses`, and `/api/suffix-prompts`;
 - project folders for the composer's `@` list:
   `/api/projects/entries?project=…&dir=…&q=…`, whose query a proxy forwards

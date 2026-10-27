@@ -42,8 +42,8 @@ const WISP = task("taaaaa", "Vacuum the SSE bridge", "/repos/wisp")
 const OTHER = task("tbbbbb", "Port the projects API", "/repos/other")
 
 const GROUPS = [
-  { path: "/repos/wisp", name: "wisp", exists: true, unlisted: false, tasks: [WISP] },
-  { path: "/repos/other", name: "other", exists: true, unlisted: false, tasks: [OTHER] },
+  { path: "/repos/wisp", name: "wisp", exists: true, unlisted: false, configured: true, tasks: [WISP] },
+  { path: "/repos/other", name: "other", exists: true, unlisted: false, configured: true, tasks: [OTHER] },
 ]
 
 function hitFor(task: ApiTask, over: Partial<SearchTaskHit> = {}): SearchTaskHit {

@@ -94,7 +94,7 @@ function SubtaskForm({ parent, harnesses, harnessesError, onClose }: {
   const scope = subtaskDraftScope(parent.id)
   const [preferredChoice, setPreferredChoice] = useState<ModelChoice | null>(() => loadPreferredModel(connectionId))
   const composer = useCreateTaskComposer(connectionId, scope, harnesses, preferredChoice)
-  const { prompt, setPrompt, choice, setChoice, effort, setEffort, fast, setFast, base, setBase, autopilot, suffixPromptId, setSuffixPromptId, harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForHarness } = composer
+  const { prompt, setPrompt, choice, setChoice, effort, setEffort, fast, setFast, base, setBase, autopilot, suffixPromptId, setSuffixPromptId, harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForChoice, preferredEffort, togglePreferredEffort } = composer
   const [kind, setKind] = useState<SubtaskKind>("explore")
   const [report, setReport] = useState(true)
   const [suffixModalOpen, setSuffixModalOpen] = useState(false)
@@ -219,6 +219,7 @@ function SubtaskForm({ parent, harnesses, harnessesError, onClose }: {
         choice={choice}
         preferredChoice={preferredChoice}
         effort={effort}
+        preferredEffort={preferredEffort}
         fast={fast}
         suffixPromptId={suffixPromptId}
         ready={ready}
@@ -227,7 +228,7 @@ function SubtaskForm({ parent, harnesses, harnessesError, onClose }: {
         onPickChoice={(value) => {
           const next = decode(value)
           setChoice(next)
-          reseedForHarness(next.harness)
+          reseedForChoice(next)
         }}
         onTogglePreferredChoice={(next) => {
           const preferred = sameChoice(preferredChoice, next) ? null : next
@@ -237,6 +238,7 @@ function SubtaskForm({ parent, harnesses, harnessesError, onClose }: {
         onPreferredChange={setPreferredChoice}
         onReprobe={() => reprobe.mutate()}
         onEffortChange={setEffort}
+        onTogglePreferredEffort={togglePreferredEffort}
         onFastChange={setFast}
         onRestoreComposer={restoreComposer}
         onSuffixPromptChange={setSuffixPromptId}
