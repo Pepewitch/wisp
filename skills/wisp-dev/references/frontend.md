@@ -684,10 +684,14 @@ and the modal says so once at the top rather than four times.
   *None — the round needs you* = null, or a model from the same list; saved as
   `verifyFallback` and `verifySecondFallback`, each sent only once a person
   picked one), and a note with **Set up verification** / **Improve** and a per-area **Fix**.
-  A waiting draft sits beside that action, its task and age with Open, and turns
-  the button into **Improve on the draft** (**Set up from the draft** with no
-  recipe yet) next to **Activate draft** (outline: the modal's one primary stays
-  Save), because a recipe task then starts from the draft. With no draft, the
+  A waiting draft sits beside that action with its task and age (and Open, unless
+  the recipe task row above already opens that task) next to **Activate draft**
+  (outline: the modal's one primary stays Save). With `features.recipeFromDraft`
+  a recipe task starts from the draft, so the button reads **Improve on the
+  draft** (**Set up from the draft** with no recipe yet) and the started message
+  names the draft; on an older daemon without it the button stays **Improve**
+  and the draft line says the task starts from the active recipe, so activate
+  the draft first to keep it. With no draft, the
   button has the active recipe's age beside it ("Recipe updated 3d ago", from
   `activatedAt`); nothing nags or schedules an improve.
   A named reviewer on an effort-capable harness has an effort menu beside its

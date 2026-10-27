@@ -460,6 +460,12 @@ export interface HarnessesResponse {
      */
     reviewFallback?: boolean;
     /**
+     * A recipe task (setup, improve, fix) starts from the newest waiting draft,
+     * not the active recipe, and its 201 names that draft. Absent: an older
+     * daemon starts from the active recipe even while a draft waits.
+     */
+    recipeFromDraft?: boolean;
+    /**
      * `wisp capture`: Wisp screenshots a page itself and records where it was
      * served from. Reviews carry each image's provenance and A's waivers, and
      * a round names the areas that need a capture. Absent: no evidence strip.

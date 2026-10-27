@@ -36,9 +36,13 @@ const since = (iso: string): string => {
 }
 
 /** What a new recipe task builds on when a draft waits: said, so it never competes with that draft unseen. */
-function draftNote(draft: VerificationDraftRef): string {
-  return `this task starts from the waiting draft from task ${draft.taskId} (saved ${since(draft.savedAt)}), not the active recipe, and its save replaces that draft. To keep that draft apart, activate it first: ${COMMAND} verify activate`
+function draftNote(draft: VerificationDraftRef, project: string | null): string {
+  const activate = `${COMMAND} verify activate${project ? ` ${shellWord(project)}` : ""}`
+  return `this task starts from the waiting draft from task ${draft.taskId} (saved ${since(draft.savedAt)}), not the active recipe, and its save replaces that draft. To keep that draft apart, activate it first: ${activate}`
 }
+
+/** A path as one shell word, quoted only when it needs it. */
+const shellWord = (text: string): string => /^[\w@%+=:,./-]+$/.test(text) ? text : `'${text.replace(/'/g, "'\\''")}'`
 
 function usage(): never {
   printError(VERIFY_USAGE)
@@ -130,7 +134,8 @@ async function checkout(dir: string | undefined, flags: Flags): Promise<void> {
   if (named && flags.active) { printError("--draft and --active name different recipes: pick one"); process.exit(2) }
   const project = projectOf(flags)
   const { files, draft } = await api(`/api/projects/verification/checkout?${query(project, { draft: named, active: flags.active ? "1" : undefined })}`) as VerificationCheckout
-  if (files.length === 0) { print(named ? `No draft from task ${named}.` : "This project has no verification recipe yet: start one from scratch in that directory."); return }
+  if (files.length === 0 && named) { printError(`No draft from task ${named}.`); process.exit(1) }
+  if (files.length === 0) { print("This project has no verification recipe yet: start one from scratch in that directory."); return }
   for (const file of files) {
     // the daemon validated these paths; a checkout still never writes outside its directory
     const target = resolve(root, file.path)
@@ -191,7 +196,9 @@ export async function verifyCommand(positional: string[], flags: Flags): Promise
     for (const key of ["area", "note", "harness", "model", "effort"] as const) if (typeof flags[key] === "string") body[key] = flags[key] as string
     const created = await api("/api/projects/verification/tasks", "POST", body) as VerificationTaskCreated
     print(`created ${created.task.id} — ${controlFree(created.task.title)}`)
-    if (created.draft) print(`note: ${draftNote(created.draft)}`)
+    // name the project in the hint when the person named one: from elsewhere, a bare activate would miss it
+    const named = typeof flags.project === "string" || argument ? project : null
+    if (created.draft) print(`note: ${draftNote(created.draft, named)}`)
     return
   }
   if (verb === "fallback") return setFallback(argument, extra, flags)

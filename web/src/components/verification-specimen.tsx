@@ -77,7 +77,7 @@ function Specimen({ status, initial, initialSecond, initialFallbacks, busy = fal
   const model: VerificationFieldsModel = {
     status, now: NOW, readError: null, harnesses: HARNESSES, hidden: {}, agent, onAgentChange: setAgent,
     recipeAgent, onRecipeAgentChange: setRecipeAgent, note, onNoteChange: setNote,
-    starting: null, activating: false, busy, message, onStart: () => {}, onActivate: () => {}, onOpenTask: () => {},
+    starting: null, activating: false, busy, fromDraft: true, message, onStart: () => {}, onActivate: () => {}, onOpenTask: () => {},
     ...(initialSecond !== undefined ? { second, onSecondChange: setSecond } : {}),
     ...(initialFallbacks !== undefined
       ? { fallbacks, onFallbackChange: (role: "primary" | "second", agent: ProjectVerifyAgent | null) => setFallbacks((prev) => ({ ...prev, [role]: agent })) }

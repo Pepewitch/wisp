@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { VerificationCheckout, VerificationStatus } from "../../shared/api/auto-review";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
@@ -10,7 +10,8 @@ import { addProjectRoute } from "../src/routes/projects";
 import type { ModelProbeCache } from "../src/model-probes";
 import type { NewTaskInput } from "../src/domain/task-create";
 import { createTask, freeSlot, getTask, newTaskId, transition } from "../src/store";
-import { activateDraft, activeRecipe, saveDraft } from "../src/verify/recipe";
+import { activateDraft, activeRecipe, projectDir, saveDraft } from "../src/verify/recipe";
+import { harnessesRoute } from "../src/routes/harnesses";
 import { startRecipeTask } from "../src/verify/reviewer";
 import { recordVerifyTask } from "../src/verify/status";
 import { created, forgetTasks } from "./autopilot-harness";
@@ -151,6 +152,20 @@ describe("a waiting draft", () => {
     expect(fromActive.draft).toBeNull();
     expect(fromActive.files.find((file) => file.path === "RECIPE.md")?.content).toBe("# Fixture");
     expect((await call(loadConfig(), "GET", "/api/projects/verification/checkout", undefined, `?path=${encodeURIComponent(repo)}&active=1&draft=${drafted}`)).status).toBe(400);
+  });
+
+  test("the daemon says its recipe tasks start from a waiting draft", async () => {
+    const models = { refresh: async () => {}, refreshIfStale: async () => {}, snapshot: () => ({}) } as unknown as ModelProbeCache;
+    const body = await harnessesRoute(new URL("http://wisp.test/api/harnesses"), loadConfig(), {}, models).json() as { features: Record<string, boolean> };
+    expect(body.features.recipeFromDraft).toBe(true);
+  });
+
+  test("a named draft's checkout dates it by its directory when its record is unreadable", async () => {
+    const { repo, drafted } = await project();
+    writeFileSync(join(projectDir(repo), "drafts", `${drafted}.json`), "{");
+    const named = await checkout(repo, `&draft=${drafted}`);
+    expect(named.draft?.taskId).toBe(drafted);
+    expect(Number.isNaN(Date.parse(named.draft!.savedAt))).toBe(false);
   });
 
   test("with no draft waiting, a recipe task starts from the active recipe", async () => {
