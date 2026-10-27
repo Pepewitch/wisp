@@ -56,7 +56,7 @@ The UI reads or mutates these route families:
 - daemon-owned configuration: `/api/repos`, `/api/projects`,
   `/api/projects/copy-preview`, `/api/harnesses`, and `/api/suffix-prompts`;
 - project folders for the composer's `@` list:
-  `/api/projects/entries?project=…&dir=…`, whose query a proxy forwards
+  `/api/projects/entries?project=…&dir=…&q=…`, whose query a proxy forwards
   verbatim like search's; an older daemon answers 404, which the list shows as
   a folder it could not list;
 - cross-task text search: `/api/search?q=…`, whose query string a proxy must

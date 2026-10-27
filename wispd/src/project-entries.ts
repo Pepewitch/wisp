@@ -12,9 +12,12 @@ import { READ_TIMEOUT_MS, runBounded } from "./subprocess";
  * symlink inside the listing that leads out of the root is left out the same
  * way, so the list never offers a path the next request would refuse.
  *
- * `.git` is never listed, nor is anything git ignores: one `git check-ignore
- * --stdin` call per listing answers for every candidate at once, and tracked
- * files stay listed even when a pattern matches them (git's own rule).
+ * `.git` is never listed or listable, by name or by a link's real path, nor
+ * is anything git ignores: one `git check-ignore --stdin` call per listing
+ * answers for every candidate at once, and tracked files stay listed even
+ * when a pattern matches them (git's own rule). A folder git ignores can
+ * still be named outright (`dir=node_modules/react`); it is only never
+ * offered.
  */
 
 /** The most rows one listing serves; the composer shows a handful of them. */
@@ -38,8 +41,12 @@ function inside(root: string, path: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
 }
 
-/** Lists `dir` under `root`, which the caller has already matched to a registered project. */
-export async function listProjectEntries(root: string, dir: string): Promise<ProjectEntriesResponse | EntriesRefusal> {
+/** Lists `dir` under `root`, which the caller has already matched to a registered project; `filter` keeps names containing it. */
+export async function listProjectEntries(
+  root: string,
+  dir: string,
+  filter = "",
+): Promise<ProjectEntriesResponse | EntriesRefusal> {
   const segments = projectDirSegments(dir);
   if (!Array.isArray(segments)) return segments;
   const rel = segments.join("/");
@@ -57,13 +64,14 @@ export async function listProjectEntries(root: string, dir: string): Promise<Pro
     return { status: 404, error: `no such folder: ${rel}` };
   }
   if (!inside(realRoot, realDir)) return { status: 403, error: "dir resolves outside the project" };
+  // a link to .git passes the containment check above: refuse it by where it lands
+  if (inside(join(realRoot, ".git"), realDir)) return { status: 403, error: "dir resolves into .git" };
 
-  const scanned = await scanDirectory(realRoot, realDir);
-  // git is asked about the folder's real path: through a link it refuses the batch
-  const gitRel = relative(realRoot, realDir).split(sep).join("/");
-  const ignored = await ignoredPaths(realRoot, scanned.entries.map((entry) => entryPath(gitRel, entry)));
+  const scanned = await scanDirectory(realRoot, realDir, filter.toLowerCase());
+  const asked = scanned.entries.flatMap((entry) => (entry.gitPath === null ? [] : [entry.gitPath]));
+  const ignored = await ignoredPaths(realRoot, asked);
   const kept = scanned.entries
-    .filter((entry) => !ignored.has(entryPath(gitRel, entry)))
+    .filter((entry) => entry.gitPath === null || !ignored.has(entry.gitPath))
     .map(({ name, kind }): ProjectEntry => ({ name, kind }))
     .sort(compareEntries);
   return {
@@ -74,18 +82,20 @@ export async function listProjectEntries(root: string, dir: string): Promise<Pro
   };
 }
 
-/** A scanned row; `link` because git sees a symlink as a file whatever it leads to. */
-type ScannedEntry = ProjectEntry & { link: boolean };
-
 /**
- * What git is asked about: root-relative, with the trailing `/` that lets
- * `dir/` patterns match a real folder. Never on a link: git answers a path
- * through a symlink with a fatal "beyond a symbolic link", which would fail
- * the whole batch.
+ * A scanned row, and what git is asked about it: the REAL path, root-relative,
+ * with the trailing `/` that lets `dir/` patterns match a folder. A link is
+ * asked about where it leads (so a link to `node_modules` is ignored like
+ * `node_modules`), because git answers a path through a symlink with a fatal
+ * "beyond a symbolic link" that would fail the whole batch. `null`: a link to
+ * the root itself, which nothing ignores.
  */
-function entryPath(rel: string, entry: ScannedEntry): string {
-  const path = rel === "" ? entry.name : `${rel}/${entry.name}`;
-  return entry.kind === "dir" && !entry.link ? `${path}/` : path;
+type ScannedEntry = ProjectEntry & { gitPath: string | null };
+
+function gitPathFor(realRoot: string, realPath: string, kind: ProjectEntry["kind"]): string | null {
+  const path = relative(realRoot, realPath).split(sep).join("/");
+  if (path === "") return null;
+  return kind === "dir" ? `${path}/` : path;
 }
 
 function compareEntries(a: ProjectEntry, b: ProjectEntry): number {
@@ -94,20 +104,29 @@ function compareEntries(a: ProjectEntry, b: ProjectEntry): number {
   return folded !== 0 ? folded : a.name.localeCompare(b.name);
 }
 
-async function scanDirectory(realRoot: string, realDir: string): Promise<{ entries: ScannedEntry[]; truncated: boolean }> {
+/** Every entry read counts toward SCAN_CAP, kept or not: the cap bounds the work, not the answer. */
+async function scanDirectory(
+  realRoot: string,
+  realDir: string,
+  filter: string,
+): Promise<{ entries: ScannedEntry[]; truncated: boolean }> {
   const entries: ScannedEntry[] = [];
+  let examined = 0;
   let truncated = false;
   const handle = await opendir(realDir);
   try {
     for await (const dirent of handle) {
-      if (entries.length >= SCAN_CAP) {
+      if (examined >= SCAN_CAP) {
         truncated = true;
         break;
       }
-      if (dirent.name === ".git") continue;
-      let kind: ProjectEntry["kind"] | null = dirent.isDirectory() ? "dir" : dirent.isFile() ? "file" : null;
-      if (dirent.isSymbolicLink()) kind = await linkKind(realRoot, join(realDir, dirent.name));
-      if (kind) entries.push({ name: dirent.name, kind, link: dirent.isSymbolicLink() });
+      examined += 1;
+      if (dirent.name === ".git" || !dirent.name.toLowerCase().includes(filter)) continue;
+      const path = join(realDir, dirent.name);
+      const entry = dirent.isSymbolicLink()
+        ? await linkEntry(realRoot, path, dirent.name)
+        : direntEntry(realRoot, path, dirent.name, dirent.isDirectory() ? "dir" : dirent.isFile() ? "file" : null);
+      if (entry) entries.push(entry);
     }
   } finally {
     // `for await` closes the handle when it runs to the end; a break does not
@@ -116,13 +135,17 @@ async function scanDirectory(realRoot: string, realDir: string): Promise<{ entri
   return { entries, truncated };
 }
 
-/** A symlink is listed as what it leads to, and only when that stays inside the project. */
-async function linkKind(realRoot: string, path: string): Promise<ProjectEntry["kind"] | null> {
+function direntEntry(realRoot: string, path: string, name: string, kind: ProjectEntry["kind"] | null): ScannedEntry | null {
+  return kind ? { name, kind, gitPath: gitPathFor(realRoot, path, kind) } : null;
+}
+
+/** A symlink is listed as what it leads to, and only when that stays inside the project and out of .git. */
+async function linkEntry(realRoot: string, path: string, name: string): Promise<ScannedEntry | null> {
   try {
     const target = await realpath(path);
-    if (!inside(realRoot, target)) return null;
+    if (!inside(realRoot, target) || inside(join(realRoot, ".git"), target)) return null;
     const info = await stat(target);
-    return info.isDirectory() ? "dir" : info.isFile() ? "file" : null;
+    return direntEntry(realRoot, target, name, info.isDirectory() ? "dir" : info.isFile() ? "file" : null);
   } catch {
     return null;
   }

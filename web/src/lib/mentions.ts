@@ -12,22 +12,39 @@ import type { RepoInfo } from "@/lib/types"
  *   `@superapp/`        the project's root folder
  *   `@superapp/src/co`  the entries of `src/` matching `co`
  *
- * Only an `@` that starts a word opens it, so an email address never does. A
- * list with nothing to offer is no list at all: `npm i @types/node` (no
+ * Picking a project or a folder OPENS it; the first row of every folder
+ * inserts that folder, and a file inserts itself. Once something is opened,
+ * the picker remembers which project and folder it is (`MentionNav`), so a
+ * folder called `My Docs` or two projects both called `app` never depend on
+ * re-reading the draft: the draft only shows where you are.
+ *
+ * Only an `@` that starts a word opens it, so an email address never does. An
+ * `@word` no project answers is no list at all: `npm i @types/node` (no
  * project called `types`) leaves the composer alone and Enter still sends.
  */
+
+/** What the list needs to know about a project, a subset of /api/repos' row. */
+export interface MentionProject {
+  name: string
+  path: string
+}
+
+/** A project or folder the picker opened: the draft shows `prefix` at `start`, identity lives here. */
+export interface MentionNav {
+  start: number
+  prefix: string
+  project: MentionProject
+  dir: string
+}
 
 /** The `@…` word under the caret: `start` is the `@`, `query` what follows it. */
 export interface MentionToken {
   start: number
   end: number
   query: string
-}
-
-/** What the list needs to know about a project, a subset of /api/repos' row. */
-export interface MentionProject {
-  name: string
-  path: string
+  /** set while the caret is inside what the picker opened; `rest` is typed after its prefix */
+  nav?: MentionNav
+  rest?: string
 }
 
 /** The projects the list offers: those still on disk, named as the sidebar names them. */
@@ -45,20 +62,40 @@ export interface MentionRow {
   label: string
   /** the muted second part: a project's path, or what picking "here" inserts */
   detail?: string
-  /** the text that replaces the token */
-  insert: string
-  /** a folder keeps the list open for its children; everything else closes it */
-  keepOpen: boolean
+  /** a project or folder: picking it opens it, and the list stays */
+  open?: { project: MentionProject; dir: string }
+  /** a file or "this folder": the text that replaces the token, and the list closes */
+  insert?: string
 }
 
-export function mentionTokenAt(value: string, caret: number): MentionToken | null {
-  if (caret < 0 || caret > value.length) return null
+function wordStart(value: string, caret: number): number {
   let start = caret
   while (start > 0 && !/\s/.test(value[start - 1]!)) start -= 1
+  return start
+}
+
+function wordEnd(value: string, from: number): number {
+  let end = from
+  while (end < value.length && !/\s/.test(value[end]!)) end += 1
+  return end
+}
+
+/**
+ * The word under the caret. Inside what the picker opened, that is the
+ * opened prefix plus what was typed after it, whatever the prefix contains;
+ * anywhere else, a word that starts with `@`.
+ */
+export function mentionTokenAt(value: string, caret: number, nav: MentionNav | null = null): MentionToken | null {
+  if (caret < 0 || caret > value.length) return null
+  const opened = nav ? nav.start + nav.prefix.length : -1
+  if (nav && value.startsWith(nav.prefix, nav.start) && caret >= opened) {
+    const end = wordEnd(value, opened)
+    if (caret <= end) return { start: nav.start, end, query: value.slice(nav.start + 1, end), nav, rest: value.slice(opened, end) }
+  }
+  const start = wordStart(value, caret)
   // the word must START with the `@`: `me@host` is an address, not a mention
   if (start === caret || value[start] !== "@") return null
-  let end = caret
-  while (end < value.length && !/\s/.test(value[end]!)) end += 1
+  const end = wordEnd(value, caret)
   return { start, end, query: value.slice(start + 1, end) }
 }
 
@@ -68,28 +105,41 @@ export function mentionHandle(name: string): string {
 }
 
 export type MentionQuery =
-  | { kind: "projects"; filter: string }
+  | { kind: "projects"; filter: string; projects: MentionProject[] }
   | { kind: "entries"; project: MentionProject; dir: string; filter: string }
 
+/** `a/b` + `c/d/` → `a/b/c/d`: relative folder segments, never a leading or doubled `/`. */
+function joinDir(...parts: string[]): string {
+  return parts.flatMap((part) => part.split("/")).filter(Boolean).join("/")
+}
+
 /**
- * What a token asks for. `@name/…` names a project by its handle (case does
- * not matter); a handle no project has is no query at all, so the list stays
- * shut for `@scope/pkg`.
+ * What a token asks for. Inside an opened project or folder, the picker's
+ * own identity plus the typed rest. Otherwise `@name/…` names a project by
+ * its handle (case does not matter): one match lists its folder, several are
+ * offered to choose from (never silently the first), and none is no query at
+ * all, so the list stays shut for `@scope/pkg`.
  */
-export function parseMention(query: string, projects: MentionProject[]): MentionQuery | null {
-  const slash = query.indexOf("/")
-  if (slash === -1) return { kind: "projects", filter: query }
-  const handle = query.slice(0, slash).toLowerCase()
-  const project = projects.find((candidate) => mentionHandle(candidate.name).toLowerCase() === handle)
-  if (!project) return null
-  const rest = query.slice(slash + 1)
-  const cut = rest.lastIndexOf("/")
-  return {
-    kind: "entries",
-    project,
-    dir: cut === -1 ? "" : rest.slice(0, cut).split("/").filter(Boolean).join("/"),
-    filter: rest.slice(cut + 1),
+export function parseMention(token: MentionToken, projects: MentionProject[]): MentionQuery | null {
+  if (token.nav) {
+    const rest = token.rest ?? ""
+    const cut = rest.lastIndexOf("/")
+    return {
+      kind: "entries",
+      project: token.nav.project,
+      dir: joinDir(token.nav.dir, cut === -1 ? "" : rest.slice(0, cut)),
+      filter: rest.slice(cut + 1),
+    }
   }
+  const slash = token.query.indexOf("/")
+  if (slash === -1) return { kind: "projects", filter: token.query, projects }
+  const handle = token.query.slice(0, slash).toLowerCase()
+  const matches = projects.filter((candidate) => mentionHandle(candidate.name).toLowerCase() === handle)
+  if (matches.length === 0) return null
+  if (matches.length > 1) return { kind: "projects", filter: "", projects: matches }
+  const rest = token.query.slice(slash + 1)
+  const cut = rest.lastIndexOf("/")
+  return { kind: "entries", project: matches[0]!, dir: joinDir(cut === -1 ? "" : rest.slice(0, cut)), filter: rest.slice(cut + 1) }
 }
 
 /**
@@ -121,8 +171,7 @@ export function projectRows(projects: MentionProject[], filter: string): Mention
     kind: "project",
     label: project.name,
     detail: project.path,
-    insert: project.path,
-    keepOpen: false,
+    open: { project, dir: "" },
   }))
 }
 
@@ -131,6 +180,11 @@ export function joinPath(root: string, ...parts: string[]): string {
   const tail = parts.flatMap((part) => part.split("/")).filter(Boolean)
   const head = root.length > 1 ? root.replace(/\/+$/, "") : root
   return tail.length === 0 ? head : `${head === "/" ? "" : head}/${tail.join("/")}`
+}
+
+/** A path as one word of the draft: quoted when it contains whitespace. */
+export function quotePath(path: string): string {
+  return /\s/.test(path) ? `"${path}"` : path
 }
 
 /**
@@ -143,31 +197,32 @@ export function entryRows(
   root: string,
   entries: ProjectEntry[],
 ): MentionRow[] {
-  const handle = mentionHandle(query.project.name)
-  const prefix = query.dir === "" ? `@${handle}/` : `@${handle}/${query.dir}/`
   const here: MentionRow[] =
     query.filter === ""
       ? [
           {
             key: "here",
             kind: "here",
-            label: query.dir === "" ? `${handle}/` : `${query.dir.split("/").pop()}/`,
+            label: query.dir === "" ? `${mentionHandle(query.project.name)}/` : `${query.dir.split("/").pop()}/`,
             detail: joinPath(root, query.dir),
-            insert: joinPath(root, query.dir),
-            keepOpen: false,
+            insert: quotePath(joinPath(root, query.dir)),
           },
         ]
       : []
   const matches = ranked(entries, (entry) => matchBand(entry.name, query.filter)).map(
     (entry): MentionRow =>
       entry.kind === "dir"
-        ? { key: `dir:${entry.name}`, kind: "dir", label: `${entry.name}/`, insert: `${prefix}${entry.name}/`, keepOpen: true }
+        ? {
+            key: `dir:${entry.name}`,
+            kind: "dir",
+            label: `${entry.name}/`,
+            open: { project: query.project, dir: joinDir(query.dir, entry.name) },
+          }
         : {
             key: `file:${entry.name}`,
             kind: "file",
             label: entry.name,
-            insert: joinPath(root, query.dir, entry.name),
-            keepOpen: false,
+            insert: quotePath(joinPath(root, query.dir, entry.name)),
           },
   )
   return [...here, ...matches]
@@ -199,11 +254,19 @@ export const MENTION_NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"])
 export const MENTION_PICK_KEYS = new Set(["Enter", "Tab"])
 
 /**
- * The draft after a pick, and where the caret goes. A pick that closes the
- * list is followed by a space, so the caret leaves the word and neither list
- * reopens on the inserted path (which starts with a `/`).
+ * The draft after a pick, where the caret goes, and what the picker has open
+ * next. Opening writes `@<handle>/<dir>/` and keeps the list; inserting writes
+ * the path and a space, so the caret leaves the word and neither list reopens
+ * on it (it starts with a `/`).
  */
-export function applyMention(value: string, token: MentionToken, row: MentionRow): { text: string; value: string; caret: number } {
-  const text = row.keepOpen ? row.insert : `${row.insert} `
-  return { text, value: value.slice(0, token.start) + text + value.slice(token.end), caret: token.start + text.length }
+export function applyMention(
+  value: string,
+  token: MentionToken,
+  row: MentionRow,
+): { text: string; value: string; caret: number; nav: MentionNav | null } {
+  const { open } = row
+  const prefix = open ? `@${[mentionHandle(open.project.name), ...open.dir.split("/")].filter(Boolean).join("/")}/` : null
+  const text = prefix ?? `${row.insert ?? ""} `
+  const nav = open && prefix ? { start: token.start, prefix, project: open.project, dir: open.dir } : null
+  return { text, value: value.slice(0, token.start) + text + value.slice(token.end), caret: token.start + text.length, nav }
 }

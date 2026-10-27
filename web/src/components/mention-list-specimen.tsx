@@ -1,11 +1,11 @@
 import { MentionListRows } from "@/components/mention-list"
 import { Eyebrow, POPOVER_SURFACE } from "@/components/primitives"
 import { REPOS } from "@/lib/fixtures"
-import { entryRows, mentionProjects, parseMention, projectRows, type MentionQuery } from "@/lib/mentions"
+import { entryRows, mentionProjects, mentionTokenAt, parseMention, projectRows, type MentionQuery } from "@/lib/mentions"
 import { cn } from "@/lib/utils"
 
 const PROJECTS = mentionProjects(REPOS)
-const FOLDER = parseMention("wisp/web/src/", PROJECTS) as Extract<MentionQuery, { kind: "entries" }>
+const FOLDER = parseMention(mentionTokenAt("@wisp/web/src/", 14)!, PROJECTS) as Extract<MentionQuery, { kind: "entries" }>
 const ENTRIES = [
   { name: "components", kind: "dir" as const },
   { name: "hooks", kind: "dir" as const },
@@ -34,8 +34,8 @@ export function MentionListSpecimens() {
       <p className="text-[11.5px] leading-relaxed text-muted-foreground">
         A pick writes an absolute path as plain text: a project's own checkout, never a task worktree, so an agent
         in one project can be pointed at another without searching the disk for it. Typing a project's name and a{" "}
-        <span className="font-mono">/</span> lists its folders and files; a folder keeps the list open for its
-        children, and the first row inserts the folder you are in. What git ignores is not offered. An{" "}
+        <span className="font-mono">/</span> (or picking it) lists its folders and files; a folder opens its
+        children, the first row inserts the folder you are in, and a path with a space arrives quoted. What git ignores is not offered. An{" "}
         <span className="font-mono">@</span> inside a word, or one no project answers, opens nothing.
       </p>
     </div>

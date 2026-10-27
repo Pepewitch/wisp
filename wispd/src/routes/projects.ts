@@ -206,8 +206,9 @@ export function reposRoute(cfg: WispConfig): Promise<Response> {
 }
 
 /**
- * GET /api/projects/entries?project=<path>&dir=<relative> — one folder of a
- * project in the Projects list, for the composer's `@` list. Only those roots
+ * GET /api/projects/entries?project=<path>&dir=<relative>[&q=<text>] — one
+ * folder of a project in the Projects list, for the composer's `@` list; `q`
+ * keeps names containing it (case-insensitive) before the row cap. Only those roots
  * may be listed; project-entries.ts owns containment and the ignore rules.
  */
 export async function projectEntriesRoute(url: URL, cfg: WispConfig): Promise<Response> {
@@ -217,7 +218,7 @@ export async function projectEntriesRoute(url: URL, cfg: WispConfig): Promise<Re
     .map(({ path }) => resolve(path))
     .find((path) => path === resolve(project));
   if (root === undefined) return err(`not a Wisp project: ${project}`, 404);
-  const listing = await listProjectEntries(root, url.searchParams.get("dir") ?? "");
+  const listing = await listProjectEntries(root, url.searchParams.get("dir") ?? "", url.searchParams.get("q") ?? "");
   return "error" in listing ? err(listing.error, listing.status) : json(listing);
 }
 

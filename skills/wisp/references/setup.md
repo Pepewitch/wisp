@@ -324,13 +324,14 @@ address's last new wrong token. The web UI is served at `/`.
   `/send` returns 409 while either shape is still compacting
 - `GET /api/status` · `GET /api/repos` · `POST|DELETE /api/projects` ·
   `POST /api/projects/copy-preview`
-- `GET /api/projects/entries?project=<path>&dir=<relative>` — one folder of a
-  registered project for the composer's `@` list: `{project, dir, entries:
-  [{name, kind: "dir"|"file"}], truncated}`, folders first, at most 500 rows.
-  `.git` and git-ignored entries are left out. An absolute `dir`, a `..` or
-  `.git` segment is `400`, a `dir` that resolves outside the project through
-  a symlink is `403`, and a path that is not a registered project, or a
-  missing folder, is `404`
+- `GET /api/projects/entries?project=<path>&dir=<relative>[&q=<text>]` — one
+  folder of a registered project for the composer's `@` list: `{project, dir,
+  entries: [{name, kind: "dir"|"file"}], truncated}`, folders first, at most
+  500 rows; `q` keeps names containing it (case-insensitive) before that cap.
+  `.git` and git-ignored entries are left out, a symlink by where it leads.
+  An absolute `dir`, a `..` or `.git` segment is `400`, a `dir` that resolves
+  outside the project or into `.git` is `403`, and a path that is not a
+  registered project, or a missing folder, is `404`
 - `GET|POST /api/suffix-prompts` ·
   `PATCH|DELETE /api/suffix-prompts/:id`
 - `GET /api/harnesses` (capabilities, effort levels, offered models per

@@ -13,6 +13,8 @@ import {
   nextMentionIndex,
   parseMention,
   projectRows,
+  type MentionNav,
+  type MentionQuery,
   type MentionRow,
   type MentionToken,
 } from "@/lib/mentions"
@@ -31,10 +33,11 @@ export interface ComposerMentions {
 }
 
 /**
- * The composer's `@` list, as state: which `@` word the caret is in, which row
- * is selected, and what a pick writes. It follows the `/` palette's rules —
- * the list is bound to the word under the caret, Escape dismisses that word
- * until the caret leaves it, and only a pick changes the draft.
+ * The composer's `@` list, as state: which `@` word the caret is in, which
+ * project and folder the picker has open, which row is selected, and what a
+ * pick writes. It follows the `/` palette's rules — the list is bound to the
+ * word under the caret, Escape dismisses that word until the caret leaves it,
+ * and only a pick changes the draft.
  *
  * A pick goes through the browser's own `insertText` where it exists, so ⌘Z
  * takes it back like any typing; a runtime without it gets a plain state
@@ -52,47 +55,53 @@ export function useComposerMentions({
   setValue: (value: string) => void
 }): ComposerMentions {
   const [token, setToken] = useState<MentionToken | null>(null)
-  const [selection, setSelection] = useState({ query: "", index: 0 })
+  const [selection, setSelection] = useState({ at: "", index: 0 })
   /** the `@` a dismissal applies to, exactly as `suppressed` does for `/` */
   const suppressed = useRef<number | null>(null)
+  /**
+   * What the picker has open. A ref, not state: a pick's `insertText` fires
+   * the textarea's input event synchronously, and that re-track must already
+   * see the folder it opened.
+   */
+  const navRef = useRef<MentionNav | null>(null)
   // a draft replaced from outside (a send, a task switch) never re-tracks
   const live = token && value.slice(token.start, token.end) === `@${token.query}` ? token : null
 
   // asked for on the first `@`, not on every composer mount (the sidebar has usually loaded it)
   const repos = useRepos(token !== null)
   const projects = useMemo(() => mentionProjects(repos.data ?? []), [repos.data])
-  const query = live ? parseMention(live.query, projects) : null
+  const query = live ? parseMention(live, projects) : null
   const folder = query?.kind === "entries" ? query : null
-  const entries = useProjectEntries(folder?.project.path ?? null, folder?.dir ?? "")
-
-  let rows: MentionRow[] = []
-  let status: string | null = null
-  if (query?.kind === "projects") rows = projectRows(projects, query.filter)
-  else if (folder && entries.data) {
-    rows = entryRows(folder, entries.data.project, entries.data.entries)
-    if (entries.data.truncated && rows.length > 0) status = "More entries than shown: keep typing to narrow"
-  } else if (folder) {
-    status = entries.isError ? `Couldn't list ${folder.dir || folder.project.name}: ${entries.error.message}` : "Listing…"
-  }
-  // an empty list is no list: `@scope/pkg` and an unmatched filter leave Enter to send
-  const open = live !== null && (rows.length > 0 || (folder !== null && !entries.data))
-  const selected = live && selection.query === live.query ? Math.min(selection.index, rows.length - 1) : 0
+  const entries = useProjectEntries(folder?.project.path ?? null, folder?.dir ?? "", folder?.filter ?? "")
+  const { rows, status } = mentionRows(query, entries)
+  // a folder you opened or named always answers, even with nothing in it;
+  // a project filter that matches nothing is no list, so `@scope/pkg` sends
+  const open = live !== null && (folder !== null || rows.length > 0)
+  // what the selection belongs to: the draft's text alone is not enough, `@app/` reads
+  // the same before and after one of two `app` projects is opened
+  const at = live ? `${live.nav ? `${live.nav.project.path}\0${live.nav.dir}` : ""}\0${live.query}` : ""
+  const selected = live && selection.at === at ? Math.min(selection.index, rows.length - 1) : 0
 
   const track = (next: string, at: number | null) => {
-    const found = at === null ? null : mentionTokenAt(next, at)
+    const found = at === null ? null : mentionTokenAt(next, at, navRef.current)
+    const kept = found && suppressed.current !== found.start ? found : null
     if (!found) suppressed.current = null
-    setToken(found && suppressed.current !== found.start ? found : null)
+    navRef.current = kept?.nav ?? null
+    setToken(kept)
   }
-  const select = (index: number) => setSelection({ query: live?.query ?? "", index })
+  const select = (index: number) => setSelection({ at, index })
 
   const pick = (row: MentionRow) => {
     if (!live) return
     const next = applyMention(value, live, row)
     suppressed.current = null
-    // the input event this fires re-tracks through the textarea's onChange
-    if (insertUndoable(boxRef.current, live.start, live.end, next.text)) return
-    setValue(next.value)
-    caretRef.current = next.caret
+    navRef.current = next.nav
+    if (!insertUndoable(boxRef.current, live.start, live.end, next.text)) {
+      setValue(next.value)
+      caretRef.current = next.caret
+    }
+    // explicitly, not only through onChange: opening one of two `app` projects
+    // rewrites `@app/` as `@app/`, and an unchanged value fires no change
     track(next.value, next.caret)
   }
 
@@ -101,27 +110,26 @@ export function useComposerMentions({
     if (event.key === "Escape") {
       event.preventDefault()
       suppressed.current = live.start
+      navRef.current = null
       setToken(null)
       return true
     }
-    if (rows.length === 0 || event.shiftKey || event.altKey) return false
-    if (MENTION_NAV_KEYS.has(event.key)) {
+    if (event.shiftKey || event.altKey) return false
+    if (MENTION_NAV_KEYS.has(event.key) && rows.length > 0) {
       event.preventDefault()
       // from the previous state, so two presses before a render still move twice
       const { key } = event
       setSelection((prev) => {
-        const from = prev.query === live.query ? Math.min(prev.index, rows.length - 1) : 0
-        return { query: live.query, index: nextMentionIndex(from, key, rows.length) }
+        const from = prev.at === at ? Math.min(prev.index, rows.length - 1) : 0
+        return { at, index: nextMentionIndex(from, key, rows.length) }
       })
       return true
     }
-    // ⌘/Ctrl+Enter still sends, list or not
-    if (MENTION_PICK_KEYS.has(event.key) && !event.metaKey && !event.ctrlKey) {
-      event.preventDefault()
-      pick(rows[selected]!)
-      return true
-    }
-    return false
+    if (!MENTION_PICK_KEYS.has(event.key)) return false
+    // an open list never lets Enter send: not while it loads, not when it is empty
+    event.preventDefault()
+    if (rows.length > 0 && !event.metaKey && !event.ctrlKey) pick(rows[selected]!)
+    return true
   }
 
   return {
@@ -138,6 +146,22 @@ export function useComposerMentions({
     pick,
     hover: select,
   }
+}
+
+/** The rows a query offers, and the one muted line that says what the rows cannot. */
+function mentionRows(
+  query: MentionQuery | null,
+  entries: ReturnType<typeof useProjectEntries>
+): { rows: MentionRow[]; status: string | null } {
+  if (query?.kind === "projects") return { rows: projectRows(query.projects, query.filter), status: null }
+  if (!query) return { rows: [], status: null }
+  const where = query.dir || query.project.name
+  if (!entries.data) {
+    return { rows: [], status: entries.isError ? `Couldn't list ${where}: ${entries.error.message}` : "Listing…" }
+  }
+  const rows = entryRows(query, entries.data.project, entries.data.entries)
+  if (rows.length === 0) return { rows, status: `Nothing in ${where} matches “${query.filter}”` }
+  return { rows, status: entries.data.truncated ? `Showing the first ${entries.data.entries.length}: type more to narrow` : null }
 }
 
 /**

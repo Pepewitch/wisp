@@ -4,7 +4,7 @@ export interface ProjectEntry {
   kind: "dir" | "file";
 }
 
-/** GET /api/projects/entries?project=<path>&dir=<relative> */
+/** GET /api/projects/entries?project=<path>&dir=<relative>[&q=<text>]: `q` keeps names containing it, case-insensitively */
 export interface ProjectEntriesResponse {
   /** the registered project root, resolved: what a client joins `dir` and a name onto */
   project: string;
@@ -12,6 +12,6 @@ export interface ProjectEntriesResponse {
   dir: string;
   /** folders first, then files, each by name; `.git` and git-ignored entries are absent */
   entries: ProjectEntry[];
-  /** more entries exist than the cap allowed */
+  /** more entries exist than the cap allowed (or the folder was larger than one scan reads) */
   truncated: boolean;
 }

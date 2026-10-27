@@ -43,27 +43,35 @@ const task = (): ApiTask =>
 const repo = (name: string, path: string, exists = true): RepoInfo =>
   ({ name, path, exists, setupScript: "", archiveScript: "", copyFiles: [], baseBranch: "", configured: true }) as RepoInfo
 
-const REPOS = [repo("wisp", "/work/wisp"), repo("superapp", "/work/superapp"), repo("gone", "/work/gone", false)]
+const REPOS = [
+  repo("wisp", "/work/wisp"),
+  repo("superapp", "/work/superapp"),
+  repo("gone", "/work/gone", false),
+  repo("app", "/work/app"),
+  repo("app", "/work/other/app"),
+  repo("slow", "/work/slow"),
+]
 
+const listing = (project: string, dir: string, entries: ProjectEntriesResponse["entries"]): ProjectEntriesResponse => ({
+  project,
+  dir,
+  truncated: false,
+  entries,
+})
+
+/** Keyed `<project>|<dir>`; the fake daemon applies `q` the way the real one does. */
 const LISTINGS: Record<string, ProjectEntriesResponse> = {
-  "": {
-    project: "/work/superapp",
-    dir: "",
-    truncated: false,
-    entries: [
-      { name: "src", kind: "dir" },
-      { name: "README.md", kind: "file" },
-    ],
-  },
-  src: {
-    project: "/work/superapp",
-    dir: "src",
-    truncated: false,
-    entries: [
-      { name: "components", kind: "dir" },
-      { name: "config.ts", kind: "file" },
-    ],
-  },
+  "/work/superapp|": listing("/work/superapp", "", [
+    { name: "My Docs", kind: "dir" },
+    { name: "src", kind: "dir" },
+    { name: "README.md", kind: "file" },
+  ]),
+  "/work/superapp|src": listing("/work/superapp", "src", [
+    { name: "components", kind: "dir" },
+    { name: "config.ts", kind: "file" },
+  ]),
+  "/work/superapp|My Docs": listing("/work/superapp", "My Docs", [{ name: "guide.md", kind: "file" }]),
+  "/work/other/app|": listing("/work/other/app", "", [{ name: "lib", kind: "dir" }]),
 }
 
 function mount(node: ReactNode) {
@@ -73,9 +81,11 @@ function mount(node: ReactNode) {
     if (path === "/api/repos") return { repos: REPOS } as T
     if (path.startsWith("/api/projects/entries?")) {
       const query = new URLSearchParams(path.slice(path.indexOf("?") + 1))
-      const listing = LISTINGS[query.get("dir") ?? ""]
-      if (query.get("project") === "/work/superapp" && listing) return listing as T
-      throw new ApiError("no such folder", 404)
+      if (query.get("project") === "/work/slow") return new Promise<T>(() => {})
+      const found = LISTINGS[`${query.get("project")}|${query.get("dir") ?? ""}`]
+      if (!found) throw new ApiError("no such folder", 404)
+      const q = (query.get("q") ?? "").toLowerCase()
+      return { ...found, entries: found.entries.filter((entry) => entry.name.toLowerCase().includes(q)) } as T
     }
     throw new ApiError("not found", 404)
   }
@@ -110,21 +120,25 @@ describe("the @ list", () => {
     const paths = mount(<SteerBox task={task()} onSend={async () => {}} />)
     expect(paths).not.toContain("/api/repos")
     type("@")
-    await waitFor(() => expect(options()).toEqual(["wisp/work/wisp", "superapp/work/superapp"]))
+    await waitFor(() => expect(options()).toHaveLength(5))
+    expect(options().slice(0, 2)).toEqual(["wisp/work/wisp", "superapp/work/superapp"])
     expect(box()).toHaveAttribute("aria-controls", "composer-mention-list")
     expect(box()).toHaveAttribute("aria-activedescendant", "composer-mention-list-0")
   })
 
-  it("filters as you type, moves with ↑/↓ and inserts the absolute path on Enter", async () => {
+  it("filters as you type and moves with ↑/↓; Enter opens a project and Enter again inserts its path", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
     type("check @")
-    await waitFor(() => expect(options()).toHaveLength(2))
+    await waitFor(() => expect(options()).toHaveLength(5))
     key("ArrowDown")
     expect(selectedOption()).toBe("superapp/work/superapp")
-    key("ArrowDown")
+    key("ArrowUp")
     expect(selectedOption()).toBe("wisp/work/wisp")
     type("check @sup")
     expect(options()).toEqual(["superapp/work/superapp"])
+    key("Enter")
+    expect(box()).toHaveValue("check @superapp/")
+    await waitFor(() => expect(options()[0]).toBe("superapp//work/superapp"))
     key("Enter")
     expect(box()).toHaveValue("check /work/superapp ")
     expect(screen.queryByTestId("mention-list")).toBeNull()
@@ -132,10 +146,12 @@ describe("the @ list", () => {
 
   it("Tab picks too", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
-    type("@wi")
+    type("@supe")
     await waitFor(() => expect(options()).toHaveLength(1))
     key("Tab")
-    expect(box()).toHaveValue("/work/wisp ")
+    await waitFor(() => expect(options()[0]).toBe("superapp//work/superapp"))
+    key("Tab")
+    expect(box()).toHaveValue("/work/superapp ")
   })
 
   it("Escape closes the list and leaves the text as typed, until the caret leaves the word", async () => {
@@ -174,31 +190,81 @@ describe("the @ list", () => {
   it("@project/ lists its root; a folder opens its children, a file inserts its absolute path", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
     type("see @superapp/")
-    await waitFor(() => expect(options()).toEqual(["superapp//work/superapp", "src/", "README.md"]))
-    key("ArrowDown")
+    await waitFor(() => expect(options()).toEqual(["superapp//work/superapp", "My Docs/", "src/", "README.md"]))
+    key("End")
+    key("ArrowUp")
     key("Enter")
     expect(box()).toHaveValue("see @superapp/src/")
     await waitFor(() => expect(options()).toEqual(["src//work/superapp/src", "components/", "config.ts"]))
     type("see @superapp/src/conf")
-    expect(options()).toEqual(["config.ts"])
+    await waitFor(() => expect(options()).toEqual(["config.ts"]))
     key("Enter")
     expect(box()).toHaveValue("see /work/superapp/src/config.ts ")
   })
 
-  it("Enter on the folder row inserts that folder's path", async () => {
+  it("a folder with a space in its name opens, and its paths arrive quoted", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
-    type("@superapp/src/")
-    await waitFor(() => expect(options()[0]).toBe("src//work/superapp/src"))
+    type("see @superapp/My")
+    await waitFor(() => expect(options()).toEqual(["My Docs/"]))
     key("Enter")
-    expect(box()).toHaveValue("/work/superapp/src ")
+    expect(box()).toHaveValue("see @superapp/My Docs/")
+    await waitFor(() => expect(options()).toEqual(["My Docs//work/superapp/My Docs", "guide.md"]))
+    type("see @superapp/My Docs/gu")
+    await waitFor(() => expect(options()).toEqual(["guide.md"]))
+    key("Enter")
+    expect(box()).toHaveValue('see "/work/superapp/My Docs/guide.md" ')
+  })
+
+  it("two projects with one name are both offered, and the chosen one is the one listed", async () => {
+    const paths = mount(<SteerBox task={task()} onSend={async () => {}} />)
+    type("@app/")
+    await waitFor(() => expect(options()).toEqual(["app/work/app", "app/work/other/app"]))
+    expect(paths.some((path) => path.startsWith("/api/projects/entries?"))).toBe(false)
+    key("ArrowDown")
+    key("Enter")
+    await waitFor(() => expect(options()).toEqual(["app//work/other/app", "lib/"]))
+    key("Enter")
+    expect(box()).toHaveValue("/work/other/app ")
+  })
+
+  it("opening one twin re-tracks even when the browser's insertText leaves the draft unchanged", async () => {
+    // the browser path: insertText succeeds, and `@app/` over `@app/` fires no change event
+    Object.defineProperty(document, "execCommand", { configurable: true, value: vi.fn(() => true) })
+    try {
+      mount(<SteerBox task={task()} onSend={async () => {}} />)
+      type("@app/")
+      await waitFor(() => expect(options()).toHaveLength(2))
+      key("ArrowDown")
+      key("Enter")
+      await waitFor(() => expect(options()).toEqual(["app//work/other/app", "lib/"]))
+    } finally {
+      Reflect.deleteProperty(document, "execCommand")
+    }
+  })
+
+  it("an open list never lets Enter send, while it loads or when nothing matches", async () => {
+    const onSend = vi.fn(async () => {})
+    mount(<SteerBox task={task()} onSend={onSend} />)
+    type("@slow/")
+    await waitFor(() => expect(screen.getByTestId("mention-list")).toHaveTextContent("Listing…"))
+    key("Enter")
+    key("Enter", { metaKey: true })
+    type("@superapp/zzz")
+    await waitFor(() => expect(screen.getByTestId("mention-list")).toHaveTextContent("Nothing in superapp matches “zzz”"))
+    key("Enter")
+    expect(onSend).not.toHaveBeenCalled()
+    expect(box()).toHaveValue("@superapp/zzz")
+    key("Escape")
+    key("Enter")
+    await waitFor(() => expect(onSend).toHaveBeenCalledWith("@superapp/zzz", undefined))
   })
 
   it("a tap picks a row", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} touch />)
     type("@")
-    await waitFor(() => expect(options()).toHaveLength(2))
+    await waitFor(() => expect(options()).toHaveLength(5))
     fireEvent.click(within(screen.getByTestId("mention-list")).getByText("superapp"))
-    expect(box()).toHaveValue("/work/superapp ")
+    expect(box()).toHaveValue("@superapp/")
   })
 
   it("a folder that cannot be listed says so, and Escape closes it", async () => {

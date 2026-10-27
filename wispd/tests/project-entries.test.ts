@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { ProjectEntriesResponse } from "../../shared/api/project-entries";
 import { CONFIG_PATH, type WispConfig } from "../src/config";
 import { serve } from "../src/daemon";
-import { ENTRY_CAP, projectDirSegments } from "../src/project-entries";
+import { ENTRY_CAP, projectDirSegments, SCAN_CAP } from "../src/project-entries";
 
 const token = "project-entries-token";
 let server: Awaited<ReturnType<typeof serve>> | null = null;
@@ -70,9 +70,10 @@ function makeProject(): { root: string; outside: string } {
   return { root, outside };
 }
 
-async function entries(base: string, project: string, dir?: string): Promise<Response> {
+async function entries(base: string, project: string, dir?: string, q?: string): Promise<Response> {
   const query = new URLSearchParams({ project });
   if (dir !== undefined) query.set("dir", dir);
+  if (q !== undefined) query.set("q", q);
   return fetch(`${base}/api/projects/entries?${query}`, { headers: { authorization: `Bearer ${token}` } });
 }
 
@@ -159,6 +160,40 @@ describe("GET /api/projects/entries", () => {
     const body = await listing(await entries(base, root));
     expect(body.entries).toHaveLength(ENTRY_CAP);
     expect(body.truncated).toBe(true);
+  });
+
+  test("a link into .git is neither listed nor listable, and a link to an ignored folder is ignored", async () => {
+    const { root } = makeProject();
+    symlinkSync(join(root, ".git"), join(root, "gitlink"));
+    symlinkSync(join(root, ".git/HEAD"), join(root, "head-link"));
+    symlinkSync(join(root, "node_modules"), join(root, "deps"));
+    const base = await startServer([root]);
+    const names = (await listing(await entries(base, root))).entries.map((entry) => entry.name);
+    expect(names).not.toContain("gitlink");
+    expect(names).not.toContain("head-link");
+    expect(names).not.toContain("deps");
+    const refused = await entries(base, root, "gitlink");
+    expect(refused.status).toBe(403);
+    expect(await refused.text()).not.toContain("HEAD");
+    expect((await entries(base, root, "gitlink/refs")).status).toBe(403);
+  });
+
+  test("q narrows before the cap, so a name past the first rows is reachable", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "wisp-entries-filter-")));
+    for (let i = 0; i <= ENTRY_CAP; i += 1) writeFileSync(join(root, `file${String(i).padStart(3, "0")}.txt`), "");
+    const base = await startServer([root]);
+    const capped = await listing(await entries(base, root));
+    expect(capped.truncated).toBe(true);
+    expect(capped.entries.map((entry) => entry.name)).not.toContain("file500.txt");
+    const narrowed = await listing(await entries(base, root, "", "FILE500"));
+    expect(narrowed).toMatchObject({ truncated: false, entries: [{ name: "file500.txt", kind: "file" }] });
+  });
+
+  test("every entry read counts toward the scan cap, even ones it leaves out", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "wisp-entries-dangling-")));
+    for (let i = 0; i <= SCAN_CAP; i += 1) symlinkSync(join(root, `missing-${i}`), join(root, `dangling-${i}`));
+    const base = await startServer([root]);
+    expect(await listing(await entries(base, root))).toEqual({ project: root, dir: "", entries: [], truncated: true });
   });
 
   test("a folder that is not a git checkout still lists, hiding only .git", async () => {

@@ -408,18 +408,23 @@ export function useRepos(enabled = true) {
 
 /**
  * GET /api/projects/entries — one folder of a project, for the composer's `@`
- * list. Nested under the repos key so a project event refreshes it; kept for
- * a short while because typing a filter re-asks for the same folder.
+ * list. The typed filter goes to the daemon, so narrowing reaches past its
+ * row cap; the last answer for the same folder stays up while the next one
+ * loads, so the list does not blink on every key. Nested under the repos key
+ * so a project event refreshes it.
  */
-export function useProjectEntries(project: string | null, dir: string) {
+export function useProjectEntries(project: string | null, dir: string, filter: string) {
   const { transport, qk } = useDaemonRuntime();
+  const folder = [...qk.repos, "entries", project ?? "", dir];
   return useQuery({
-    queryKey: [...qk.repos, "entries", project ?? "", dir],
+    queryKey: [...folder, filter],
     queryFn: () =>
       transport.request<ProjectEntriesResponse>(
-        `/api/projects/entries?project=${encodeURIComponent(project ?? "")}&dir=${encodeURIComponent(dir)}`,
+        `/api/projects/entries?project=${encodeURIComponent(project ?? "")}&dir=${encodeURIComponent(dir)}&q=${encodeURIComponent(filter)}`,
       ),
     enabled: project !== null,
+    placeholderData: (previous, previousQuery) =>
+      previousQuery && folder.every((part, index) => previousQuery.queryKey[index] === part) ? previous : undefined,
     staleTime: 15_000,
     retry: false,
   });

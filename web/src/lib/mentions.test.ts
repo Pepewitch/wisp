@@ -12,6 +12,7 @@ import {
   nextMentionIndex,
   parseMention,
   projectRows,
+  quotePath,
   type MentionProject,
   type MentionQuery,
 } from "./mentions"
@@ -43,26 +44,61 @@ describe("mentionTokenAt", () => {
   })
 })
 
+/** The token a person typing `raw` (caret at its end) would have. */
+const typed = (raw: string) => mentionTokenAt(raw, raw.length)!
+
 describe("parseMention", () => {
   it("is a project filter until the first slash", () => {
-    expect(parseMention("", PROJECTS)).toEqual({ kind: "projects", filter: "" })
-    expect(parseMention("sup", PROJECTS)).toEqual({ kind: "projects", filter: "sup" })
+    expect(parseMention(typed("@"), PROJECTS)).toEqual({ kind: "projects", filter: "", projects: PROJECTS })
+    expect(parseMention(typed("@sup"), PROJECTS)).toMatchObject({ kind: "projects", filter: "sup" })
   })
 
   it("names a project by its handle, case-insensitively, then splits folder and filter", () => {
-    expect(parseMention("superapp/", PROJECTS)).toMatchObject({ kind: "entries", dir: "", filter: "" })
-    expect(parseMention("SuperApp/src/co", PROJECTS)).toMatchObject({
+    expect(parseMention(typed("@superapp/"), PROJECTS)).toMatchObject({ kind: "entries", dir: "", filter: "" })
+    expect(parseMention(typed("@SuperApp/src/co"), PROJECTS)).toMatchObject({
       kind: "entries",
       project: PROJECTS[1],
       dir: "src",
       filter: "co",
     })
-    expect(parseMention("superapp/src//components/", PROJECTS)).toMatchObject({ dir: "src/components", filter: "" })
-    expect(parseMention("My-App/", PROJECTS)).toMatchObject({ project: PROJECTS[2] })
+    expect(parseMention(typed("@superapp/src//components/"), PROJECTS)).toMatchObject({ dir: "src/components", filter: "" })
+    expect(parseMention(typed("@My-App/"), PROJECTS)).toMatchObject({ project: PROJECTS[2] })
   })
 
   it("is nothing for a handle no project has, so `@scope/pkg` leaves the composer alone", () => {
-    expect(parseMention("types/node", PROJECTS)).toBeNull()
+    expect(parseMention(typed("@types/node"), PROJECTS)).toBeNull()
+  })
+
+  it("never silently picks the first of several projects a handle names", () => {
+    const twins = [
+      ...PROJECTS,
+      { name: "app", path: "/work/app" },
+      { name: "app", path: "/work/other/app" },
+      { name: "My-App", path: "/work/my-app-2" },
+    ]
+    expect(parseMention(typed("@app/src/"), twins)).toEqual({ kind: "projects", filter: "", projects: [twins[4], twins[5]] })
+    // normalising `My App` and `My-App` to one handle is a collision too
+    expect(parseMention(typed("@my-app/"), twins)).toEqual({ kind: "projects", filter: "", projects: [PROJECTS[2], twins[6]] })
+  })
+
+  it("inside what the picker opened, reads the picker's identity, not the draft's handle", () => {
+    const twin = { name: "app", path: "/work/other/app" }
+    const nav = { start: 4, prefix: "@app/My Docs/", project: twin, dir: "My Docs" }
+    const token = mentionTokenAt("see @app/My Docs/gu", 19, nav)!
+    expect(token).toMatchObject({ start: 4, end: 19, rest: "gu" })
+    expect(parseMention(token, [{ name: "app", path: "/work/app" }, twin])).toEqual({
+      kind: "entries",
+      project: twin,
+      dir: "My Docs",
+      filter: "gu",
+    })
+    expect(parseMention(mentionTokenAt("see @app/My Docs/notes/", 23, nav)!, [])).toMatchObject({ dir: "My Docs/notes", filter: "" })
+  })
+
+  it("lets go of the picker once the draft no longer shows what it opened", () => {
+    const nav = { start: 0, prefix: "@app/My Docs/", project: PROJECTS[0]!, dir: "My Docs" }
+    expect(mentionTokenAt("@app/My Doc", 11, nav)).toBeNull()
+    expect(mentionTokenAt("@app/My Docs/x y", 16, nav)).toBeNull()
   })
 })
 
@@ -84,10 +120,10 @@ describe("mentionHandle", () => {
 })
 
 describe("projectRows", () => {
-  it("lists every project, its path muted, inserting the path", () => {
+  it("lists every project, its path muted; picking one opens it", () => {
     const rows = projectRows(PROJECTS, "")
     expect(rows.map((row) => row.label)).toEqual(["wisp", "superapp", "My App", "api-service"])
-    expect(rows[1]).toMatchObject({ detail: "/Users/dev/work/superapp", insert: "/Users/dev/work/superapp", keepOpen: false })
+    expect(rows[1]).toMatchObject({ detail: "/Users/dev/work/superapp", open: { project: PROJECTS[1], dir: "" } })
   })
 
   it("ranks a name prefix over a name substring, and never matches on the path", () => {
@@ -106,25 +142,35 @@ describe("entryRows", () => {
     { name: "compose.ts", kind: "file" as const },
     { name: "index.ts", kind: "file" as const },
   ]
-  const query = (raw: string) => parseMention(raw, PROJECTS) as Extract<MentionQuery, { kind: "entries" }>
+  const query = (raw: string) => parseMention(typed(raw), PROJECTS) as Extract<MentionQuery, { kind: "entries" }>
 
-  it("offers the folder itself first, then its entries; a folder keeps the list open", () => {
-    const rows = entryRows(query("superapp/src/"), "/Users/dev/work/superapp", ENTRIES)
-    expect(rows[0]).toMatchObject({ kind: "here", label: "src/", insert: "/Users/dev/work/superapp/src", keepOpen: false })
-    expect(rows[1]).toMatchObject({ kind: "dir", label: "components/", insert: "@superapp/src/components/", keepOpen: true })
+  it("offers the folder itself first, then its entries; a folder opens, a file inserts", () => {
+    const rows = entryRows(query("@superapp/src/"), "/Users/dev/work/superapp", ENTRIES)
+    expect(rows[0]).toMatchObject({ kind: "here", label: "src/", insert: "/Users/dev/work/superapp/src" })
+    expect(rows[1]).toMatchObject({ kind: "dir", label: "components/", open: { project: PROJECTS[1], dir: "src/components" } })
     expect(rows[3]).toMatchObject({ kind: "file", label: "compose.ts", insert: "/Users/dev/work/superapp/src/compose.ts" })
   })
 
   it("filters the last segment, prefix first, and drops the folder row once you type", () => {
-    const rows = entryRows(query("superapp/src/co"), "/Users/dev/work/superapp", ENTRIES)
+    const rows = entryRows(query("@superapp/src/co"), "/Users/dev/work/superapp", ENTRIES)
     expect(rows.map((row) => row.label)).toEqual(["components/", "config/", "compose.ts"])
-    expect(entryRows(query("superapp/src/dex"), "/r", ENTRIES).map((row) => row.label)).toEqual(["index.ts"])
+    expect(entryRows(query("@superapp/src/dex"), "/r", ENTRIES).map((row) => row.label)).toEqual(["index.ts"])
   })
 
   it("at the root, the folder row is the project", () => {
-    const rows = entryRows(query("superapp/"), "/Users/dev/work/superapp", ENTRIES)
+    const rows = entryRows(query("@superapp/"), "/Users/dev/work/superapp", ENTRIES)
     expect(rows[0]).toMatchObject({ label: "superapp/", insert: "/Users/dev/work/superapp" })
-    expect(rows[1]).toMatchObject({ insert: "@superapp/components/" })
+    expect(rows[1]).toMatchObject({ open: { dir: "components" } })
+  })
+
+  it("quotes an inserted path that contains a space", () => {
+    const nav = { start: 0, prefix: "@superapp/My Docs/", project: PROJECTS[1]!, dir: "My Docs" }
+    const folder = parseMention(mentionTokenAt("@superapp/My Docs/", 18, nav)!, PROJECTS) as Extract<MentionQuery, { kind: "entries" }>
+    const rows = entryRows(folder, "/Users/dev/work/superapp", [{ name: "read me.md", kind: "file" }])
+    expect(rows.map((row) => row.insert)).toEqual([
+      '"/Users/dev/work/superapp/My Docs"',
+      '"/Users/dev/work/superapp/My Docs/read me.md"',
+    ])
   })
 })
 
@@ -146,18 +192,36 @@ describe("nextMentionIndex", () => {
 describe("applyMention", () => {
   const token = { start: 4, end: 8, query: "sup" }
 
-  it("replaces only the token and steps past it with a space", () => {
-    const row = projectRows(PROJECTS, "sup")[0]!
+  it("inserting replaces only the token and steps past it with a space", () => {
+    const row = { key: "file:x", kind: "file" as const, label: "x.ts", insert: "/Users/dev/work/superapp/x.ts" }
     expect(applyMention("see @sup and", token, row)).toEqual({
-      text: "/Users/dev/work/superapp ",
-      value: "see /Users/dev/work/superapp  and",
-      caret: 29,
+      text: "/Users/dev/work/superapp/x.ts ",
+      value: "see /Users/dev/work/superapp/x.ts  and",
+      caret: 34,
+      nav: null,
     })
   })
 
-  it("leaves the caret at the end of a folder so its children list next", () => {
-    const row = { key: "dir:src", kind: "dir" as const, label: "src/", insert: "@superapp/src/", keepOpen: true }
-    expect(applyMention("see @sup", token, row)).toEqual({ text: "@superapp/src/", value: "see @superapp/src/", caret: 18 })
+  it("opening a project or folder writes where you are and hands the picker its identity", () => {
+    const [project] = projectRows(PROJECTS, "sup")
+    expect(applyMention("see @sup", token, project!)).toEqual({
+      text: "@superapp/",
+      value: "see @superapp/",
+      caret: 14,
+      nav: { start: 4, prefix: "@superapp/", project: PROJECTS[1], dir: "" },
+    })
+    const folder = { key: "dir:My Docs", kind: "dir" as const, label: "My Docs/", open: { project: PROJECTS[1]!, dir: "My Docs" } }
+    const opened = applyMention("see @superapp/", { start: 4, end: 14, query: "superapp/" }, folder)
+    expect(opened).toMatchObject({ value: "see @superapp/My Docs/", caret: 22, nav: { prefix: "@superapp/My Docs/", dir: "My Docs" } })
+    // the opened folder survives its own space: the next keystrokes still read it
+    expect(mentionTokenAt(opened.value + "re", 24, opened.nav)).toMatchObject({ nav: opened.nav, rest: "re" })
+  })
+})
+
+describe("quotePath", () => {
+  it("quotes only a path with whitespace", () => {
+    expect(quotePath("/a/b")).toBe("/a/b")
+    expect(quotePath("/a/My Docs")).toBe('"/a/My Docs"')
   })
 })
 
