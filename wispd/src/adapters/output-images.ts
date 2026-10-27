@@ -54,8 +54,8 @@ export function createOutputImageCapture(def: AdapterDef, turnId: number, note: 
     return saved(() => publishOutputImage(turnId, decodeOutputImage(data), file ? basename(file) : `image.${extension}`, source, stepOf(callId, fallbackLabel)));
   };
   /** A file the harness reports the agent viewed; the event keeps its path and gains a note. */
-  const viewed = (path: string, callId: string | null, label: string): void => {
-    saved(() => publishOutputImage(turnId, readViewedImage(turnId, path), basename(path), "native", stepOf(callId, label)));
+  const viewed = (path: string, callId: string | null, label: string, readAtMs?: number | null): void => {
+    saved(() => publishOutputImage(turnId, readViewedImage(turnId, path, readAtMs), basename(path), "native", stepOf(callId, label)));
   };
 
   return (event) => {
@@ -74,12 +74,18 @@ const MAY_CARRY_IMAGE = /image|\.(png|jpe?g|gif|webp)\b/i;
  * Turns the recorder does not own (cursor and opencode run without live
  * input) write their stdout straight to the log, so the daemon sees their
  * events only once the turn ends: capture their images from the finished log
- * then. Bytes the log carries stay in it; publication is idempotent, so a
- * second settle of the same log adds nothing.
+ * then. Bytes the log carries stay in it; publication is idempotent, and a
+ * note the log already has is not written again, so a second settle of the
+ * same log adds nothing.
  */
 export function captureLoggedImages(def: AdapterDef, turnId: number, raw: string, note: (text: string) => void): void {
   if (!def.events) return;
-  const capture = createOutputImageCapture(def, turnId, note);
+  const logged = new Set(raw.split("\n"));
+  const capture = createOutputImageCapture(def, turnId, (text) => {
+    if (logged.has(text)) return;
+    logged.add(text);
+    note(text);
+  });
   for (const line of raw.split("\n")) {
     if (!line.startsWith("{") || !MAY_CARRY_IMAGE.test(line)) continue;
     let event: unknown;
@@ -90,7 +96,7 @@ export function captureLoggedImages(def: AdapterDef, turnId: number, raw: string
 
 type Remember = (id: string | null, name: string | null, input: unknown) => void;
 type Inline = (data: unknown, declaredType: unknown, callId: string | null, fallbackLabel: string, path?: string | null, source?: OutputImage["source"]) => RecordValue;
-type Viewed = (path: string, callId: string | null, label: string) => void;
+type Viewed = (path: string, callId: string | null, label: string, readAtMs?: number | null) => void;
 
 /** `tool_use` in an assistant message, then a `tool_result` with base64 image parts and the same `tool_use_id`. */
 function claude(event: RecordValue, remember: Remember, inline: Inline): RecordValue {
@@ -154,13 +160,28 @@ function codex(event: RecordValue, inline: Inline, viewed: Viewed): RecordValue 
   return event;
 }
 
-/** A completed `readToolCall` of an image file names the path it read; the bytes are not on the wire. */
+/** A millisecond time cursor writes as a number or a decimal string. */
+function milliseconds(value: unknown): number | null {
+  const ms = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  return typeof ms === "number" && Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * A completed `readToolCall` of an image file names the path it read; the
+ * bytes are not on the wire, and cursor's log is read only once the turn
+ * settles. The file is copied for that read only if it has not changed since
+ * the read completed (`tool_call.completedAtMs`, else `startedAtMs`, else the
+ * event's `timestamp_ms`), so a path read twice gives at most its last read
+ * the image.
+ */
 function cursor(event: RecordValue, viewed: Viewed): RecordValue {
   if (event.type !== "tool_call" || event.subtype !== "completed") return event;
   const { key, body } = cursorToolCall(event);
   if (key !== "readToolCall" || !isRecord(body.result) || !isRecord(body.result.success)) return event;
   const path = string(body.result.success.path) ?? string(record(body.args).path);
-  if (path && IMAGE_FILE.test(path)) viewed(path, string(event.call_id), `read ${path}`);
+  const timing = record(event.tool_call);
+  const readAt = milliseconds(timing.completedAtMs) ?? milliseconds(timing.startedAtMs) ?? milliseconds(event.timestamp_ms);
+  if (path && IMAGE_FILE.test(path)) viewed(path, string(event.call_id), `read ${path}`, readAt);
   return event;
 }
 

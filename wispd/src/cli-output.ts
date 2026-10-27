@@ -42,7 +42,7 @@ export async function outputCommand(positional: string[], flags: Flags): Promise
   throw new Error("output expects add, list or save");
 }
 
-/** `shared from: <step>` for a published image, `looked at in: <step>` for one a tool showed the agent. */
+/** `shared in: <step>` for a published image, `looked at in: <step>` for one a tool showed the agent. */
 export function outputProvenance(image: Pick<OutputImage, "source" | "step">): string {
   const verb = image.source === "published" ? "shared" : "looked at";
   return image.step ? `${verb} in: ${image.step.label}` : verb;

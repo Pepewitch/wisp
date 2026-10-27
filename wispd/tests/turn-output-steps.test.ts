@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test";
-import { closeSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readFileSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { outputImageNote, outputImageNoteId } from "../../shared/api/outputs";
+import { outputImageNote, outputImageNoteId, type OutputImage } from "../../shared/api/outputs";
 import { samplePng } from "../scripts/harness/image-output-probe";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
 import { createOutputImageCapture } from "../src/adapters/output-images";
 import { LOG_DIR, TASKS_DIR, WISP_HOME, loadConfig } from "../src/config";
-import { MAX_OUTPUT_IMAGE_BYTES, outputImagePath, parseOutputManifest, publishOutputImage } from "../src/outputs";
+import { MAX_OUTPUT_IMAGE_BYTES, outputImagePath, parseOutputManifest, publishingStep } from "../src/outputs";
+import { outputRoute } from "../src/routes/outputs";
 import { TurnRecorder } from "../src/recording/turn-recorder";
 import { createTask, createTurn, freeSlot, getTurn, newTaskId, setTaskFields } from "../src/store";
 import { finalizeTurn } from "../src/turn-finalize";
@@ -112,24 +113,60 @@ test("cursor copies a completed readToolCall of an image in the task's own files
   const { run } = capture("cursor", f.turnId);
   run({ type: "tool_call", subtype: "started", call_id: callId, tool_call: { readToolCall: { args: { path } } } });
   expect(outputs(f.turnId)).toEqual([]);
-  run({ type: "tool_call", subtype: "completed", call_id: callId, tool_call: { readToolCall: { args: { path }, result: { success: { isEmpty: false, totalLines: 0, fileSize: samplePng().length, path, dataBlobId: "blob" } } } } });
+  run({ type: "tool_call", subtype: "completed", call_id: callId, tool_call: { readToolCall: { args: { path }, result: { success: { isEmpty: false, totalLines: 0, fileSize: samplePng().length, path, dataBlobId: "blob" } } }, startedAtMs: String(Date.now()), completedAtMs: String(Date.now()) } });
   expect(outputs(f.turnId)).toEqual([expect.objectContaining({ name: "image.png", step: { id: callId, label: `read ${path}` } })]);
 });
 
-test("a cursor turn's finished log is captured once it settles, without a second copy on a second settle", async () => {
+/** A cursor `readToolCall` pair as its log has it, completed at `at` (ms). */
+function cursorRead(callId: string, path: string, at: number | null): string[] {
+  const timing = at === null ? {} : { startedAtMs: String(at - 5), completedAtMs: String(at) };
+  return [
+    JSON.stringify({ type: "tool_call", subtype: "started", call_id: callId, tool_call: { readToolCall: { args: { path } } } }),
+    JSON.stringify({ type: "tool_call", subtype: "completed", call_id: callId, tool_call: { readToolCall: { args: { path }, result: { success: { path, fileSize: 1 } } }, ...timing } }),
+  ];
+}
+
+async function settleCursorLog(f: ReturnType<typeof fixture>, lines: string[], times = 1) {
+  writeFileSync(f.log, [...lines, JSON.stringify({ type: "result", subtype: "success", result: "Seen.", is_error: false })].join("\n") + "\n");
+  writeFileSync(`${f.log}.err`, "");
+  for (let settle = 0; settle < times; settle++) await finalizeTurn(f.task.id, f.turnId, BUILTIN_ADAPTERS.cursor!, 0, f.log, `${f.log}.err`);
+  return readFileSync(f.log, "utf8");
+}
+
+test("a cursor turn's finished log is captured once it settles, without a second copy or note on a second settle", async () => {
   const f = fixture();
   const path = join(f.worktree, "shot.png");
   writeFileSync(path, samplePng());
-  const read = { type: "tool_call", subtype: "completed", call_id: "call-log-1", tool_call: { readToolCall: { args: { path }, result: { success: { path, fileSize: 1 } } } } };
-  writeFileSync(f.log, [
-    JSON.stringify({ type: "tool_call", subtype: "started", call_id: "call-log-1", tool_call: { readToolCall: { args: { path } } } }),
-    JSON.stringify(read),
-    JSON.stringify({ type: "result", subtype: "success", result: "Seen.", is_error: false }),
-  ].join("\n") + "\n");
-  writeFileSync(`${f.log}.err`, "");
-  for (let settle = 0; settle < 2; settle++) await finalizeTurn(f.task.id, f.turnId, BUILTIN_ADAPTERS.cursor!, 0, f.log, `${f.log}.err`);
+  const log = await settleCursorLog(f, cursorRead("call-log-1", path, Date.now()), 2);
   expect(outputs(f.turnId)).toEqual([expect.objectContaining({ name: "shot.png", step: { id: "call-log-1", label: `read ${path}` } })]);
-  expect(readFileSync(f.log, "utf8")).toContain("· Image output: shot.png");
+  expect(log.split("\n").filter((line) => line.startsWith("· Image output: shot.png"))).toHaveLength(1);
+});
+
+test("a cursor path overwritten between two reads gives only the later read the image", async () => {
+  const f = fixture();
+  const path = join(f.worktree, "shot.png");
+  const before = Buffer.concat([samplePng(), Buffer.from("before")]);
+  const after = Buffer.concat([samplePng(), Buffer.from("after")]);
+  writeFileSync(path, before);
+  const readBefore = Date.now();
+  // the re-shot lands after the first read completed and before the second
+  writeFileSync(path, after);
+  utimesSync(path, new Date(readBefore + 5_000), new Date(readBefore + 5_000));
+  const log = await settleCursorLog(f, [...cursorRead("read-before", path, readBefore), ...cursorRead("read-after", path, readBefore + 10_000)]);
+  const [image, ...rest] = outputs(f.turnId);
+  expect(rest).toEqual([]);
+  expect(image).toEqual(expect.objectContaining({ name: "shot.png", step: { id: "read-after", label: `read ${path}` } }));
+  expect(readFileSync(outputImagePath(f.task.id, 1, image!.id))).toEqual(after);
+  expect(log).toContain("· Image output unavailable: shot.png changed after it was read");
+});
+
+test("a cursor read that names no time is not given the file", async () => {
+  const f = fixture();
+  const path = join(f.worktree, "shot.png");
+  writeFileSync(path, samplePng());
+  const log = await settleCursorLog(f, cursorRead("read-untimed", path, null));
+  expect(outputs(f.turnId)).toEqual([]);
+  expect(log).toContain("· Image output unavailable: shot.png has no read time");
 });
 
 test("opencode captures a read tool's data-URL attachment", () => {
@@ -162,29 +199,64 @@ test("unsafe paths are refused and the transcript says why", () => {
   expect(outputs(f.turnId)).toEqual([]);
 });
 
-test("published images take the running command step; sharing a viewed image promotes it", () => {
-  const f = fixture();
+/** Publish as `wisp output add` does: through the route, which binds the image to its caller. */
+async function addOutput(f: ReturnType<typeof fixture>, bytes: Uint8Array, name: string) {
+  const url = new URL(`http://wisp.test/api/tasks/${f.task.id}/outputs/1?name=${encodeURIComponent(name)}`);
+  const response = await outputRoute(new Request(url, { method: "POST", body: Buffer.from(bytes) }), url, url.pathname, "POST")!;
+  expect(response.status).toBe(201);
+  return ((await response.json()) as { image: OutputImage }).image;
+}
+
+const bash = (id: string, command: string) => ({ type: "tool_use", id, name: "Bash", input: { command } });
+const bashDone = (id: string) => ({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "ok" }] } });
+
+function claudeRecorder(f: ReturnType<typeof fixture>) {
   const outFd = openSync(f.log, "a"), errFd = openSync(`${f.log}.err`, "a");
+  const recorder = new TurnRecorder(f.turnId, BUILTIN_ADAPTERS.claude!, { ...loadConfig(), diagnosticEnabled: false }, outFd, errFd);
+  return { recorder, close: () => { recorder.finish(); closeSync(outFd); closeSync(errFd); } };
+}
+
+test("a published image takes the step whose command published it; sharing a viewed image promotes it", async () => {
+  const f = fixture();
+  const { recorder, close } = claudeRecorder(f);
   try {
-    const recorder = new TurnRecorder(f.turnId, BUILTIN_ADAPTERS.claude!, { ...loadConfig(), diagnosticEnabled: false }, outFd, errFd);
     const viewed = Buffer.concat([samplePng(), Buffer.from([7])]);
     recorder.recordEvent({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_read", name: "Read", input: { file_path: "/work/before.png" } }] } });
     recorder.recordEvent({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_read", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: viewed.toString("base64") } }] }] } });
-    recorder.recordEvent({ type: "assistant", message: { content: [{ type: "tool_use", id: "toolu_bash", name: "Bash", input: { command: "wisp output add before.png --turn 1" } }] } });
-    const shared = publishOutputImage(f.turnId, samplePng(), "after.png", "published");
-    expect(shared.step).toEqual({ id: "toolu_bash", label: "wisp output add before.png --turn 1" });
-    const promoted = publishOutputImage(f.turnId, viewed, "before.png", "published");
-    expect(promoted).toEqual(expect.objectContaining({ name: "before.png", source: "published", step: { id: "toolu_bash", label: "wisp output add before.png --turn 1" } }));
-    recorder.recordEvent({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "toolu_bash", content: "published" }] } });
-    expect(publishOutputImage(f.turnId, Buffer.concat([samplePng(), Buffer.from([8])]), "late.png", "published").step).toBeUndefined();
+    const command = "wisp output add .context/after.png --turn 1 && wisp output add ./before.png --turn 1";
+    recorder.recordEvent({ type: "assistant", message: { content: [bash("toolu_bash", command)] } });
+    expect((await addOutput(f, samplePng(), "after.png")).step).toEqual({ id: "toolu_bash", label: command });
+    expect(await addOutput(f, viewed, "before.png")).toEqual(expect.objectContaining({ name: "before.png", source: "published", step: { id: "toolu_bash", label: command } }));
+    // a name the command does not publish, then any name once the command has finished
+    expect((await addOutput(f, Buffer.concat([samplePng(), Buffer.from([8])]), "fter.png")).step).toBeUndefined();
+    recorder.recordEvent(bashDone("toolu_bash"));
+    expect((await addOutput(f, Buffer.concat([samplePng(), Buffer.from([9])]), "after.png")).step).toBeUndefined();
     expect(outputs(f.turnId).map((image) => [image.name, image.source, image.step?.id ?? null])).toEqual([
       ["before.png", "published", "toolu_bash"],
       ["after.png", "published", "toolu_bash"],
-      ["late.png", "published", null],
+      ["fter.png", "published", null],
+      ["after.png", "published", null],
     ]);
-    recorder.finish();
-    expect(publishOutputImage(f.turnId, Buffer.concat([samplePng(), Buffer.from([9])]), "after-turn.png", "published").step).toBeUndefined();
-  } finally { closeSync(outFd); closeSync(errFd); }
+  } finally { close(); }
+});
+
+test("parallel calls: a publication is never given an unrelated running command, nor one of two that could be it", async () => {
+  const f = fixture();
+  const { recorder, close } = claudeRecorder(f);
+  try {
+    recorder.recordEvent({ type: "assistant", message: { content: [bash("publisher", "wisp output add shot.png --turn 1"), bash("unrelated", "bun run test")] } });
+    expect((await addOutput(f, samplePng(), "shot.png")).step).toEqual({ id: "publisher", label: "wisp output add shot.png --turn 1" });
+    recorder.recordEvent({ type: "assistant", message: { content: [bash("twin", "wisp output add ../shot.png --turn 1")] } });
+    expect((await addOutput(f, Buffer.concat([samplePng(), Buffer.from([1])]), "shot.png")).step).toBeUndefined();
+    recorder.recordEvent(bashDone("publisher"));
+    recorder.recordEvent(bashDone("twin"));
+    expect((await addOutput(f, Buffer.concat([samplePng(), Buffer.from([2])]), "shot.png")).step).toBeUndefined();
+    recorder.recordEvent({ type: "assistant", message: { content: [bash("shooter", "wisp capture http://127.0.0.1:5173/ --dark")] } });
+    expect(publishingStep(f.turnId, "capture")).toEqual({ id: "shooter", label: "wisp capture http://127.0.0.1:5173/ --dark" });
+    recorder.recordEvent({ type: "assistant", message: { content: [bash("shooter-2", "wisp capture http://127.0.0.1:5173/settings")] } });
+    expect(publishingStep(f.turnId, "capture")).toBeNull();
+  } finally { close(); }
+  expect(publishingStep(f.turnId, { add: "shot.png" })).toBeNull();
 });
 
 test("manifests without steps still parse, and a malformed step drops only the step", () => {

@@ -5,7 +5,7 @@ import type { OutputImage, OutputStep } from "../../shared/api/outputs";
 import { sniffAttachmentHeader } from "../../shared/attachment-sniff";
 import { TASKS_DIR } from "./config";
 import { emit } from "./events";
-import { runningTurnStep } from "./recording/broker";
+import { openTurnCommands } from "./recording/broker";
 import { db } from "./store-database";
 import { getTask, getTurn } from "./store";
 
@@ -59,17 +59,31 @@ export function outputImagePath(taskId: string, turn: number, imageId: string): 
   return join(TASKS_DIR, taskId, "outputs", `turn-${turn}`, imageId);
 }
 
+const OUTPUT_ADD = /\boutput\s+add\b/;
+const CAPTURE = /\bwisp\s+capture\b/;
+const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 /**
- * Store before publishing the manifest; a failed write never advertises a missing image.
- * A published image without an explicit step takes the command step running
- * on its turn: the agent's `wisp output add` or `wisp capture`.
+ * The step that published an image: the one open command step on its turn
+ * that is that publication, or null when no step or more than one could be.
+ * Never a guess from which step happens to be running, since steps run in
+ * parallel. `wisp output add` must name the file (the basename the CLI
+ * sends); `wisp capture` names no file, so it must be the only capture open.
  */
+export function publishingStep(turnId: number, publication: { add: string } | "capture"): OutputStep | null {
+  const names = publication === "capture" ? null : new RegExp(`(?:^|[\\s/'"=])${escaped(publication.add)}(?=$|[\\s'";&|)])`);
+  const callers = openTurnCommands(turnId).filter(({ command }) =>
+    names ? OUTPUT_ADD.test(command) && names.test(command) : CAPTURE.test(command));
+  return callers.length === 1 ? callers[0]!.step : null;
+}
+
+/** Store before publishing the manifest; a failed write never advertises a missing image. */
 export function publishOutputImage(
   turnId: number,
   bytes: Uint8Array,
   name: string,
   source: OutputImage["source"],
-  step: OutputStep | null = source === "published" ? runningTurnStep(turnId) : null,
+  step: OutputStep | null = null,
 ): OutputImage {
   if (bytes.length === 0) throw new OutputError("output image is empty");
   if (bytes.length > MAX_OUTPUT_IMAGE_BYTES) throw new OutputError("output image exceeds the 8 MiB limit", 413);

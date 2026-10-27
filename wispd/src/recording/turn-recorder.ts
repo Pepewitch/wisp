@@ -271,7 +271,7 @@ export class TurnRecorder {
     const bounded = projected.value && !Array.isArray(projected.value) && typeof projected.value === "object"
       ? projected.value as Record<string, unknown>
       : null;
-    if (bounded && this.steps) this.broker.runningStep = this.steps(bounded);
+    if (bounded && this.steps) this.broker.openCommands = this.steps(bounded);
     this.recordProjectedLine(projected.json, externalized, bounded, categoryOf(bounded, "stdout"));
   }
 

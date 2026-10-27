@@ -49,7 +49,7 @@ when there was none):
 | Claude | base64 image parts of a `tool_result`, e.g. from `Read`; the bytes are replaced in the transcript |
 | Droid | base64 image parts of a `tool_result`, e.g. from `Read`; the bytes are replaced in the transcript |
 | Codex | MCP image content; `image_view` files (copied from their path); `image_generation` results, recorded as **shared** since the agent made them for you (the whole base64 `result`, captured before the transcript is bounded; the copy in Codex's own home is not read) |
-| Cursor | image files read by `readToolCall` (copied from their path) |
+| Cursor | image files read by `readToolCall` (copied from their path once the turn ends, and only if unchanged since that read) |
 | OpenCode | data-URL image attachments on a completed `read` tool |
 
 Codex and Cursor report only a path, so Wisp copies the file. It resolves the
@@ -61,7 +61,13 @@ per-image limit, that is inside one of:
 - the OS temp directory or `/tmp`, unless that place is also inside the Wisp
   home.
 
-Anything else, including the rest of the Wisp home, is refused. A refusal,
+Anything else, including the rest of the Wisp home, is refused. Cursor and
+OpenCode write their output straight to the log, so Wisp reads their events
+only once the turn ends. A Cursor read is then given the file only if the
+file was last modified no later than the read completed (the event's
+`completedAtMs`); otherwise its bytes may not be what that step saw, and the
+activity says the file changed after it was read. A path read twice
+therefore gives at most its last read the image. A refusal,
 an invalid image or a failed write adds an `Image output unavailable: <why>`
 line to the activity while the agent continues. A captured image leaves an
 `Image output: <name> (<bytes>; <id>)` line in its place in the log and the
@@ -89,11 +95,14 @@ turn's `outputs` (`GET /api/tasks/<id>/outputs/<turn>` and every turn in the
 task API). `id` is the tool call id the turn's activity timeline gives that
 step; `label` names it (`Read /work/clip.png`, or a command step's command).
 A native image's step is the tool call that produced it. A published image's
-step is the latest started, unfinished command step of its turn when it was
-published, which is the agent's own `wisp output add` or `wisp capture`
-(OpenCode reports a step only once it has finished, so its published images
-have none). `step` is absent on images recorded before steps were kept, and
-when no step could be determined.
+step is the command step that published it: among the command steps running
+when it arrives, the one whose command is `wisp output add` naming that
+file's name, or for `wisp capture` the only running capture. When no running
+step matches, or several do (parallel calls publishing the same name), the
+image has no step rather than a guessed one. Only Claude, Droid and Codex
+turns report running steps to Wisp; Cursor and OpenCode are read once the
+turn ends, so their published images have no step. `step` is also absent on
+images recorded before steps were kept.
 
 ## CLI and retention
 

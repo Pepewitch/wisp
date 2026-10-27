@@ -1,6 +1,6 @@
 import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, sep } from "node:path";
+import { basename, isAbsolute, join, sep } from "node:path";
 import { TASKS_DIR, WISP_HOME } from "./config";
 import { MAX_OUTPUT_IMAGE_BYTES, OutputError } from "./outputs";
 import { getTask, getTurn } from "./store";
@@ -28,8 +28,13 @@ function within(path: string, root: string | null): boolean {
  *
  * Only a regular file within the per-image cap is read; the caller's
  * publication sniffs the bytes and applies the per-turn caps.
+ *
+ * `readAtMs` is for a copy made after the fact (a log read once the turn
+ * settles): the file must not have changed since that time, or its bytes are
+ * not the ones the step saw. `null` means the read's time is unknown, which
+ * cannot be checked and is refused. Omitted, the read just happened.
  */
-export function readViewedImage(turnId: number, path: string): Uint8Array {
+export function readViewedImage(turnId: number, path: string, readAtMs?: number | null): Uint8Array {
   if (!isAbsolute(path)) throw new OutputError("the image path is not absolute");
   const real = realOrNull(path);
   if (!real) throw new OutputError("the image file was not found");
@@ -46,6 +51,8 @@ export function readViewedImage(turnId: number, path: string): Uint8Array {
     const stat = fstatSync(fd);
     if (!stat.isFile()) throw new OutputError("the image path is not a regular file");
     if (stat.size > MAX_OUTPUT_IMAGE_BYTES) throw new OutputError("output image exceeds the 8 MiB limit", 413);
+    if (readAtMs === null) throw new OutputError(`${basename(path)} has no read time, so Wisp cannot tell it still holds what was read`);
+    if (readAtMs !== undefined && Math.floor(stat.mtimeMs) > readAtMs) throw new OutputError(`${basename(path)} changed after it was read`);
     const bytes = Buffer.alloc(stat.size);
     let offset = 0;
     while (offset < bytes.length) {
