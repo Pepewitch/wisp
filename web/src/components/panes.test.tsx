@@ -259,6 +259,91 @@ describe("the dock's divider", () => {
   })
 })
 
+describe("the panel's glide", () => {
+  /** a 1600px window whose panels' pixels follow their laid-out share, on a screen that allows motion */
+  function laidOut() {
+    const spies = [
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+        () => ({ x: 0, y: 0, top: 0, left: 0, right: 1600, bottom: 800, width: 1600, height: 800, toJSON: () => ({}) }) as DOMRect,
+      ),
+      vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+        const share = this.style.flexGrow === "" ? 100 / 3 : Number(this.style.flexGrow)
+        return Math.round((share / 100) * 1600)
+      }),
+      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(800),
+      vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
+        return [...(this.parentElement?.children ?? [])].indexOf(this)
+      }),
+    ]
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }))
+    return () => {
+      spies.forEach((spy) => spy.mockRestore())
+      vi.unstubAllGlobals()
+      localStorage.removeItem("wisp_tool_panel_width")
+    }
+  }
+  const outer = () => document.getElementById("sidebar")!.parentElement!
+  const toolPanel = () => [...outer().children].filter((child) => child.hasAttribute("data-panel")).at(-1)!
+  const landed = () => act(() => void fireEvent.transitionEnd(toolPanel(), { propertyName: "flex-grow" }))
+
+  it("tells the centre where it will land, pins the tool's width, and keeps the tool on screen while it shuts", async () => {
+    const restore = laidOut()
+    const settling = vi.fn()
+    const shell = (open: boolean) => (
+      <PaneShell
+        sidebar={<div />}
+        centre={<div />}
+        panel={panel({ terminalKey: "t", toolOpen: open, terminalOpen: false })}
+        panelOpen={open}
+        onCentreSettling={settling}
+      />
+    )
+    try {
+      localStorage.setItem("wisp_tool_panel_width", "400")
+      const view = render(shell(false))
+      await act(async () => {})
+      settling.mockClear()
+      view.rerender(shell(true))
+      await act(async () => {})
+      expect(outer()).toHaveAttribute("data-glide", "in")
+      // the content is laid out once, at the width it lands at, not on every frame
+      expect(outer().style.getPropertyValue("--tool-pin")).toMatch(/^\d+(\.\d+)?px$/)
+      const [[centre]] = settling.mock.calls as [[number]]
+      expect(centre).toBeGreaterThan(0)
+      expect(centre).toBeLessThan(1600 - 400)
+      await landed()
+      expect(outer()).not.toHaveAttribute("data-glide")
+      expect(settling).toHaveBeenLastCalledWith(null)
+
+      view.rerender(shell(false))
+      await act(async () => {})
+      expect(outer()).toHaveAttribute("data-glide", "out")
+      // what slides out is the tool, not an empty box; nothing in it takes a click
+      expect(document.querySelector('[data-tool-region="tool"]')).not.toHaveClass("hidden")
+      expect(document.querySelector("[data-tool-pin]")).toHaveAttribute("inert")
+      await landed()
+      expect(document.querySelector('[data-tool-region="tool"]')).toHaveClass("hidden")
+    } finally {
+      restore()
+    }
+  })
+
+  it("does not glide, pin or hold anything under reduced motion", async () => {
+    const settling = vi.fn()
+    const shell = (open: boolean) => (
+      <PaneShell sidebar={<div />} centre={<div />} panel={panel({ terminalKey: "t", toolOpen: open, terminalOpen: false })} panelOpen={open} onCentreSettling={settling} />
+    )
+    // jsdom has no matchMedia, which reads as reduced motion
+    const view = render(shell(true))
+    await act(async () => {})
+    view.rerender(shell(false))
+    await act(async () => {})
+    expect(outer()).not.toHaveAttribute("data-glide")
+    expect(document.querySelector('[data-tool-region="tool"]')).toHaveClass("hidden")
+    expect(settling.mock.calls.every(([px]) => px === null)).toBe(true)
+  })
+})
+
 describe("the sidebar's divider", () => {
   // As much of a browser's layout as the library reads: the shell's children
   // sit side by side in a 1600px row, a panel as wide as its flex-grow share,

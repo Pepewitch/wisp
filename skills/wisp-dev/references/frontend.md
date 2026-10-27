@@ -1175,8 +1175,8 @@ and Copy branch name. The autopilot switches are the summary card's (§5n). The 
 with `Parent ›`: the parent opens the parent, is capped at 14rem and shrinks
 three times as fast as the title, so the task you are in stays readable.
 `Local` and `Archived` follow as quiet words, only when true. Where the centre
-is too narrow for the summary card, its chip sits right after the title and
-takes the title's dot with it (§5n).
+is too narrow for the summary card, its chip sits right after the title; the
+dot stays before the title in every state, so the fold never moves it (§5n).
 The dot's hover names background work, as everywhere (`StateDot`).
 
 Then **what you can open** for that task (`top-bar-tools.tsx`): the tool
@@ -1679,10 +1679,14 @@ centre pane (`usePaneFitsCard`) keeps the card from 1000px
 (`SUMMARY_CARD_MIN_PANE`: the 680px measure plus the gutter, and room to
 breathe) and folds it below: 999px is the chip, 1001px the card. Opening a
 tool is the common way across the line, and it never changes the window. The
-first read happens before paint, so a wide pane never flashes the chip.
+first read happens before paint, so a wide pane never flashes the chip. While
+the tool panel glides, the pane's width at the glide's END decides
+(`Shell`'s `onCentreSettling`), so the card folds once, as the glide starts,
+and never flickers while the moving edge crosses the line.
 
-**The chip** is `● Running · ⎇ #318 ⌄` right after the title, and the
-title's own dot moves into it: each fact has one quick look on screen, card
+**The chip** is `Running · ⎇ #318 ⌄` right after the title. It carries the
+state's word and the PR; the state's dot stays with the title, so folding the
+card moves nothing in the bar. Each fact has one quick look on screen, card
 or chip, never both. It is a base-ui Popover (`POPOVER_SURFACE`,
 `--z-menu`) holding the same card, grown from the chip by the shared rule.
 It hangs from the top bar, so it never flips above it: it keeps its side
@@ -1698,8 +1702,12 @@ the chip's popover offers *Show beside the conversation* where it would fit.
 Nothing opens by itself: a task that needs you changes its dot, the lead row
 and the notification, never the layout.
 
-**Motion.** The card eases up from 97% as it comes back (`--dur-in`,
-`--ease-out`, no spring: a surface); a row's panel grows to base-ui's
+**Motion.** The card's gutter folds in width rather than vanishing: it
+narrows to nothing and fades with the card still in it (`.wisp-gutter`), and
+opens the same way, so the reading column re-centres instead of jumping
+129px. Beside a tool panel glide it keeps the panel's timing, so the column's
+room changes on one curve. The chip fades in as the card goes. The card eases
+up from 97% as it comes back (`--dur-in`, `--ease-out`, no spring: a surface); a row's panel grows to base-ui's
 `--collapsible-panel-height` on `--dur-size` / `--ease-glide` and closes on
 `--dur-out`; the chevron turns. All of it is in index.css's Motion block
 and instant under `prefers-reduced-motion`.
@@ -1788,10 +1796,15 @@ xterm keeps Ctrl+Tab for the shell and task switching would stop there
 (`claimTerminalFocus`). Closing a region that holds the focus hands it to the
 composer, since focus in a `hidden` box is focus nowhere.
 
-**Motion.** The panel's width glides open on `--dur-size` / `--ease-glide` and
-shut on `--dur-out` / `--ease-out`, and only while it opens or closes
-(`data-glide` on the group): a divider drag follows the pointer. Instant under
-`prefers-reduced-motion`. A reload restores the layout without performing it.
+**Motion.** The panel's width glides open on `--dur-size` and shut on the
+quicker `--dur-in`, both on `--ease-glide`, and only while it opens or closes
+(`data-glide` on the group): a divider drag follows the pointer. (`--dur-out`
+is a popup's, too short to see a pane-wide edge travel.) While it glides the
+content keeps its resting width (`--tool-pin`), so it slides with the divider
+instead of rewrapping every frame and a Terminal refits once, when the size
+settles; closing keeps the tool on screen until the panel is shut. Instant
+under `prefers-reduced-motion`, where nothing waits on a glide. A reload
+restores the layout without performing it.
 
 **Saved layouts.** The always-open column saved `wisp-ui-main` (with a `right`
 panel) and `wisp-ui-right` (Changes over Terminal). They moved once to

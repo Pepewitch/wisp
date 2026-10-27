@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import * as Resizable from "react-resizable-panels"
-import { useDefaultLayout, usePanelRef, type Layout, type PanelImperativeHandle } from "react-resizable-panels"
+import { useDefaultLayout, useGroupRef, usePanelRef, type Layout, type PanelImperativeHandle } from "react-resizable-panels"
 
 import {
   DOCK_LAYOUT_ID,
@@ -10,6 +10,7 @@ import {
   readPanelWidth,
   writePanelWidth,
 } from "@/lib/pane-layouts"
+import { prefersReducedMotion } from "@/lib/motion"
 import { cn } from "@/lib/utils"
 
 /**
@@ -70,6 +71,15 @@ function Handle({ className, disabled = false }: { className?: string; disabled?
  * person last dragged it to (one width for every task), closing glides it
  * shut, quicker. Dragging its divider past the minimum closes it too, and
  * `onPanelDraggedShut` tells the owner so the top bar agrees.
+ *
+ * While it glides, the panel's content keeps one width (`--tool-pin`): it
+ * slides in and out with the divider instead of rewrapping on every frame,
+ * and a Terminal in it refits once, when the size settles. Closing keeps the
+ * tool on screen until the panel is shut (`PanelClosing`), so what slides out
+ * is the tool, not an empty box. `onCentreSettling` hands the owner the centre
+ * pane's width at the glide's END, then null once it lands, so whatever the
+ * centre decides by its width (the summary card's fold) decides once, not
+ * each time the moving edge crosses a line.
  */
 export function Shell({
   sidebar,
@@ -78,6 +88,7 @@ export function Shell({
   panelOpen,
   onPanelDraggedShut,
   onSidebarResize,
+  onCentreSettling,
 }: {
   sidebar: ReactNode
   centre: ReactNode
@@ -86,23 +97,50 @@ export function Shell({
   onPanelDraggedShut?: () => void
   /** the sidebar's width in px, on every change — the top bar lines its task up with the centre */
   onSidebarResize?: (px: number) => void
+  /** the centre's width in px once the panel's glide lands; null when nothing glides */
+  onCentreSettling?: (px: number | null) => void
 }) {
   // before the library's first read of its new id
   useState(() => migrateSavedLayouts())
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: MAIN_LAYOUT_ID })
+  const groupRef = useGroupRef()
+  const groupElement = useRef<HTMLDivElement>(null)
   const panelRef = usePanelRef()
   const [glide, endGlide] = usePanelGlide(panelOpen)
   const shut = useRef(onPanelDraggedShut)
+  const settling = useRef(onCentreSettling)
+  // the content is pinned from a glide's start until it lands, through a reversal
+  const pinned = useRef(false)
   useEffect(() => {
     shut.current = onPanelDraggedShut
-  }, [onPanelDraggedShut])
+    settling.current = onCentreSettling
+  }, [onPanelDraggedShut, onCentreSettling])
+  useEffect(() => {
+    if (glide !== null) return
+    pinned.current = false
+    settling.current?.(null)
+  }, [glide])
 
   useLayoutEffect(() => {
     const handle = panelRef.current
-    if (!handle) return
-    if (panelOpen && handle.isCollapsed()) handle.resize(readPanelWidth())
-    else if (!panelOpen && !handle.isCollapsed()) handle.collapse()
-  }, [panelOpen, panelRef])
+    const group = groupElement.current
+    if (!handle || !group) return
+    const opening = panelOpen && handle.isCollapsed()
+    if (!opening && (panelOpen || handle.isCollapsed())) return
+    // the glide was set in this same commit; a restored layout is not glided
+    const gliding = group.hasAttribute("data-glide")
+    // a panel shut mid-glide keeps the width its content was already pinned at
+    if (gliding && !opening && !pinned.current) group.style.setProperty("--tool-pin", `${handle.getSize().inPixels}px`)
+    // the library's percentages are of the panels' own pixels, which a glide never changes in sum
+    const total = [...group.children].reduce((px, child) => px + (child.hasAttribute("data-panel") ? (child as HTMLElement).offsetWidth : 0), 0)
+    if (opening) handle.resize(readPanelWidth())
+    else handle.collapse()
+    const layout = groupRef.current?.getLayout()
+    if (!gliding || !layout) return
+    if (opening) group.style.setProperty("--tool-pin", `${((layout.tool ?? 0) / 100) * total}px`)
+    pinned.current = true
+    settling.current?.(((layout.centre ?? 0) / 100) * total)
+  }, [panelOpen, panelRef, groupRef])
 
   const layoutChanged = (layout: Layout, meta: { isUserInteraction: boolean }) => {
     onLayoutChanged(layout, meta)
@@ -122,11 +160,14 @@ export function Shell({
   return (
     <Resizable.Group
       orientation="horizontal"
+      groupRef={groupRef}
+      elementRef={groupElement}
       defaultLayout={defaultLayout}
       onLayoutChanged={layoutChanged}
       data-glide={glide ?? undefined}
       onTransitionEnd={(event) => {
-        if (event.propertyName === "flex-grow") endGlide()
+        // the group's own panels, not a transition bubbling up from inside one
+        if (event.propertyName === "flex-grow" && event.target instanceof Element && event.target.parentElement === event.currentTarget) endGlide()
       }}
       className="flex min-h-0 flex-1"
     >
@@ -154,27 +195,35 @@ export function Shell({
         // clip rather than scroll while it glides: the content keeps its own scrollers
         style={{ overflow: "hidden" }}
       >
-        {panel}
+        {/* a tool sliding out is on its way off the screen, not something to click */}
+        <div data-tool-pin className="flex h-full min-w-0" inert={glide === "out"}>
+          <PanelClosing.Provider value={glide === "out"}>{panel}</PanelClosing.Provider>
+        </div>
       </Resizable.Panel>
     </Resizable.Group>
   )
 }
+
+/** The panel is gliding shut: its content stays as it was until it is (`Shell`). */
+const PanelClosing = createContext(false)
 
 /**
  * Mark the group while the panel opens or closes, so `index.css` animates the
  * panels' flex-grow for exactly that long and no longer: a divider drag must
  * follow the pointer, not ease after it. Set in the same render as the change
  * it animates — a transition takes its timing from the style it changes to —
- * and cleared when the transition ends, or after a beat when there is none
- * (`prefers-reduced-motion`). The first render never glides: a reload
- * restores the layout, it does not perform it.
+ * and cleared when the tool panel's transition ends, or after a beat when
+ * there is none (a panel the divider already shut). The first render never
+ * glides: a reload restores the layout, it does not perform it. Nor does a
+ * screen that asks for reduced motion: there the panel snaps, and nothing
+ * waits on it.
  */
 function usePanelGlide(open: boolean): readonly ["in" | "out" | null, () => void] {
   const [seen, setSeen] = useState(open)
   const [glide, setGlide] = useState<"in" | "out" | null>(null)
   if (seen !== open) {
     setSeen(open)
-    setGlide(open ? "in" : "out")
+    setGlide(prefersReducedMotion() ? null : open ? "in" : "out")
   }
   useEffect(() => {
     if (glide === null) return
@@ -200,13 +249,16 @@ const GLIDE_FALLBACK_MS = 400
  *
  * Esc closes the tool when focus is in it and nothing inside wanted the key.
  * Inside the Terminal, Esc is the shell's; ⌃` closes it there.
+ *
+ * While the whole panel glides shut it goes on showing what it showed, so the
+ * tool slides out with the divider; it hides once the panel is closed.
  */
 export function ToolPanel({
   tool,
   terminal,
   terminalKey,
-  toolOpen,
-  terminalOpen,
+  toolOpen: toolAsked,
+  terminalOpen: terminalAsked,
   onCloseTool,
   onCloseTerminal,
 }: {
@@ -219,6 +271,11 @@ export function ToolPanel({
   onCloseTool: () => void
   onCloseTerminal: () => void
 }) {
+  const closing = useContext(PanelClosing)
+  const [held, setHeld] = useState({ tool: toolAsked, terminal: terminalAsked })
+  if (!closing && (held.tool !== toolAsked || held.terminal !== terminalAsked)) setHeld({ tool: toolAsked, terminal: terminalAsked })
+  const toolOpen = closing ? held.tool : toolAsked
+  const terminalOpen = closing ? held.terminal : terminalAsked
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({ id: DOCK_LAYOUT_ID })
   const toolRef = usePanelRef()
   const terminalRef = usePanelRef()

@@ -116,13 +116,13 @@ describe("the top bar's task", () => {
     expect(screen.getByText("a deleted task")).toBeInTheDocument()
   })
 
-  it("leaves the PR and the context to the summary card, and hands its dot to the chip", () => {
+  it("leaves the PR and the context to the summary card, and keeps its dot beside the chip", () => {
     const { container } = mount(<TopBarTask task={{ ...TASK, context_tokens: 84_000 }} chip={<span data-testid="chip" />} dragRegion={false} />)
     expect(screen.queryByTestId("pull-request-status")).toBeNull()
     expect(container).not.toHaveTextContent("context")
     expect(screen.getByTestId("chip")).toBeInTheDocument()
-    // one quick look per fact: the chip carries the state, so the title does not
-    expect(within(titleButton()).queryByRole("img")).toBeNull()
+    // the card folding into the chip never moves the title: the dot stays before it
+    expect(titleButton().firstElementChild).toHaveAttribute("data-state", "running")
   })
 })
 

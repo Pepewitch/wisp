@@ -21,7 +21,9 @@ import type { ReactNode } from "react"
  * `Parent ›`; Local and Archived follow as quiet words, only when true.
  *
  * Where the pane is too narrow for the summary card, its chip follows the
- * title (`chip`), and the dot moves into it: one quick look per fact.
+ * title (`chip`). The dot stays before the title in every state: the chip
+ * carries the state's word and the PR, so folding the card never moves the
+ * title.
  *
  * On Desktop the bar is the window's drag region. Tauri drags only on an
  * element that carries `data-tauri-drag-region` itself, never on its children,
@@ -49,7 +51,7 @@ export function TopBarTask({
           title={{
             trigger: (
               <>
-                {!chip && <StateDot state={task.state} background={task.background} pausedOnNetwork={pausedOnNetwork(task)} />}
+                <StateDot state={task.state} background={task.background} pausedOnNetwork={pausedOnNetwork(task)} />
                 <span className="min-w-0 truncate">{task.title}</span>
                 {/* wrapped, so the trigger's `[&>svg]` sizing leaves the chevron alone */}
                 <span className="flex shrink-0 items-center">
