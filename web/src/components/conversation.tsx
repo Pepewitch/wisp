@@ -195,7 +195,9 @@ export function Conversation({
       onReveal={revealFileHandler(runtime.connectionId, task?.worktree_path ?? null)}
     >
       <QuestionnaireProvider value={questionnaire}>
-      <div className="relative flex min-h-0 flex-1 flex-col">
+      {/* Out under the summary card's gutter, so the scrollbar sits at the
+          pane's edge; the scroller pads its content back by the same width. */}
+      <div className="relative -mr-(--summary-gutter) flex min-h-0 flex-1 flex-col">
         <div
           aria-hidden
           className="pointer-events-none absolute inset-x-0 top-0 z-(--z-pane) h-6 bg-gradient-to-b from-background from-30% to-transparent"
@@ -208,7 +210,7 @@ export function Conversation({
           tabIndex={-1}
           data-testid="conversation-viewport"
           className={cn(
-            "scroll-slim min-h-0 flex-1 overflow-y-auto outline-none [overflow-anchor:auto]",
+            "scroll-slim min-h-0 flex-1 overflow-y-auto pr-(--summary-gutter) outline-none [overflow-anchor:auto]",
             // ONE axis, and it is vertical (§5). `overflow-y-auto` alone left
             // `overflow-x` computing to `auto` — the spec turns a `visible`
             // axis into `auto` the moment its partner scrolls — so anything
@@ -293,7 +295,7 @@ export function Conversation({
             the pane's corner is a margin away from the words it jumps to. The
             box has no height, so it never takes a click from the transcript. */}
         {!pinned && (
-          <div className="absolute inset-x-0 bottom-0 mx-auto max-w-(--reading-measure)">
+          <div className="absolute right-(--summary-gutter) bottom-0 left-0 mx-auto max-w-(--reading-measure)">
             <ConversationFloat waitingQuestions={waitingQuestions} onJump={jumpToLatest} />
           </div>
         )}

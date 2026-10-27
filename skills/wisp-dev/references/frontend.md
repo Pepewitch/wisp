@@ -338,7 +338,9 @@ column is simply the pane, so nothing changes there.
 
 - **The scroller spans the pane; its CONTENT keeps to the measure.** A wheel
   over a margin still scrolls the transcript, the scrollbar stays at the
-  pane's edge, and rule 1's one scroller is untouched.
+  pane's edge, and rule 1's one scroller is untouched. That includes the
+  summary card's gutter (§5n): the scroller runs under it by
+  `--summary-gutter` and pads its content back by the same width.
 - **The composer keeps to the same measure,** and its `@container` sits inside
   it, so the control bar answers the column's width, not the pane's.
 - **What anchors to the conversation anchors to the column.** The jump-to-latest
@@ -1637,7 +1639,13 @@ at touch size, is the top of the task sheet (§6b).
 a hairline, no shadow: it sits beside the reading column, not over it. It is
 its own column of the pane's flex row (258px with its margin), so it can
 never cover the transcript or the composer, and the reading column centres
-in what is left. Box one is where the task stands, box two is the session:
+in what is left. The pane sets `--summary-gutter` (258px, 0 while folded);
+only the conversation's scroller runs under the gutter, so its scrollbar sits
+at the pane's edge as it does with the card folded. The gutter lets the
+pointer through everywhere but the card, and a wheel the card cannot take
+(nothing to scroll, or at its end) scrolls the conversation. The find bar and
+the jump-to-latest float keep clear of it. Box one is where the task stands,
+box two is the session:
 
 | Row | Says | Opens to |
 |---|---|---|

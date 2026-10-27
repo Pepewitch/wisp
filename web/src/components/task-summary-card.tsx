@@ -1,4 +1,4 @@
-import { createContext, useContext, type ReactNode } from "react"
+import { createContext, useContext, type ReactNode, type WheelEvent } from "react"
 
 import { Switches } from "@/components/autopilot-pane"
 import type { HistoryLinks } from "@/components/autopilot-history-view"
@@ -23,6 +23,9 @@ import { cn } from "@/lib/utils"
  * column (frontend §5n). It sits in its own column of the pane's layout, so
  * it can never cover the transcript or the composer: when the pane is too
  * narrow for both, the shell draws the top bar's chip instead.
+ *
+ * The conversation's scroller runs under the gutter, out to the pane's edge.
+ * The gutter lets the pointer through to it everywhere but the card itself.
  */
 export function TaskSummaryGutter({ task, pullRequest, turns }: {
   task: ApiTask
@@ -32,10 +35,43 @@ export function TaskSummaryGutter({ task, pullRequest, turns }: {
   const model = useTaskSummary(task, pullRequest, turns)
   const [, setFolded] = useSummaryFolded()
   return (
-    <aside aria-label="Task summary" className="scroll-slim w-[258px] shrink-0 overflow-y-auto pt-3 pr-4.5 pb-3">
-      <SummaryCard model={model} onFold={() => setFolded(true)} />
+    <aside
+      aria-label="Task summary"
+      className="pointer-events-none relative z-(--z-pane) flex w-(--summary-gutter) shrink-0 flex-col pt-3 pr-4.5 pb-3"
+    >
+      <div onWheel={passWheelToConversation} className="scroll-slim pointer-events-auto min-h-0 overflow-y-auto">
+        <SummaryCard model={model} onFold={() => setFolded(true)} />
+      </div>
     </aside>
   )
+}
+
+/**
+ * The card is not inside the conversation's scroller, so the browser never
+ * chains a wheel from one to the other. A wheel the card (or a scroller in
+ * it) can still take is left alone; the rest scrolls the conversation.
+ */
+function passWheelToConversation(event: WheelEvent<HTMLElement>) {
+  // a pinch arrives as a ctrl-wheel: it zooms, it does not scroll
+  if (event.deltaY === 0 || event.ctrlKey) return
+  for (let node = event.target instanceof Element ? event.target : null; node; node = node.parentElement) {
+    if (scrollsFurther(node, event.deltaY)) return
+    if (node === event.currentTarget) break
+  }
+  const conversation = event.currentTarget.closest("main")?.querySelector<HTMLElement>("[data-testid=conversation-viewport]")
+  if (!conversation) return
+  const unit = event.deltaMode === 1 ? LINE_PX : event.deltaMode === 2 ? conversation.clientHeight : 1
+  conversation.scrollBy({ top: event.deltaY * unit })
+}
+
+/** What a `deltaMode` line is worth: Firefox's mouse wheel counts in lines. */
+const LINE_PX = 16
+
+function scrollsFurther(node: Element, deltaY: number): boolean {
+  if (node.scrollHeight <= node.clientHeight) return false
+  const { overflowY } = getComputedStyle(node)
+  if (overflowY !== "auto" && overflowY !== "scroll") return false
+  return deltaY > 0 ? Math.ceil(node.scrollTop + node.clientHeight) < node.scrollHeight : node.scrollTop > 0
 }
 
 /** Rows the gallery draws open, whatever this browser remembers. */

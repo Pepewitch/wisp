@@ -82,6 +82,7 @@ import type {
 } from "@/lib/types"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { useWispUpdateControl } from "@/lib/use-wisp-update-control"
+import { cn } from "@/lib/utils"
 
 const SHOW_ARCHIVED_KEY = "wisp_show_archived"
 const SHOW_ARCHIVED_SETTING = "show_archived"
@@ -559,8 +560,9 @@ function AppShell({
           // does not re-render the app on every frame
           onSidebarResize={(px) => barRef.current?.style.setProperty("--sidebar-width", `${px}px`)}
           centre={
-            // the card takes its own column, so it can never cover the reading column or the composer
-            <main ref={setPane} className="flex h-full min-w-0 bg-background">
+            // the card takes its own column, so it can never cover the reading column or the composer;
+            // the conversation's scroller alone runs under it, out to the pane's edge
+            <main ref={setPane} className={cn("flex h-full min-w-0 bg-background", placement === "card" && "[--summary-gutter:258px]")}>
               <div className="flex h-full min-w-0 flex-1 flex-col">
                 {firstRun ?? (
                   <>

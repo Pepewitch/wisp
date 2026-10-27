@@ -310,6 +310,59 @@ describe("the fold point", () => {
   })
 })
 
+describe("a wheel over the card", () => {
+  // the shell's centre pane: the conversation's scroller runs under the gutter
+  function pane() {
+    daemon()
+    mount(
+      <main>
+        <div data-testid="conversation-viewport" />
+        {card(TASK)}
+      </main>,
+    )
+    const conversation = screen.getByTestId("conversation-viewport")
+    conversation.scrollBy = vi.fn()
+    const scroller = screen.getByTestId("task-summary").parentElement!
+    return { conversation, scroller }
+  }
+
+  function overflowing(node: HTMLElement, scrollTop: number) {
+    node.style.overflowY = "auto"
+    Object.defineProperty(node, "clientHeight", { configurable: true, value: 300 })
+    Object.defineProperty(node, "scrollHeight", { configurable: true, value: 500 })
+    node.scrollTop = scrollTop
+  }
+
+  it("scrolls the conversation while the card has nothing to scroll", () => {
+    const { conversation } = pane()
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: 120 })
+    expect(conversation.scrollBy).toHaveBeenCalledWith({ top: 120 })
+    // Firefox's mouse wheel counts lines
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: -3, deltaMode: 1 })
+    expect(conversation.scrollBy).toHaveBeenLastCalledWith({ top: -48 })
+  })
+
+  it("leaves the wheel to the card while it can scroll that way, then hands it on at the end", () => {
+    const { conversation, scroller } = pane()
+    overflowing(scroller, 0)
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: 120 })
+    expect(conversation.scrollBy).not.toHaveBeenCalled()
+    // at the top, a wheel up belongs to the conversation
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: -120 })
+    expect(conversation.scrollBy).toHaveBeenCalledWith({ top: -120 })
+
+    overflowing(scroller, 200)
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: 120 })
+    expect(conversation.scrollBy).toHaveBeenLastCalledWith({ top: 120 })
+  })
+
+  it("never scrolls the conversation for a pinch", () => {
+    const { conversation } = pane()
+    fireEvent.wheel(screen.getByText("Done"), { deltaY: 40, ctrlKey: true })
+    expect(conversation.scrollBy).not.toHaveBeenCalled()
+  })
+})
+
 describe("the chip", () => {
   it("names the state and the PR, and opens the same card as a popover", async () => {
     daemon()
