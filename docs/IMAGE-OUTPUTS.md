@@ -40,45 +40,43 @@ file references are not loaded automatically.
 
 ## Native tool images
 
-Wisp captures the images a harness showed its agent, before transcript
-bounding, and names each after the file its tool call read (`image.<ext>`
-when there was none):
+Wisp captures the images a harness showed its agent while the turn runs,
+before transcript bounding, and names each after the file its tool call read
+(`image.<ext>` when there was none):
 
 | harness | what is captured |
 |---|---|
 | Claude | base64 image parts of a `tool_result`, e.g. from `Read`; the bytes are replaced in the transcript |
 | Droid | base64 image parts of a `tool_result`, e.g. from `Read`; the bytes are replaced in the transcript |
-| Codex | MCP image content; `image_view` files (copied from their path); `image_generation` results, recorded as **shared** since the agent made them for you (the whole base64 `result`, captured before the transcript is bounded; the copy in Codex's own home is not read) |
-| Cursor | image files read by `readToolCall` (copied from their path once the turn ends, and only if unchanged since that read) |
-| OpenCode | data-URL image attachments on a completed `read` tool |
+| Codex | MCP image content; `image_view` files, copied from their path when the item completes; `image_generation` results, recorded as **shared** since the agent made them for you (the whole base64 `result`, captured before the transcript is bounded; the copy in Codex's own home is not read) |
+| Cursor | nothing (known limit, below) |
+| OpenCode | nothing (known limit, below) |
 
-Codex and Cursor report only a path, so Wisp copies the file. It resolves the
-path first (following symlinks) and copies only a regular file, within the
-per-image limit, that is inside one of:
+Cursor and OpenCode write their output straight to the log, so Wisp reads
+their events only once the turn has ended. A file read from disk then cannot
+show what the step saw (it may have been overwritten or replaced since), so
+Wisp captures no images for them; images their agents share with
+`wisp output add` or `wisp capture` still appear. Running them through live
+input, as Claude, Droid and Codex are, would let Wisp capture their images
+the way it does for those.
+
+A Codex `image_view` reports only a path, so Wisp copies the file at that
+moment. It resolves the path first (following symlinks) and copies only a
+regular file, within the per-image limit, that is inside one of:
 
 - the task's worktree;
 - the task's own Wisp files (its attachments and outputs);
 - the OS temp directory or `/tmp`, unless that place is also inside the Wisp
   home.
 
-Anything else, including the rest of the Wisp home, is refused. Cursor and
-OpenCode write their output straight to the log, so Wisp reads their events
-only once the turn ends. A Cursor read is then given the file only if the
-file was last modified no later than the read completed (the event's
-`completedAtMs`); otherwise its bytes may not be what that step saw, and the
-activity says the file changed after it was read. A path read twice
-therefore gives at most its last read the image. A refusal,
+Anything else, including the rest of the Wisp home, is refused. A refusal,
 an invalid image or a failed write adds an `Image output unavailable: <why>`
 line to the activity while the agent continues. A captured image leaves an
 `Image output: <name> (<bytes>; <id>)` line in its place in the log and the
 raw transcript; the web hides that line where the image itself shows under
-its step. Other native image event
-types are not inferred from arbitrary tool JSON; publish those files with
-`wisp output add`. HTTP(S) Markdown images retain their existing
-click-to-load behavior.
-
-Publishing bytes the agent already looked at turns that image into a shared
-one, from the step that shared it.
+its step. Other native image event types are not inferred from arbitrary
+tool JSON; publish those files with `wisp output add`. HTTP(S) Markdown
+images retain their existing click-to-load behavior.
 
 To screenshot an app the agent launched, `wisp capture <url>` has Wisp take
 the shot in its own headless Chrome and store it here as a published image,
@@ -94,15 +92,20 @@ Each image records the step it came from, as `step: {id, label}` in the
 turn's `outputs` (`GET /api/tasks/<id>/outputs/<turn>` and every turn in the
 task API). `id` is the tool call id the turn's activity timeline gives that
 step; `label` names it (`Read /work/clip.png`, or a command step's command).
-A native image's step is the tool call that produced it. A published image's
-step is the command step that published it: among the command steps running
-when it arrives, the one whose command is `wisp output add` naming that
-file's name, or for `wisp capture` the only running capture. When no running
-step matches, or several do (parallel calls publishing the same name), the
-image has no step rather than a guessed one. Only Claude, Droid and Codex
-turns report running steps to Wisp; Cursor and OpenCode are read once the
-turn ends, so their published images have no step. `step` is also absent on
-images recorded before steps were kept.
+Wisp records a step only when it cannot be the wrong one:
+
+- A captured image's step is the tool call whose result carried it.
+- A published image's step is the turn's running command step when exactly
+  one command step is running and its command is the publisher
+  (`output add` for `wisp output add`, `wisp capture` for a capture). With
+  no command running, or more than one (parallel calls), it has no step.
+  Only Claude, Droid and Codex report running steps to Wisp, so Cursor and
+  OpenCode published images have no step.
+- Publishing bytes the agent already looked at turns that image into a
+  shared one, under the publishing step when there is one, and otherwise
+  under the step that first showed it.
+
+`step` is also absent on images recorded before steps were kept.
 
 ## CLI and retention
 

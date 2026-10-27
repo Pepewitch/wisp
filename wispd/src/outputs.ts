@@ -59,22 +59,17 @@ export function outputImagePath(taskId: string, turn: number, imageId: string): 
   return join(TASKS_DIR, taskId, "outputs", `turn-${turn}`, imageId);
 }
 
-const OUTPUT_ADD = /\boutput\s+add\b/;
-const CAPTURE = /\bwisp\s+capture\b/;
-const escaped = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const PUBLISHERS = { add: /\boutput\s+add\b/, capture: /\bwisp\s+capture\b/ } as const;
 
 /**
- * The step that published an image: the one open command step on its turn
- * that is that publication, or null when no step or more than one could be.
- * Never a guess from which step happens to be running, since steps run in
- * parallel. `wisp output add` must name the file (the basename the CLI
- * sends); `wisp capture` names no file, so it must be the only capture open.
+ * The step that published an image, only when it cannot be another: exactly
+ * one command step is open on the turn, and it runs the publishing command
+ * (`wisp output add`, or `wisp capture`). With several open, any of them
+ * could have run the publication, so none is named.
  */
-export function publishingStep(turnId: number, publication: { add: string } | "capture"): OutputStep | null {
-  const names = publication === "capture" ? null : new RegExp(`(?:^|[\\s/'"=])${escaped(publication.add)}(?=$|[\\s'";&|)])`);
-  const callers = openTurnCommands(turnId).filter(({ command }) =>
-    names ? OUTPUT_ADD.test(command) && names.test(command) : CAPTURE.test(command));
-  return callers.length === 1 ? callers[0]!.step : null;
+export function publishingStep(turnId: number, publisher: keyof typeof PUBLISHERS): OutputStep | null {
+  const open = openTurnCommands(turnId);
+  return open.length === 1 && PUBLISHERS[publisher].test(open[0]!.command) ? open[0]!.step : null;
 }
 
 /** Store before publishing the manifest; a failed write never advertises a missing image. */
@@ -108,8 +103,9 @@ export function publishOutputImage(
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const target = outputImagePath(task.id, turn.n, id);
     const temporary = `${target}.tmp-${randomUUID()}`;
-    // Sharing an image the agent had only looked at makes it shared, from the step that shared it.
-    const promoted = existing?.source === "native" && source === "published" ? withStep({ ...existing, source }, step) : null;
+    // Sharing an image the agent had only looked at makes it shared, from the
+    // step that shared it; with no such step it stays under the step that showed it.
+    const promoted = existing?.source === "native" && source === "published" ? withStep({ ...existing, source }, step ?? existing.step ?? null) : null;
     const image: OutputImage = promoted ?? existing ??
       withStep({ id, name: safeName, size: bytes.length, mediaType: mediaType as OutputImage["mediaType"], source }, step);
     try {

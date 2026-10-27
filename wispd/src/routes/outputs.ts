@@ -29,7 +29,7 @@ export function outputRoute(req: Request, url: URL, path: string, method: string
   return (async () => {
     try {
       const bytes = await boundedImageBody(req);
-      const image = publishOutputImage(turn.id, bytes, name, "published", publishingStep(turn.id, { add: name }));
+      const image = publishOutputImage(turn.id, bytes, name, "published", publishingStep(turn.id, "add"));
       return json({ image, url: outputImageUrl(task.id, turn.n, image.id) }, 201);
     } catch (error) {
       if (error instanceof OutputError) return err(error.message, error.status);
