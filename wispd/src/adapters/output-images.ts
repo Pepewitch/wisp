@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import type { OutputStep } from "../../../shared/api/outputs";
+import { outputImageNote, type OutputStep } from "../../../shared/api/outputs";
 import { readViewedImage } from "../output-files";
 import { decodeOutputImage, outputStep, publishOutputImage } from "../outputs";
 import { record, string } from "./activity-value";
@@ -38,7 +38,7 @@ export function createOutputImageCapture(def: AdapterDef, turnId: number, note: 
   const saved = (publish: () => { name: string; size: number; id: string }): RecordValue => {
     try {
       const image = publish();
-      const text = `Image output: ${image.name} (${image.size} bytes; ${image.id})`;
+      const text = outputImageNote(image);
       note(`· ${text}`);
       return { type: "text", text };
     } catch (error) {

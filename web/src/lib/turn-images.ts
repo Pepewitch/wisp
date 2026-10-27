@@ -1,4 +1,4 @@
-import type { OutputImage } from "../../../shared/api/outputs"
+import { outputImageNoteId, type OutputImage } from "../../../shared/api/outputs"
 import { stepsOf } from "@/lib/activity"
 import type { ActivityItem } from "@/stream/reducer"
 
@@ -25,6 +25,38 @@ export function placeStepImages(items: ActivityItem[], outputs: OutputImage[]): 
     else byStep.set(id, [image])
   }
   return { byStep, unplaced }
+}
+
+/**
+ * The timeline without the transcript note of each image already drawn under
+ * its step, matched by image id; other lines of a text item stay, and a text
+ * item left empty goes. The log and the raw transcript keep every note.
+ */
+export function withoutPlacedImageNotes(items: ActivityItem[], placement: StepImagePlacement): ActivityItem[] {
+  const placed = new Set([...placement.byStep.values()].flat().map((image) => image.id))
+  if (placed.size === 0) return items
+  const strip = (list: ActivityItem[]): ActivityItem[] => {
+    let changed = false
+    const next = list.flatMap((item): ActivityItem[] => {
+      if (item.kind === "subagent") {
+        const inner = strip(item.items)
+        if (inner === item.items) return [item]
+        changed = true
+        return [{ ...item, items: inner }]
+      }
+      if (item.kind !== "text") return [item]
+      const lines = item.text.split("\n")
+      const kept = lines.filter((line) => {
+        const id = outputImageNoteId(line)
+        return id === null || !placed.has(id)
+      })
+      if (kept.length === lines.length) return [item]
+      changed = true
+      return kept.some((line) => line.trim()) ? [{ ...item, text: kept.join("\n") }] : []
+    })
+    return changed ? next : list
+  }
+  return strip(items)
 }
 
 /** The images the agent chose to show the person; the rest it only looked at. */

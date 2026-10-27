@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { closeSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { outputImageNoteId } from "../../shared/api/outputs";
 import { samplePng } from "../scripts/harness/image-output-probe";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
 import { createOutputImageCapture } from "../src/adapters/output-images";
@@ -53,6 +54,8 @@ test("droid captures a Read image's base64, replaces it in the transcript and an
   expect(JSON.stringify(result)).toContain("Image file: hint-desktop.png");
   expect(JSON.stringify(result)).toContain("Image output: hint-desktop.png");
   expect(notes[0]).toContain("Image output: hint-desktop.png");
+  // the web hides this note under the step that draws the image, by this id
+  expect(outputImageNoteId(notes[0]!)).toBe(outputs(f.turnId)[0]!.id);
   expect(outputs(f.turnId)).toEqual([expect.objectContaining({
     name: "hint-desktop.png", step: { id: "chatcmpl-tool-01", label: "Read /tmp/mock/hint-desktop.png" },
   })]);

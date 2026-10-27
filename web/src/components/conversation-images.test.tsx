@@ -1,6 +1,6 @@
 import { render, screen, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
-import type { OutputImage } from "../../../shared/api/outputs"
+import { outputImageNote, type OutputImage } from "../../../shared/api/outputs"
 import { clearAssetCache } from "@/lib/asset-src"
 import type { ActivityEvent, ConversationDetail, Turn } from "@/lib/types"
 import { sameOriginWebTransport } from "@/lib/web-transport"
@@ -62,6 +62,25 @@ describe("a turn's images", () => {
     const follows = (a: Node, b: Node) => Boolean(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING)
     expect(follows(screen.getByText("/work/clip-ours.png"), underRead!)).toBe(true)
     expect(follows(underRead!, screen.getByText("wisp output add before.png"))).toBe(true)
+  })
+
+  it("drop the transcript note of an image drawn under its step, keeping other notes and text", () => {
+    const notes: ActivityEvent[] = [
+      steps[0]!,
+      { kind: "text", id: "n1", parentId: null, text: `· ${outputImageNote(looked)}` },
+      { kind: "text", id: "n2", parentId: null, text: "Ours has one more row." },
+      { kind: "text", id: "n3", parentId: null, text: `· ${outputImageNote(loose)}` },
+      steps[1]!,
+      { kind: "text", id: "n4", parentId: null, text: `· ${outputImageNote(looked)}` },
+      steps[2]!,
+    ]
+    draw(task({ status: "running", result: null, ended_at: null, outputs: [looked, loose] }), live(notes))
+    const activity = screen.getByTestId("conversation-viewport").querySelector("[data-activity='open']")!
+    const text = activity.textContent ?? ""
+    expect(names(activity.querySelector("[data-step-images='toolu_read']"))).toEqual(["clip-ours.png"])
+    expect(text).not.toContain(looked.id)
+    expect(text).toContain("Ours has one more row.")
+    expect(text).toContain(`Image output: loose.png (489 bytes; ${loose.id})`)
   })
 
   it("put images without a step, or with a step the timeline lacks, at the end of the steps", () => {

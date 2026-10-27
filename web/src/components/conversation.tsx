@@ -48,7 +48,7 @@ import {
 import { countPendingQuestions } from "@/lib/questionnaire"
 import { duration } from "@/lib/state"
 import { sourceLabel } from "@/lib/turn-source"
-import { lookedAtLabel, placeStepImages, sharedImages } from "@/lib/turn-images"
+import { lookedAtLabel, placeStepImages, sharedImages, withoutPlacedImageNotes } from "@/lib/turn-images"
 import { useDaemonRuntime, useDaemonTransport } from "@/lib/runtime"
 import { scheduleConversationPaint } from "@/lib/task-switch-performance"
 import type { ConversationDetail, TaskMessage, Turn } from "@/lib/types"
@@ -568,8 +568,8 @@ function Activity({
   const activity = live ?? loaded
   const items = activity?.items
   const quietEmpty = turn.operation === "compact"
-  const segments = useMemo(() => splitByMessage(items ?? []), [items])
   const placement = useMemo(() => placeStepImages(items ?? [], outputs), [items, outputs])
+  const segments = useMemo(() => splitByMessage(withoutPlacedImageNotes(items ?? [], placement)), [items, placement])
   const lookedAt = lookedAtLabel(outputs)
   const stepImages = (stepId: string) => (
     <StepImages taskId={taskId} turn={turn.n} images={placement.byStep.get(stepId) ?? []} removed={removed} step={stepId} />

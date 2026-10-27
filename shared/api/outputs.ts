@@ -21,6 +21,18 @@ export interface OutputImage {
   step?: OutputStep;
 }
 
+/** The line a captured image leaves in the transcript and log in place of its bytes. */
+export function outputImageNote(image: Pick<OutputImage, "name" | "size" | "id">): string {
+  return `Image output: ${image.name} (${image.size} bytes; ${image.id})`;
+}
+
+const IMAGE_NOTE = /^(?:· )?Image output: .* \(\d+ bytes; ([0-9a-f]{64})\)$/;
+
+/** The image id an `outputImageNote` line names, or null for any other line. */
+export function outputImageNoteId(line: string): string | null {
+  return IMAGE_NOTE.exec(line.trim())?.[1] ?? null;
+}
+
 export function outputImageUrl(taskId: string, turn: number, imageId: string): string {
   return `/api/tasks/${encodeURIComponent(taskId)}/outputs/${turn}/${encodeURIComponent(imageId)}`;
 }

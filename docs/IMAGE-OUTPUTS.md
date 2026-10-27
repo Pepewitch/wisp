@@ -63,7 +63,10 @@ per-image limit, that is inside one of:
 
 Anything else, including the rest of the Wisp home, is refused. A refusal,
 an invalid image or a failed write adds an `Image output unavailable: <why>`
-line to the activity while the agent continues. Other native image event
+line to the activity while the agent continues. A captured image leaves an
+`Image output: <name> (<bytes>; <id>)` line in its place in the log and the
+raw transcript; the web hides that line where the image itself shows under
+its step. Other native image event
 types are not inferred from arbitrary tool JSON; publish those files with
 `wisp output add`. HTTP(S) Markdown images retain their existing
 click-to-load behavior.
