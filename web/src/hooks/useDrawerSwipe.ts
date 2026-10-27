@@ -5,27 +5,44 @@ import { prefersReducedMotion } from "@/lib/motion"
 
 /** A touch that starts here is typing, selecting or a widget's own pan, never the drawer's. */
 const OWN_GESTURE = 'textarea, input, select, [contenteditable]:not([contenteditable="false"]), [role="application"]'
-/** An inline popup over the shell (the composer's palettes) keeps its touches too. */
+/** An inline popup (the composer's palettes, a menu inside a drawer) keeps its touches too. */
 const POPUP = '[role="dialog"], [role="alertdialog"], [role="menu"], [role="listbox"]'
 
+/** The way the drawer leaves the screen: the phone's sidebar slides out left, its task sheet down. */
+export type DismissDirection = "left" | "down"
+
+type Axis = "x" | "y"
+
+/** The axis a drawer moves on, and the sign of its way out along that axis. */
+const GEOMETRY: Record<DismissDirection, { axis: Axis; out: DragDirection }> = {
+  left: { axis: "x", out: -1 },
+  down: { axis: "y", out: 1 },
+}
+
 interface Drag {
+  /** the finger's sign along the axis that this drag wants */
   direction: DragDirection
+  opening: boolean
   touch: number
-  x: number
-  y: number
-  dx: number
+  /** where the touch went down, along the axis and across it */
+  along: number
+  across: number
+  /** how far it has moved along the axis since */
+  delta: number
   claimed: boolean
-  /** the popup's width, 0 until a popup is on screen to measure */
-  width: number
+  /** the popup's size along the axis, 0 until a popup is on screen to measure */
+  size: number
   velocity: DragVelocity
 }
 
 const noop = () => {}
 
 /**
- * The phone drawer, dragged by a thumb from either end: a sideways drag over
- * the shell opens it, one over the open drawer or its backdrop closes it, and
- * both follow the finger 1:1 and settle by one rule (lib/drawer-swipe.ts).
+ * A phone drawer, dragged by a thumb from either end: a drag over `surface`
+ * the way the drawer comes in opens it, one over the open drawer or its
+ * backdrop the way it leaves closes it, and both follow the finger 1:1 and
+ * settle by one rule (lib/drawer-swipe.ts). The sidebar moves on x and leaves
+ * left; the task sheet moves on y, leaves down and has no surface.
  *
  * Not base-ui's `Drawer.SwipeArea`: that is a strip laid over the content,
  * which would take every tap and scroll from the conversation under it, and
@@ -43,7 +60,9 @@ const noop = () => {}
  */
 class DrawerSwipe {
   private open = false
-  private readonly setOpen: (open: boolean) => void
+  private setOpen: (open: boolean) => void
+  private readonly axis: Axis
+  private readonly out: DragDirection
   private drag: Drag | null = null
   private frame: number | null = null
   /** the settle under way after a release, and the end it is headed for */
@@ -53,12 +72,15 @@ class DrawerSwipe {
   private detachPopup = noop
   private detachBackdrop = noop
 
-  constructor(setOpen: (open: boolean) => void) {
+  constructor(setOpen: (open: boolean) => void, dismiss: DismissDirection) {
     this.setOpen = setOpen
+    this.axis = GEOMETRY[dismiss].axis
+    this.out = GEOMETRY[dismiss].out
   }
 
-  /** The caller's open state, as of its last commit. */
-  sync(open: boolean): void {
+  /** The caller's open state and setter, as of its last commit. */
+  sync(open: boolean, setOpen: (open: boolean) => void): void {
+    this.setOpen = setOpen
     this.open = open
   }
 
@@ -77,12 +99,12 @@ class DrawerSwipe {
   }
 
   attachSurface(element: HTMLElement): () => void {
-    return this.listen(element, 1)
+    return this.listen(element, true)
   }
 
   attachPopup = (element: HTMLElement | null): void => {
     this.detachPopup()
-    this.detachPopup = element ? this.listen(element, -1) : noop
+    this.detachPopup = element ? this.listen(element, false) : noop
     this.popup = element
     // the popup a drag opened mounts under the finger, not at rest first
     if (element && this.drag?.claimed) this.paint()
@@ -90,7 +112,7 @@ class DrawerSwipe {
 
   attachBackdrop = (element: HTMLElement | null): void => {
     this.detachBackdrop()
-    this.detachBackdrop = element ? this.listen(element, -1) : noop
+    this.detachBackdrop = element ? this.listen(element, false) : noop
     this.backdrop = element
     if (element && this.drag?.claimed) this.paint()
   }
@@ -103,8 +125,8 @@ class DrawerSwipe {
     this.settle = null
   }
 
-  private listen(element: HTMLElement, direction: DragDirection): () => void {
-    const start = (event: TouchEvent) => this.start(event, element, direction)
+  private listen(element: HTMLElement, opening: boolean): () => void {
+    const start = (event: TouchEvent) => this.start(event, element, opening)
     const move = (event: TouchEvent) => this.move(event)
     const end = (event: TouchEvent) => this.end(event)
     const cancel = () => this.release(0)
@@ -121,40 +143,43 @@ class DrawerSwipe {
     }
   }
 
-  private start(event: TouchEvent, boundary: HTMLElement, direction: DragDirection): void {
+  private start(event: TouchEvent, boundary: HTMLElement, opening: boolean): void {
     // a second finger is a pinch: the drag ends where it is
     if (this.drag?.claimed) return this.release(0)
     this.drag = null
     if (event.touches.length !== 1 || this.settle || pinched()) return
     // opening needs the drawer shut, closing needs it open
-    if ((direction === 1) === this.open) return
+    if (opening === this.open) return
+    const direction = (opening ? -this.out : this.out) as DragDirection
     const target = event.target instanceof Element ? event.target : null
-    if (!target || ownsSwipe(target, boundary, direction)) return
+    if (!target || ownsSwipe(target, boundary, this.axis, direction)) return
     const touch = event.touches[0]!
+    const [along, across] = this.split(touch)
     const velocity = new DragVelocity()
-    velocity.add(touch.clientX, event.timeStamp)
-    const width = direction === -1 ? (this.popup?.offsetWidth ?? 0) : 0
-    this.drag = { direction, touch: touch.identifier, x: touch.clientX, y: touch.clientY, dx: 0, claimed: false, width, velocity }
+    velocity.add(along, event.timeStamp)
+    const size = opening ? 0 : this.size()
+    this.drag = { direction, opening, touch: touch.identifier, along, across, delta: 0, claimed: false, size, velocity }
   }
 
   private move(event: TouchEvent): void {
     const drag = this.drag
     const touch = drag && findTouch(event.touches, drag.touch)
     if (!drag || !touch) return
-    const dx = touch.clientX - drag.x
-    drag.velocity.add(touch.clientX, event.timeStamp)
+    const [along, across] = this.split(touch)
+    const delta = along - drag.along
+    drag.velocity.add(along, event.timeStamp)
     if (!drag.claimed) {
-      const verdict = claimDrag(dx, touch.clientY - drag.y, drag.direction)
+      const verdict = claimDrag(delta, across - drag.across, drag.direction)
       if (verdict === "pending") return
       if (verdict === "refuse") {
         this.drag = null
         return
       }
       drag.claimed = true
-      if (drag.direction === 1) this.setOpen(true)
+      if (drag.opening) this.setOpen(true)
     }
     if (event.cancelable) event.preventDefault()
-    drag.dx = dx
+    drag.delta = delta
     this.frame ??= requestAnimationFrame(this.paint)
   }
 
@@ -163,8 +188,9 @@ class DrawerSwipe {
     const touch = drag && findTouch(event.changedTouches, drag.touch)
     if (!drag || !touch) return
     if (drag.claimed) {
-      drag.dx = touch.clientX - drag.x
-      drag.velocity.add(touch.clientX, event.timeStamp)
+      const [along] = this.split(touch)
+      drag.delta = along - drag.along
+      drag.velocity.add(along, event.timeStamp)
     }
     this.release(drag.velocity.at(event.timeStamp))
   }
@@ -173,33 +199,34 @@ class DrawerSwipe {
     this.frame = null
     const drag = this.drag
     if (!drag?.claimed || !this.popup) return
-    drag.width ||= this.popup.offsetWidth
-    if (drag.width) this.write(offsetOf(drag), drag.width, 0)
+    drag.size ||= this.size()
+    if (drag.size) this.write(this.offsetOf(drag), drag.size, 0)
   }
 
-  /** The finger let go at `velocity` (px/ms, rightward): settle to whichever end the rule picks. */
+  /** The finger let go at `velocity` (px/ms along the axis): settle to whichever end the rule picks. */
   private release(velocity: number): void {
     const drag = this.drag
     this.drag = null
     if (this.frame !== null) cancelAnimationFrame(this.frame)
     this.frame = null
     if (!drag?.claimed) return
-    const width = drag.width || this.popup?.offsetWidth || 0
-    const offset = width ? offsetOf({ ...drag, width }) : 0
-    const open = settlesOpen(width ? (width + offset) / width : 0, velocity)
-    const target = open ? 0 : -width
-    const shown = this.popup !== null && width > 0
+    const size = drag.size || this.size()
+    const offset = size ? this.offsetOf({ ...drag, size }) : 0
+    const towardOpen = -this.out * velocity
+    const open = settlesOpen(size ? (size - Math.abs(offset)) / size : 0, towardOpen)
+    const target = open ? 0 : this.out * size
+    const shown = this.popup !== null && size > 0
     const ms = !shown || prefersReducedMotion()
       ? 0
-      : settleDuration(Math.abs(target - offset), width, open ? velocity : -velocity, tokenMs(open ? "--dur-in" : "--dur-out"))
+      : settleDuration(Math.abs(target - offset), size, open ? towardOpen : -towardOpen, tokenMs(open ? "--dur-in" : "--dur-out"))
     if (ms === 0) {
       this.setOpen(open)
       // a closing popup keeps its last transform until base-ui unmounts it:
       // cleared any earlier, it would show at rest, open, for a frame
-      if (shown) return open ? this.clear() : this.write(target, width, 0)
+      if (shown) return open ? this.clear() : this.write(target, size, 0)
       return
     }
-    this.write(target, width, ms)
+    this.write(target, size, ms)
     // Closed is committed once the drawer is out of sight. Committed at the
     // release, the close's own render lands in the settle's first frames and
     // holds the drawer still under a finger that has already let go.
@@ -212,15 +239,15 @@ class DrawerSwipe {
     this.settle = { timer, open }
   }
 
-  private write(offset: number, width: number, ms: number): void {
+  private write(offset: number, size: number, ms: number): void {
     const transition = ms ? `${ms}ms var(--ease-out)` : ""
     if (this.popup) {
       this.popup.style.transition = transition ? `transform ${transition}` : "none"
-      this.popup.style.transform = `translateX(${offset}px)`
+      this.popup.style.transform = `translate${this.axis.toUpperCase()}(${offset}px)`
     }
     if (this.backdrop) {
       this.backdrop.style.transition = transition ? `opacity ${transition}` : "none"
-      this.backdrop.style.opacity = String((width + offset) / width)
+      this.backdrop.style.opacity = String((size - Math.abs(offset)) / size)
     }
   }
 
@@ -232,12 +259,23 @@ class DrawerSwipe {
       element?.style.removeProperty("opacity")
     }
   }
-}
 
-/** The popup's translateX for a drag, clamped between hidden and open. */
-function offsetOf(drag: Drag): number {
-  const rest = drag.direction === 1 ? -drag.width : 0
-  return Math.min(0, Math.max(-drag.width, rest + drag.dx))
+  /** The popup's translation along the axis for a drag, clamped between hidden and open. */
+  private offsetOf(drag: Drag): number {
+    const hidden = this.out * drag.size
+    const rest = drag.opening ? hidden : 0
+    return Math.min(Math.max(0, hidden), Math.max(Math.min(0, hidden), rest + drag.delta))
+  }
+
+  private size(): number {
+    if (!this.popup) return 0
+    return this.axis === "x" ? this.popup.offsetWidth : this.popup.offsetHeight
+  }
+
+  /** A touch's position along the axis, then across it. */
+  private split(touch: Touch): [number, number] {
+    return this.axis === "x" ? [touch.clientX, touch.clientY] : [touch.clientY, touch.clientX]
+  }
 }
 
 function findTouch(touches: TouchList, id: number): Touch | null {
@@ -248,27 +286,32 @@ function findTouch(touches: TouchList, id: number): Touch | null {
   return null
 }
 
-/** A pinched-in page pans sideways under the finger; the drawer leaves that alone. */
+/** A pinched-in page pans under the finger; the drawer leaves that alone. */
 function pinched(): boolean {
   const scale = window.visualViewport?.scale
   return scale !== undefined && scale !== 1
 }
 
 /**
- * Whether something under the touch owns a sideways drag in `direction`: a
- * field, a widget's own pan, an inline popup, or a scroller with content
- * still to reveal that way (a code block, a table, a wide diagram).
+ * Whether something under the touch owns a drag along `axis` in `direction`:
+ * a field, a widget's own pan, an inline popup inside the boundary, or a
+ * scroller with content still to reveal that way (a code block or a table
+ * sideways, the task sheet's body scrolled down from its top).
  */
-function ownsSwipe(target: Element, boundary: HTMLElement, direction: DragDirection): boolean {
+function ownsSwipe(target: Element, boundary: HTMLElement, axis: Axis, direction: DragDirection): boolean {
   if (target.closest(OWN_GESTURE)) return true
-  if (direction === 1 && target.closest(POPUP)) return true
+  // the drawer's own popup is a dialog too; only one inside the boundary counts
+  const popup = target.closest(POPUP)
+  if (popup && popup !== boundary && boundary.contains(popup)) return true
   for (let element: Element | null = target; element && element !== boundary; element = element.parentElement) {
-    const room = element.scrollWidth - element.clientWidth
+    const room = axis === "x" ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight
     if (room <= 0) continue
-    const overflow = getComputedStyle(element).overflowX
+    const style = getComputedStyle(element)
+    const overflow = axis === "x" ? style.overflowX : style.overflowY
     if (overflow !== "auto" && overflow !== "scroll") continue
-    // a rightward finger scrolls content back toward its start, a leftward one toward its end
-    if (direction === 1 ? element.scrollLeft > 0 : element.scrollLeft < room - 1) return true
+    const scrolled = axis === "x" ? element.scrollLeft : element.scrollTop
+    // a finger toward +axis scrolls content back toward its start, one toward -axis toward its end
+    if (direction === 1 ? scrolled > 0 : scrolled < room - 1) return true
   }
   return false
 }
@@ -282,20 +325,23 @@ function tokenMs(name: string): number {
 }
 
 /**
- * Wire the drag to the phone shell: `surface` takes the opening drag, the
- * returned refs go on the drawer's popup and backdrop, and `request` replaces
- * `setOpen` for every other way in or out. `setOpen` must be stable (a
- * `useState` setter).
+ * Wire the drag to a phone drawer that leaves the screen `dismiss`: the
+ * returned refs go on the drawer's popup and backdrop, `surface` (when there
+ * is one) takes the opening drag, and `request` replaces `setOpen` for every
+ * other way in or out.
  */
-export function useDrawerSwipe(surface: RefObject<HTMLElement | null>, open: boolean, setOpen: (open: boolean) => void) {
-  const [swipe] = useState(() => new DrawerSwipe(setOpen))
+export function useDrawerSwipe(
+  open: boolean,
+  setOpen: (open: boolean) => void,
+  { dismiss, surface }: { dismiss: DismissDirection; surface?: RefObject<HTMLElement | null> },
+) {
+  const [swipe] = useState(() => new DrawerSwipe(setOpen, dismiss))
   useLayoutEffect(() => {
-    swipe.sync(open)
-  }, [swipe, open])
+    swipe.sync(open, setOpen)
+  }, [swipe, open, setOpen])
   useEffect(() => {
-    const element = surface.current
-    if (!element) return
-    const detach = swipe.attachSurface(element)
+    const element = surface?.current
+    const detach = element ? swipe.attachSurface(element) : noop
     return () => {
       detach()
       swipe.dispose()

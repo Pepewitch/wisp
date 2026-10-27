@@ -112,7 +112,7 @@ export function MobileShell({
   const [drawer, setDrawer] = useState(false)
   const [sheet, setSheet] = useState(false)
   const viewportRef = useMobileViewport(!desktop)
-  const { popupRef, backdropRef, request: requestDrawer } = useDrawerSwipe(viewportRef, drawer, setDrawer)
+  const { popupRef, backdropRef, request: requestDrawer } = useDrawerSwipe(drawer, setDrawer, { dismiss: "left", surface: viewportRef })
   const hasSubtasks = useSubtaskCount(task?.id ?? null) > 0
   const tools = offeredTools(autopilot !== undefined, workflows !== undefined, subtasks !== undefined && hasSubtasks)
   // a tool can leave while it is open (the last subtask archived
