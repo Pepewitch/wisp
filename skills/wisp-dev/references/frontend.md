@@ -1707,9 +1707,10 @@ narrows to nothing and fades with the card still in it (`.wisp-gutter`), and
 opens the same way, so the reading column re-centres instead of jumping
 129px. The width is `--summary-gutter` itself, registered as a length
 (`@property`) and transitioned on the pane (`.wisp-centre`), so the gutter
-and the conversation's matching padding move as one. A divider moved by hand
-(pointer or key, a drag that shuts the panel included) marks its group
-`data-resizing`, and the gutter then snaps: a drag adds no easing. Beside a tool panel glide it keeps the panel's timing, so the column's
+and the conversation's matching padding move as one. It glides only beside
+a tool panel glide (`data-glide`); a divider moved by hand (pointer or key, a
+drag that shuts the panel included) or a window resize moves it at once: a
+drag adds no easing. Beside a tool panel glide it keeps the panel's timing, so the column's
 room changes on one curve. The chip fades in as the card goes. The card eases
 up from 97% as it comes back (`--dur-in`, `--ease-out`, no spring: a surface); a row's panel grows to base-ui's
 `--collapsible-panel-height` on `--dur-size` / `--ease-glide` and closes on

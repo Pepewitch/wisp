@@ -5,6 +5,8 @@ import { act, fireEvent, render, screen } from "@testing-library/react"
 import { useEffect, useState } from "react"
 import { describe, expect, it, vi } from "vitest"
 
+import { useToolPanelShortcuts, type ToolPanelControls } from "@/hooks/useToolPanel"
+
 import { Shell as PaneShell, ToolPanel } from "./panes"
 
 const mounts = vi.fn()
@@ -418,35 +420,13 @@ describe("the panel's glide", () => {
     }
   })
 
-  it("lets nothing in the centre ease while a drag collapses the panel", async () => {
+  /** motion allowed, the DOM laid out, and nothing left saved or held for the next test */
+  async function withMotion(run: () => Promise<void>) {
     const restore = laidOutInDom()
     vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }))
-    let open = true
-    const shell = () => (
-      <PaneShell sidebar={<div />} centre={<main className="wisp-centre" />} panel={<div>tools</div>} panelOpen={open} onPanelDraggedShut={() => (open = false)} />
-    )
+    localStorage.setItem("wisp_tool_panel_width", "400")
     try {
-      localStorage.setItem("wisp_tool_panel_width", "400")
-      const view = render(shell())
-      await act(async () => {})
-      const divider = screen.getAllByRole("separator").find((s) => s.nextElementSibling === toolPanel())!
-      const at = divider.getBoundingClientRect().x
-      fireEvent.pointerDown(divider, { pointerType: "mouse", button: 0, buttons: 1, clientX: at, clientY: 400 })
-      expect(outer()).toHaveAttribute("data-resizing")
-      // far past the panel's minimum: the library collapses it, mid-drag, and the centre widens under the mark
-      await act(async () => void fireEvent.pointerMove(document, { pointerType: "mouse", buttons: 1, clientX: 1590, clientY: 400 }))
-      expect((toolPanel() as HTMLElement).style.flexGrow).toBe("0")
-      expect(outer()).toHaveAttribute("data-resizing")
-      // it reports the shut on release; the collapse is the drag's own, not a glide
-      await act(async () => void fireEvent.pointerUp(document, { pointerType: "mouse", button: 0, clientX: 1590, clientY: 400 }))
-      expect(open).toBe(false)
-      view.rerender(shell())
-      await act(async () => {})
-      expect(outer()).not.toHaveAttribute("data-glide")
-      expect(outer()).toHaveAttribute("data-resizing")
-      // two frames on, so the card's new place has landed inside the mark
-      await act(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))))
-      expect(outer()).not.toHaveAttribute("data-resizing")
+      await run()
     } finally {
       // a failure mid-drag must not leave the library dragging into the next test
       fireEvent.pointerUp(document, { pointerType: "mouse", button: 0 })
@@ -455,11 +435,73 @@ describe("the panel's glide", () => {
       localStorage.removeItem("wisp_tool_panel_width")
       localStorage.removeItem("react-resizable-panels:wisp-ui-main-v2")
     }
+  }
+  const drag = async (from: Element, x0: number, x1: number) => {
+    fireEvent.pointerDown(from, { pointerType: "mouse", button: 0, buttons: 1, clientX: x0, clientY: 400 })
+    await act(async () => void fireEvent.pointerMove(document, { pointerType: "mouse", buttons: 1, clientX: x1, clientY: 400 }))
+    await act(async () => void fireEvent.pointerUp(document, { pointerType: "mouse", button: 0, clientX: x1, clientY: 400 }))
+  }
+  const panelDivider = () => screen.getAllByRole("separator").find((s) => s.nextElementSibling === toolPanel())!
+
+  it("glides on ⌘\\ pressed while a divider has the focus", async () => {
+    await withMotion(async () => {
+      function Chorded() {
+        const [open, setOpen] = useState(false)
+        const togglePanel = () => setOpen((value) => !value)
+        useToolPanelShortcuts({ toggle: () => {}, togglePanel } as unknown as ToolPanelControls, true)
+        return <PaneShell sidebar={<div />} centre={<main className="wisp-centre" />} panel={<div>tools</div>} panelOpen={open} />
+      }
+      render(<Chorded />)
+      await act(async () => {})
+      // the sidebar's divider: a drag or a Tab leaves the focus there
+      const sidebarDivider = document.getElementById("sidebar")!.nextElementSibling as HTMLElement
+      sidebarDivider.focus()
+      await act(async () => void fireEvent.keyDown(sidebarDivider, { key: "\\", code: "Backslash", metaKey: true }))
+      expect(outer()).toHaveAttribute("data-glide", "in")
+      await landed()
+      panelDivider().focus()
+      await act(async () => void fireEvent.keyDown(panelDivider(), { key: "\\", code: "Backslash", metaKey: true }))
+      expect(outer()).toHaveAttribute("data-glide", "out")
+    })
   })
 
-  it("has the stylesheet drop the centre's transition under the mark", () => {
+  it("does not glide a drag that starts beside the divider, inside the library's hit area", async () => {
+    await withMotion(async () => {
+      render(<PaneShell sidebar={<div />} centre={<main className="wisp-centre" />} panel={<div>tools</div>} panelOpen />)
+      await act(async () => {})
+      const before = toolPanel().getBoundingClientRect().width
+      const at = panelDivider().getBoundingClientRect().x
+      // 3px into the panel: the event's target is the panel, not the separator
+      await drag(toolPanel(), at + 3, at - 57)
+      expect(toolPanel().getBoundingClientRect().width).toBeGreaterThan(before)
+      expect(outer()).not.toHaveAttribute("data-glide")
+    })
+  })
+
+  it("does not glide a drag that collapses the panel", async () => {
+    await withMotion(async () => {
+      let open = true
+      const shell = () => (
+        <PaneShell sidebar={<div />} centre={<main className="wisp-centre" />} panel={<div>tools</div>} panelOpen={open} onPanelDraggedShut={() => (open = false)} />
+      )
+      const view = render(shell())
+      await act(async () => {})
+      const at = panelDivider().getBoundingClientRect().x
+      // far past the panel's minimum: the library collapses it, and reports the shut on release
+      await drag(panelDivider(), at, 1590)
+      expect((toolPanel() as HTMLElement).style.flexGrow).toBe("0")
+      expect(open).toBe(false)
+      view.rerender(shell())
+      await act(async () => {})
+      expect(outer()).not.toHaveAttribute("data-glide")
+    })
+  })
+
+  it("lets the centre's gutter ease only beside a panel glide", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../index.css"), "utf8")
-    expect(css).toMatch(/\[data-resizing\] \.wisp-centre \{\s*transition: none;/)
+    const rules = [...css.matchAll(/([^{}]*\.wisp-centre[^{}]*)\{([^}]*)\}/g)]
+    const easing = rules.filter(([, , body]) => /transition:\s*--summary-gutter/.test(body!)).map(([, selector]) => selector!.trim())
+    expect(easing).toEqual(["[data-glide] .wisp-centre"])
   })
 
   it("does not glide or pin anything under reduced motion", async () => {

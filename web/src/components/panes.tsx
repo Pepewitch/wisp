@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import * as Resizable from "react-resizable-panels"
 import { useDefaultLayout, useGroupRef, usePanelRef, type Layout, type PanelImperativeHandle } from "react-resizable-panels"
 
@@ -119,7 +119,6 @@ export function Shell({
     pinned.current = false
     settling.current?.(null)
   }, [glide])
-  useResizingMark(groupElement)
 
   useLayoutEffect(() => {
     const handle = panelRef.current
@@ -236,64 +235,6 @@ function usePanelGlide(open: boolean): readonly ["in" | "out" | null, () => void
 
 /** Longer than either glide token, so the transition always ends first when there is one. */
 const GLIDE_FALLBACK_MS = 400
-
-/**
- * Mark the group `data-resizing` while a person moves one of its dividers, by
- * pointer or by key, so `index.css` lets nothing in the centre ease after it:
- * the summary card's gutter snaps open or shut with the drag (a drag that
- * shuts the panel included) instead of gliding in behind the pointer and
- * swinging the reading column out and back. Cleared two frames after the
- * last of it, so the pane's resize and the card's new place both land
- * inside the mark. Window listeners, in the capture phase: the library takes
- * a divider's pointer at the document.
- */
-function useResizingMark(groupElement: RefObject<HTMLDivElement | null>): void {
-  useEffect(() => {
-    let frame = 0
-    let held = false
-    const onDivider = (event: Event) => {
-      const group = groupElement.current
-      const target = event.target
-      return !!group && target instanceof Element && target.closest("[role=separator]")?.parentElement === group
-    }
-    const mark = () => {
-      cancelAnimationFrame(frame)
-      groupElement.current?.setAttribute("data-resizing", "")
-    }
-    const clearSoon = () => {
-      cancelAnimationFrame(frame)
-      frame = requestAnimationFrame(() => {
-        frame = requestAnimationFrame(() => groupElement.current?.removeAttribute("data-resizing"))
-      })
-    }
-    const onPointerDown = (event: PointerEvent) => {
-      if (!onDivider(event)) return
-      held = true
-      mark()
-    }
-    const onPointerUp = () => {
-      if (!held) return
-      held = false
-      clearSoon()
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!onDivider(event)) return
-      mark()
-      if (!held) clearSoon()
-    }
-    window.addEventListener("pointerdown", onPointerDown, true)
-    window.addEventListener("pointerup", onPointerUp, true)
-    window.addEventListener("pointercancel", onPointerUp, true)
-    window.addEventListener("keydown", onKeyDown, true)
-    return () => {
-      cancelAnimationFrame(frame)
-      window.removeEventListener("pointerdown", onPointerDown, true)
-      window.removeEventListener("pointerup", onPointerUp, true)
-      window.removeEventListener("pointercancel", onPointerUp, true)
-      window.removeEventListener("keydown", onKeyDown, true)
-    }
-  }, [groupElement])
-}
 
 /**
  * The tool panel's content: one tool, the Terminal, or the tool with the
