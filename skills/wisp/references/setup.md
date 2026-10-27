@@ -326,9 +326,12 @@ address's last new wrong token. The web UI is served at `/`.
   `POST /api/projects/copy-preview`
 - `GET /api/projects/entries?project=<path>&dir=<relative>[&q=<text>]` — one
   folder of a registered project for the composer's `@` list: `{project, dir,
-  entries: [{name, kind: "dir"|"file"}], truncated}`, folders first, at most
-  500 rows; `q` keeps names containing it (case-insensitive) before that cap.
-  `.git` and git-ignored entries are left out, a symlink by where it leads.
+  entries: [{name, kind: "dir"|"file"}], truncated, incompleteAfter}`,
+  folders first, at most 500 rows (`truncated` when more match); `q` keeps
+  names containing it (case-insensitive) before that cap. A folder with more
+  than 5,000 entries is read only that far, and says so in `incompleteAfter`
+  (otherwise `null`). `.git` and git-ignored entries are left out; a symlink
+  is left out when its own path or where it leads is ignored.
   An absolute `dir`, a `..` or `.git` segment is `400`, a `dir` that resolves
   outside the project or into `.git` is `403`, and a path that is not a
   registered project, or a missing folder, is `404`

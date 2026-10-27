@@ -68,29 +68,30 @@ export async function listProjectEntries(
   if (inside(join(realRoot, ".git"), realDir)) return { status: 403, error: "dir resolves into .git" };
 
   const scanned = await scanDirectory(realRoot, realDir, filter.toLowerCase());
-  const asked = scanned.entries.flatMap((entry) => (entry.gitPath === null ? [] : [entry.gitPath]));
-  const ignored = await ignoredPaths(realRoot, asked);
+  const ignored = await ignoredPaths(realRoot, scanned.entries.flatMap((entry) => entry.gitPaths));
   const kept = scanned.entries
-    .filter((entry) => entry.gitPath === null || !ignored.has(entry.gitPath))
+    .filter((entry) => !entry.gitPaths.some((path) => ignored.has(path)))
     .map(({ name, kind }): ProjectEntry => ({ name, kind }))
     .sort(compareEntries);
   return {
     project: root,
     dir: rel,
     entries: kept.slice(0, ENTRY_CAP),
-    truncated: scanned.truncated || kept.length > ENTRY_CAP,
+    truncated: kept.length > ENTRY_CAP,
+    incompleteAfter: scanned.truncated ? SCAN_CAP : null,
   };
 }
 
 /**
- * A scanned row, and what git is asked about it: the REAL path, root-relative,
- * with the trailing `/` that lets `dir/` patterns match a folder. A link is
- * asked about where it leads (so a link to `node_modules` is ignored like
- * `node_modules`), because git answers a path through a symlink with a fatal
- * "beyond a symbolic link" that would fail the whole batch. `null`: a link to
- * the root itself, which nothing ignores.
+ * A scanned row, and what git is asked about it, all root-relative real paths:
+ * the entry itself, with the trailing `/` that lets `dir/` patterns match a
+ * folder; and for a link, also where it leads, so a link to `node_modules` is
+ * ignored like `node_modules`. The link is asked about as itself (git sees a
+ * symlink as a file), never through itself: git answers a path beyond a
+ * symlink with a fatal error that would fail the whole batch. The entry is
+ * left out when ANY of its paths is ignored.
  */
-type ScannedEntry = ProjectEntry & { gitPath: string | null };
+type ScannedEntry = ProjectEntry & { gitPaths: string[] };
 
 function gitPathFor(realRoot: string, realPath: string, kind: ProjectEntry["kind"]): string | null {
   const path = relative(realRoot, realPath).split(sep).join("/");
@@ -136,7 +137,8 @@ async function scanDirectory(
 }
 
 function direntEntry(realRoot: string, path: string, name: string, kind: ProjectEntry["kind"] | null): ScannedEntry | null {
-  return kind ? { name, kind, gitPath: gitPathFor(realRoot, path, kind) } : null;
+  const gitPath = kind ? gitPathFor(realRoot, path, kind) : null;
+  return kind ? { name, kind, gitPaths: gitPath === null ? [] : [gitPath] } : null;
 }
 
 /** A symlink is listed as what it leads to, and only when that stays inside the project and out of .git. */
@@ -145,7 +147,10 @@ async function linkEntry(realRoot: string, path: string, name: string): Promise<
     const target = await realpath(path);
     if (!inside(realRoot, target) || inside(join(realRoot, ".git"), target)) return null;
     const info = await stat(target);
-    return direntEntry(realRoot, target, name, info.isDirectory() ? "dir" : info.isFile() ? "file" : null);
+    const entry = direntEntry(realRoot, target, name, info.isDirectory() ? "dir" : info.isFile() ? "file" : null);
+    // the link's own path, as the file git sees it: `ln -s src build` is ignored by `build`
+    const own = gitPathFor(realRoot, path, "file");
+    return entry && own !== null ? { ...entry, gitPaths: [own, ...entry.gitPaths] } : entry;
   } catch {
     return null;
   }

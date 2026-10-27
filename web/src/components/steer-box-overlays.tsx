@@ -80,7 +80,8 @@ export function SteerOverlays({
           selected={mentions.list.selected}
           status={mentions.list.status}
           touch={touch}
-          onPick={mentions.pick}
+          onPick={mentions.insert}
+          onOpen={mentions.open}
           onHover={mentions.hover}
         />
       )}

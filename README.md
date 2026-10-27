@@ -37,8 +37,9 @@ and the PR merges when it's ready.</p>
 - **See the whole picture.** Read the conversation, review the diff, open a
   terminal in the worktree, and see the diagrams agents draw rendered right in
   the chat. [Publish image outputs](docs/IMAGE-OUTPUTS.md) for inline previews
-  and downloads. Type `@` in the composer to point the agent at another
-  project, or a file or folder in it, by its absolute path.
+  and downloads. Type `@` in the composer to insert the absolute path of
+  another project, or of a file or folder in it, so the agent never has to
+  search for it.
 - **Check in from anywhere.** The desktop app on macOS posts a banner when a
   task's PR needs you and when Wisp merges it. The same UI runs in any browser
   and on your phone over a [private connection](docs/REMOTE-ACCESS.md), and the

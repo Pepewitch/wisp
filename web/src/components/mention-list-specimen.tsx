@@ -24,19 +24,21 @@ export function MentionListSpecimens() {
       <div>
         <Eyebrow>Typing · @ starts a word</Eyebrow>
         <div className={cn("mt-2.5 w-full rounded-lg p-1", POPOVER_SURFACE)}>
-          <MentionListRows rows={projectRows(PROJECTS, "")} selected={0} status={null} onPick={() => {}} />
+          <MentionListRows rows={projectRows(PROJECTS, "")} selected={0} status={null} onPick={() => {}} onOpen={() => {}} />
         </div>
         <Eyebrow className="mt-5 block">…and @wisp/web/src/ lists that folder</Eyebrow>
         <div className={cn("mt-2.5 w-full rounded-lg p-1", POPOVER_SURFACE)}>
-          <MentionListRows rows={entryRows(FOLDER, PROJECTS[0]!.path, ENTRIES)} selected={1} status={null} onPick={() => {}} />
+          <MentionListRows rows={entryRows(FOLDER, PROJECTS[0]!.path, ENTRIES)} selected={1} status={null} onPick={() => {}} onOpen={() => {}} />
         </div>
       </div>
       <p className="text-[11.5px] leading-relaxed text-muted-foreground">
-        A pick writes an absolute path as plain text: a project's own checkout, never a task worktree, so an agent
-        in one project can be pointed at another without searching the disk for it. Typing a project's name and a{" "}
-        <span className="font-mono">/</span> (or picking it) lists its folders and files; a folder opens its
-        children, the first row inserts the folder you are in, and a path with a space arrives quoted. What git ignores is not offered. An{" "}
-        <span className="font-mono">@</span> inside a word, or one no project answers, opens nothing.
+        One rule for every row: <span className="font-mono">↵</span> or a click inserts its absolute path as plain
+        text (a project's own checkout, never a task worktree), quoted when it has a space, so an agent in one
+        project can be pointed at another without searching the disk for it.{" "}
+        <span className="font-mono">⇥</span>, <span className="font-mono">→</span>, a{" "}
+        <span className="font-mono">/</span> after the name, or the chevron opens a project or folder and lists its
+        children. What git ignores is not offered. An <span className="font-mono">@</span> inside a word, or one no
+        project answers, opens nothing.
       </p>
     </div>
   )

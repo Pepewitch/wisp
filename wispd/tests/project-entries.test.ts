@@ -178,6 +178,16 @@ describe("GET /api/projects/entries", () => {
     expect((await entries(base, root, "gitlink/refs")).status).toBe(403);
   });
 
+  test("a link is ignored by its own name too, not only by where it leads", async () => {
+    const { root } = makeProject();
+    writeFileSync(join(root, ".gitignore"), "node_modules/\n*.log\ndist\nsrc/generated/\nbuild\n");
+    symlinkSync(join(root, "src"), join(root, "build"));
+    const base = await startServer([root]);
+    const names = (await listing(await entries(base, root))).entries.map((entry) => entry.name);
+    expect(names).not.toContain("build");
+    expect(names).toContain("src-link");
+  });
+
   test("q narrows before the cap, so a name past the first rows is reachable", async () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "wisp-entries-filter-")));
     for (let i = 0; i <= ENTRY_CAP; i += 1) writeFileSync(join(root, `file${String(i).padStart(3, "0")}.txt`), "");
@@ -193,7 +203,13 @@ describe("GET /api/projects/entries", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "wisp-entries-dangling-")));
     for (let i = 0; i <= SCAN_CAP; i += 1) symlinkSync(join(root, `missing-${i}`), join(root, `dangling-${i}`));
     const base = await startServer([root]);
-    expect(await listing(await entries(base, root))).toEqual({ project: root, dir: "", entries: [], truncated: true });
+    expect(await listing(await entries(base, root))).toEqual({
+      project: root,
+      dir: "",
+      entries: [],
+      truncated: false,
+      incompleteAfter: SCAN_CAP,
+    });
   });
 
   test("a folder that is not a git checkout still lists, hiding only .git", async () => {

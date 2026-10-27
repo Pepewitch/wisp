@@ -411,16 +411,16 @@ report.
 ## Web @ list
 
 In a task's composer, an `@` that starts a word lists the registered projects
-(name, then path). Typing filters by name; ↑/↓ move, Enter or Tab picks,
-Escape closes and keeps the text. Picking a project or a folder opens it and
-the list stays; its first row inserts that folder's absolute path (a project's
-is its registered checkout, never a task worktree), and picking a file
-inserts the file's. A path that contains whitespace is inserted in double
-quotes. `@<project>/src/co` opens `src/` filtered by `co` directly; when two
-projects share a name, `@<name>/` lists both to choose from. `.git` and
-git-ignored entries are not listed. While the list is open, Enter never
-sends. An `@` inside a word, or one no project answers (`@scope/pkg`), opens
-nothing, so Enter still sends.
+(name, then path). Typing filters by name and ↑/↓ move. One rule holds for
+every row: Enter, or a click, inserts its absolute path (a project's is its
+registered checkout, never a task worktree), in double quotes when it
+contains whitespace. Tab, → at the end of the word, `/` typed after a name,
+or the row's chevron opens a project or folder and lists its children.
+Escape closes the list and keeps the text. `@<project>/src/co` opens `src/`
+filtered by `co` directly; when two projects share a name, `@<name>/` lists
+both to choose from. `.git` and git-ignored entries are not listed. While the
+list is open, Enter never sends. An `@` inside a word, or one no project
+answers (`@scope/pkg`), opens nothing, so Enter still sends.
 
 ## Projects
 

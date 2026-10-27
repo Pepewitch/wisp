@@ -6,7 +6,7 @@ import {
   entryRows,
   MENTION_LIST_ID,
   MENTION_NAV_KEYS,
-  MENTION_PICK_KEYS,
+  MENTION_OPEN_KEYS,
   mentionOptionId,
   mentionProjects,
   mentionTokenAt,
@@ -28,7 +28,10 @@ export interface ComposerMentions {
   track: (value: string, at: number | null) => void
   /** True when an open list took the key; the textarea then does nothing else with it. */
   onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean
-  pick: (row: MentionRow) => void
+  /** writes the row's absolute path over the `@` word and closes the list */
+  insert: (row: MentionRow) => void
+  /** lists a project's or folder's children; a no-op for a file */
+  open: (row: MentionRow) => void
   hover: (index: number) => void
 }
 
@@ -91,9 +94,9 @@ export function useComposerMentions({
   }
   const select = (index: number) => setSelection({ at, index })
 
-  const pick = (row: MentionRow) => {
-    if (!live) return
-    const next = applyMention(value, live, row)
+  const pick = (row: MentionRow, how: "insert" | "open") => {
+    if (!live || (how === "open" && !row.open)) return
+    const next = applyMention(value, live, row, how)
     suppressed.current = null
     navRef.current = next.nav
     if (!insertUndoable(boxRef.current, live.start, live.end, next.text)) {
@@ -125,10 +128,22 @@ export function useComposerMentions({
       })
       return true
     }
-    if (!MENTION_PICK_KEYS.has(event.key)) return false
-    // an open list never lets Enter send: not while it loads, not when it is empty
+    const row = rows[selected]
+    if (event.key === "Enter") {
+      // an open list never lets Enter send: not while it loads, not when it is empty
+      event.preventDefault()
+      if (row && !event.metaKey && !event.ctrlKey) pick(row, "insert")
+      return true
+    }
+    if (!MENTION_OPEN_KEYS.has(event.key)) return false
+    // → and `/` stand in for "open" only at the end of the word, with a row to open;
+    // `/` also needs a name typed before it, or `@` + `/` could never be typed
+    const box = event.currentTarget
+    const atEnd = box.selectionStart === live.end && box.selectionEnd === live.end
+    const typed = event.key !== "/" || (query !== null && query.filter !== "")
+    if (event.key !== "Tab" && !(atEnd && row?.open && typed)) return false
     event.preventDefault()
-    if (rows.length > 0 && !event.metaKey && !event.ctrlKey) pick(rows[selected]!)
+    if (row) pick(row, "open")
     return true
   }
 
@@ -143,7 +158,8 @@ export function useComposerMentions({
       : {},
     track,
     onKeyDown,
-    pick,
+    insert: (row) => pick(row, "insert"),
+    open: (row) => pick(row, "open"),
     hover: select,
   }
 }
@@ -160,8 +176,13 @@ function mentionRows(
     return { rows: [], status: entries.isError ? `Couldn't list ${where}: ${entries.error.message}` : "Listing…" }
   }
   const rows = entryRows(query, entries.data.project, entries.data.entries)
+  const { incompleteAfter, truncated } = entries.data
+  // said before anything else: when the scan stopped, narrowing cannot find the rest
+  if (typeof incompleteAfter === "number") {
+    return { rows, status: `This folder has more than ${incompleteAfter.toLocaleString("en-US")} entries; not all are searchable` }
+  }
   if (rows.length === 0) return { rows, status: `Nothing in ${where} matches “${query.filter}”` }
-  return { rows, status: entries.data.truncated ? `Showing the first ${entries.data.entries.length}: type more to narrow` : null }
+  return { rows, status: truncated ? `Showing the first ${entries.data.entries.length}: type more to narrow` : null }
 }
 
 /**

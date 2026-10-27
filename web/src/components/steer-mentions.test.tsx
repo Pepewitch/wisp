@@ -56,6 +56,7 @@ const listing = (project: string, dir: string, entries: ProjectEntriesResponse["
   project,
   dir,
   truncated: false,
+  incompleteAfter: null,
   entries,
 })
 
@@ -72,6 +73,7 @@ const LISTINGS: Record<string, ProjectEntriesResponse> = {
   ]),
   "/work/superapp|My Docs": listing("/work/superapp", "My Docs", [{ name: "guide.md", kind: "file" }]),
   "/work/other/app|": listing("/work/other/app", "", [{ name: "lib", kind: "dir" }]),
+  "/work/superapp|vendor": { ...listing("/work/superapp", "vendor", [{ name: "a.js", kind: "file" }]), incompleteAfter: 5000 },
 }
 
 function mount(node: ReactNode) {
@@ -126,7 +128,7 @@ describe("the @ list", () => {
     expect(box()).toHaveAttribute("aria-activedescendant", "composer-mention-list-0")
   })
 
-  it("filters as you type and moves with ↑/↓; Enter opens a project and Enter again inserts its path", async () => {
+  it("filters as you type and moves with ↑/↓; Enter inserts the highlighted project's path", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
     type("check @")
     await waitFor(() => expect(options()).toHaveLength(5))
@@ -137,21 +139,52 @@ describe("the @ list", () => {
     type("check @sup")
     expect(options()).toEqual(["superapp/work/superapp"])
     key("Enter")
-    expect(box()).toHaveValue("check @superapp/")
-    await waitFor(() => expect(options()[0]).toBe("superapp//work/superapp"))
-    key("Enter")
     expect(box()).toHaveValue("check /work/superapp ")
     expect(screen.queryByTestId("mention-list")).toBeNull()
   })
 
-  it("Tab picks too", async () => {
+  it("Tab, → at the end of the word, and `/` after a name open the highlighted project", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
-    type("@supe")
+    for (const opener of ["Tab", "ArrowRight", "/"]) {
+      type("@supe")
+      await waitFor(() => expect(options()).toEqual(["superapp/work/superapp"]))
+      key(opener)
+      expect(box(), opener).toHaveValue("@superapp/")
+      await waitFor(() => expect(options()).toEqual(["My Docs/", "src/", "README.md"]))
+    }
+  })
+
+  it("→ in the middle of the word and `/` right after the @ only move and type", async () => {
+    mount(<SteerBox task={task()} onSend={async () => {}} />)
+    type("@supe", 2)
     await waitFor(() => expect(options()).toHaveLength(1))
-    key("Tab")
-    await waitFor(() => expect(options()[0]).toBe("superapp//work/superapp"))
-    key("Tab")
-    expect(box()).toHaveValue("/work/superapp ")
+    key("ArrowRight")
+    expect(box()).toHaveValue("@supe")
+    type("@")
+    await waitFor(() => expect(options()).toHaveLength(5))
+    expect(fireEvent.keyDown(box(), { key: "/" })).toBe(true)
+  })
+
+  it("a click inserts, and the chevron opens", async () => {
+    mount(<SteerBox task={task()} onSend={async () => {}} />)
+    type("@")
+    await waitFor(() => expect(options()).toHaveLength(5))
+    fireEvent.click(screen.getByRole("button", { name: "Open superapp" }))
+    expect(box()).toHaveValue("@superapp/")
+    await waitFor(() => expect(options()).toEqual(["My Docs/", "src/", "README.md"]))
+    expect(screen.queryByRole("button", { name: "Open README.md" })).toBeNull()
+    fireEvent.click(within(screen.getByTestId("mention-list")).getByText("src/"))
+    expect(box()).toHaveValue("/work/superapp/src ")
+  })
+
+  it("the footer names the keys, and only offers ⇥ where something opens", async () => {
+    mount(<SteerBox task={task()} onSend={async () => {}} />)
+    type("@")
+    await waitFor(() => expect(screen.getByTestId("mention-list")).toHaveTextContent("↵ insert · ⇥ open"))
+    type("@superapp/RE")
+    await waitFor(() => expect(options()).toEqual(["README.md"]))
+    expect(screen.getByTestId("mention-list")).toHaveTextContent("↵ insert")
+    expect(screen.getByTestId("mention-list")).not.toHaveTextContent("⇥ open")
   })
 
   it("Escape closes the list and leaves the text as typed, until the caret leaves the word", async () => {
@@ -187,17 +220,20 @@ describe("the @ list", () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledWith("npm i @types/node", undefined))
   })
 
-  it("@project/ lists its root; a folder opens its children, a file inserts its absolute path", async () => {
+  it("@project/ lists its root; Tab opens a folder, Enter inserts a folder or a file", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
     type("see @superapp/")
-    await waitFor(() => expect(options()).toEqual(["superapp//work/superapp", "My Docs/", "src/", "README.md"]))
-    key("End")
-    key("ArrowUp")
-    key("Enter")
+    await waitFor(() => expect(options()).toEqual(["My Docs/", "src/", "README.md"]))
+    key("ArrowDown")
+    key("Tab")
     expect(box()).toHaveValue("see @superapp/src/")
-    await waitFor(() => expect(options()).toEqual(["src//work/superapp/src", "components/", "config.ts"]))
+    await waitFor(() => expect(options()).toEqual(["components/", "config.ts"]))
+    key("Enter")
+    expect(box()).toHaveValue("see /work/superapp/src/components ")
     type("see @superapp/src/conf")
     await waitFor(() => expect(options()).toEqual(["config.ts"]))
+    key("Tab")
+    expect(box()).toHaveValue("see @superapp/src/conf")
     key("Enter")
     expect(box()).toHaveValue("see /work/superapp/src/config.ts ")
   })
@@ -206,13 +242,17 @@ describe("the @ list", () => {
     mount(<SteerBox task={task()} onSend={async () => {}} />)
     type("see @superapp/My")
     await waitFor(() => expect(options()).toEqual(["My Docs/"]))
-    key("Enter")
+    key("Tab")
     expect(box()).toHaveValue("see @superapp/My Docs/")
-    await waitFor(() => expect(options()).toEqual(["My Docs//work/superapp/My Docs", "guide.md"]))
+    await waitFor(() => expect(options()).toEqual(["guide.md"]))
     type("see @superapp/My Docs/gu")
     await waitFor(() => expect(options()).toEqual(["guide.md"]))
     key("Enter")
     expect(box()).toHaveValue('see "/work/superapp/My Docs/guide.md" ')
+    type("see @superapp/My")
+    await waitFor(() => expect(options()).toEqual(["My Docs/"]))
+    key("Enter")
+    expect(box()).toHaveValue('see "/work/superapp/My Docs" ')
   })
 
   it("two projects with one name are both offered, and the chosen one is the one listed", async () => {
@@ -221,10 +261,10 @@ describe("the @ list", () => {
     await waitFor(() => expect(options()).toEqual(["app/work/app", "app/work/other/app"]))
     expect(paths.some((path) => path.startsWith("/api/projects/entries?"))).toBe(false)
     key("ArrowDown")
+    key("Tab")
+    await waitFor(() => expect(options()).toEqual(["lib/"]))
     key("Enter")
-    await waitFor(() => expect(options()).toEqual(["app//work/other/app", "lib/"]))
-    key("Enter")
-    expect(box()).toHaveValue("/work/other/app ")
+    expect(box()).toHaveValue("/work/other/app/lib ")
   })
 
   it("opening one twin re-tracks even when the browser's insertText leaves the draft unchanged", async () => {
@@ -235,8 +275,8 @@ describe("the @ list", () => {
       type("@app/")
       await waitFor(() => expect(options()).toHaveLength(2))
       key("ArrowDown")
-      key("Enter")
-      await waitFor(() => expect(options()).toEqual(["app//work/other/app", "lib/"]))
+      key("Tab")
+      await waitFor(() => expect(options()).toEqual(["lib/"]))
     } finally {
       Reflect.deleteProperty(document, "execCommand")
     }
@@ -259,12 +299,27 @@ describe("the @ list", () => {
     await waitFor(() => expect(onSend).toHaveBeenCalledWith("@superapp/zzz", undefined))
   })
 
-  it("a tap picks a row", async () => {
+  it("on touch, a tap inserts, the chevron opens, and no key hint is shown", async () => {
     mount(<SteerBox task={task()} onSend={async () => {}} touch />)
     type("@")
     await waitFor(() => expect(options()).toHaveLength(5))
-    fireEvent.click(within(screen.getByTestId("mention-list")).getByText("superapp"))
-    expect(box()).toHaveValue("@superapp/")
+    expect(screen.getByTestId("mention-list")).not.toHaveTextContent("↵ insert")
+    fireEvent.click(screen.getByRole("button", { name: "Open superapp" }))
+    await waitFor(() => expect(options()).toEqual(["My Docs/", "src/", "README.md"]))
+    fireEvent.click(within(screen.getByTestId("mention-list")).getByText("README.md"))
+    expect(box()).toHaveValue("/work/superapp/README.md ")
+  })
+
+  it("a folder the scan could not read in full says so, rather than to keep typing", async () => {
+    mount(<SteerBox task={task()} onSend={async () => {}} />)
+    type("@superapp/vendor/")
+    await waitFor(() =>
+      expect(screen.getByTestId("mention-list")).toHaveTextContent("This folder has more than 5,000 entries; not all are searchable"),
+    )
+    type("@superapp/vendor/zzz")
+    await waitFor(() => expect(options()).toEqual([]))
+    expect(screen.getByTestId("mention-list")).toHaveTextContent("not all are searchable")
+    expect(screen.getByTestId("mention-list")).not.toHaveTextContent("Nothing in")
   })
 
   it("a folder that cannot be listed says so, and Escape closes it", async () => {

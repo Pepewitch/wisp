@@ -12,11 +12,13 @@ import type { RepoInfo } from "@/lib/types"
  *   `@superapp/`        the project's root folder
  *   `@superapp/src/co`  the entries of `src/` matching `co`
  *
- * Picking a project or a folder OPENS it; the first row of every folder
- * inserts that folder, and a file inserts itself. Once something is opened,
- * the picker remembers which project and folder it is (`MentionNav`), so a
- * folder called `My Docs` or two projects both called `app` never depend on
- * re-reading the draft: the draft only shows where you are.
+ * One rule for every row: Enter (or a click) INSERTS its absolute path,
+ * quoted when it contains whitespace; Tab, →, typing `/` after its name, or
+ * the row's chevron OPENS a project or folder and lists its children. Once
+ * something is opened, the picker remembers which project and folder it is
+ * (`MentionNav`), so a folder called `My Docs` or two projects both called
+ * `app` never depend on re-reading the draft: the draft only shows where you
+ * are.
  *
  * Only an `@` that starts a word opens it, so an email address never does. An
  * `@word` no project answers is no list at all: `npm i @types/node` (no
@@ -57,15 +59,15 @@ export function mentionProjects(repos: RepoInfo[]): MentionProject[] {
 export interface MentionRow {
   /** unique within the list, and the option's DOM id suffix */
   key: string
-  kind: "project" | "dir" | "file" | "here"
+  kind: "project" | "dir" | "file"
   /** what the row says: a project's name, an entry's name (`src/` for a folder) */
   label: string
-  /** the muted second part: a project's path, or what picking "here" inserts */
+  /** the muted second part: a project's path */
   detail?: string
-  /** a project or folder: picking it opens it, and the list stays */
+  /** what inserting writes over the token: the absolute path, quoted when it has whitespace */
+  insert: string
+  /** a project or folder: what opening it lists */
   open?: { project: MentionProject; dir: string }
-  /** a file or "this folder": the text that replaces the token, and the list closes */
-  insert?: string
 }
 
 function wordStart(value: string, caret: number): number {
@@ -171,6 +173,7 @@ export function projectRows(projects: MentionProject[], filter: string): Mention
     kind: "project",
     label: project.name,
     detail: project.path,
+    insert: quotePath(project.path),
     open: { project, dir: "" },
   }))
 }
@@ -187,45 +190,21 @@ export function quotePath(path: string): string {
   return /\s/.test(path) ? `"${path}"` : path
 }
 
-/**
- * The rows for one listed folder. Before you filter, the first row is the
- * folder itself, so `@superapp/src/` + Enter inserts that folder's path; a
- * folder row below it opens its children instead.
- */
+/** The rows for one listed folder: its folders, then its files, ranked by the typed filter. */
 export function entryRows(
   query: Extract<MentionQuery, { kind: "entries" }>,
   root: string,
   entries: ProjectEntry[],
 ): MentionRow[] {
-  const here: MentionRow[] =
-    query.filter === ""
-      ? [
-          {
-            key: "here",
-            kind: "here",
-            label: query.dir === "" ? `${mentionHandle(query.project.name)}/` : `${query.dir.split("/").pop()}/`,
-            detail: joinPath(root, query.dir),
-            insert: quotePath(joinPath(root, query.dir)),
-          },
-        ]
-      : []
-  const matches = ranked(entries, (entry) => matchBand(entry.name, query.filter)).map(
-    (entry): MentionRow =>
-      entry.kind === "dir"
-        ? {
-            key: `dir:${entry.name}`,
-            kind: "dir",
-            label: `${entry.name}/`,
-            open: { project: query.project, dir: joinDir(query.dir, entry.name) },
-          }
-        : {
-            key: `file:${entry.name}`,
-            kind: "file",
-            label: entry.name,
-            insert: quotePath(joinPath(root, query.dir, entry.name)),
-          },
+  return ranked(entries, (entry) => matchBand(entry.name, query.filter)).map(
+    (entry): MentionRow => ({
+      key: `${entry.kind}:${entry.name}`,
+      kind: entry.kind,
+      label: entry.kind === "dir" ? `${entry.name}/` : entry.name,
+      insert: quotePath(joinPath(root, query.dir, entry.name)),
+      ...(entry.kind === "dir" ? { open: { project: query.project, dir: joinDir(query.dir, entry.name) } } : {}),
+    }),
   )
-  return [...here, ...matches]
 }
 
 /**
@@ -251,22 +230,24 @@ export function mentionOptionId(index: number): string {
 
 /** The keys the textarea hands to an open `@` list instead of acting on them. */
 export const MENTION_NAV_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End"])
-export const MENTION_PICK_KEYS = new Set(["Enter", "Tab"])
+/** Tab always opens; → and `/` only at the end of the word, where they would otherwise just type or move */
+export const MENTION_OPEN_KEYS = new Set(["Tab", "ArrowRight", "/"])
 
 /**
  * The draft after a pick, where the caret goes, and what the picker has open
  * next. Opening writes `@<handle>/<dir>/` and keeps the list; inserting writes
  * the path and a space, so the caret leaves the word and neither list reopens
- * on it (it starts with a `/`).
+ * on it (it starts with a `/` or a quote).
  */
 export function applyMention(
   value: string,
   token: MentionToken,
   row: MentionRow,
+  how: "insert" | "open",
 ): { text: string; value: string; caret: number; nav: MentionNav | null } {
-  const { open } = row
+  const open = how === "open" ? row.open : undefined
   const prefix = open ? `@${[mentionHandle(open.project.name), ...open.dir.split("/")].filter(Boolean).join("/")}/` : null
-  const text = prefix ?? `${row.insert ?? ""} `
+  const text = prefix ?? `${row.insert} `
   const nav = open && prefix ? { start: token.start, prefix, project: open.project, dir: open.dir } : null
   return { text, value: value.slice(0, token.start) + text + value.slice(token.end), caret: token.start + text.length, nav }
 }

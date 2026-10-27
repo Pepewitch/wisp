@@ -120,10 +120,15 @@ describe("mentionHandle", () => {
 })
 
 describe("projectRows", () => {
-  it("lists every project, its path muted; picking one opens it", () => {
+  it("lists every project, its path muted, inserting its path or opening it", () => {
     const rows = projectRows(PROJECTS, "")
     expect(rows.map((row) => row.label)).toEqual(["wisp", "superapp", "My App", "api-service"])
-    expect(rows[1]).toMatchObject({ detail: "/Users/dev/work/superapp", open: { project: PROJECTS[1], dir: "" } })
+    expect(rows[1]).toMatchObject({
+      detail: "/Users/dev/work/superapp",
+      insert: "/Users/dev/work/superapp",
+      open: { project: PROJECTS[1], dir: "" },
+    })
+    expect(projectRows([{ name: "notes", path: "/Users/dev/My Notes" }], "")[0]!.insert).toBe('"/Users/dev/My Notes"')
   })
 
   it("ranks a name prefix over a name substring, and never matches on the path", () => {
@@ -144,31 +149,34 @@ describe("entryRows", () => {
   ]
   const query = (raw: string) => parseMention(typed(raw), PROJECTS) as Extract<MentionQuery, { kind: "entries" }>
 
-  it("offers the folder itself first, then its entries; a folder opens, a file inserts", () => {
+  it("every row inserts its absolute path; only a folder can also be opened", () => {
     const rows = entryRows(query("@superapp/src/"), "/Users/dev/work/superapp", ENTRIES)
-    expect(rows[0]).toMatchObject({ kind: "here", label: "src/", insert: "/Users/dev/work/superapp/src" })
-    expect(rows[1]).toMatchObject({ kind: "dir", label: "components/", open: { project: PROJECTS[1], dir: "src/components" } })
-    expect(rows[3]).toMatchObject({ kind: "file", label: "compose.ts", insert: "/Users/dev/work/superapp/src/compose.ts" })
+    expect(rows.map((row) => row.label)).toEqual(["components/", "config/", "compose.ts", "index.ts"])
+    expect(rows[0]).toEqual({
+      key: "dir:components",
+      kind: "dir",
+      label: "components/",
+      insert: "/Users/dev/work/superapp/src/components",
+      open: { project: PROJECTS[1], dir: "src/components" },
+    })
+    expect(rows[2]).toEqual({ key: "file:compose.ts", kind: "file", label: "compose.ts", insert: "/Users/dev/work/superapp/src/compose.ts" })
   })
 
-  it("filters the last segment, prefix first, and drops the folder row once you type", () => {
+  it("filters the last segment, prefix first", () => {
     const rows = entryRows(query("@superapp/src/co"), "/Users/dev/work/superapp", ENTRIES)
     expect(rows.map((row) => row.label)).toEqual(["components/", "config/", "compose.ts"])
     expect(entryRows(query("@superapp/src/dex"), "/r", ENTRIES).map((row) => row.label)).toEqual(["index.ts"])
   })
 
-  it("at the root, the folder row is the project", () => {
-    const rows = entryRows(query("@superapp/"), "/Users/dev/work/superapp", ENTRIES)
-    expect(rows[0]).toMatchObject({ label: "superapp/", insert: "/Users/dev/work/superapp" })
-    expect(rows[1]).toMatchObject({ open: { dir: "components" } })
-  })
-
   it("quotes an inserted path that contains a space", () => {
     const nav = { start: 0, prefix: "@superapp/My Docs/", project: PROJECTS[1]!, dir: "My Docs" }
     const folder = parseMention(mentionTokenAt("@superapp/My Docs/", 18, nav)!, PROJECTS) as Extract<MentionQuery, { kind: "entries" }>
-    const rows = entryRows(folder, "/Users/dev/work/superapp", [{ name: "read me.md", kind: "file" }])
+    const rows = entryRows(folder, "/Users/dev/work/superapp", [
+      { name: "old notes", kind: "dir" },
+      { name: "read me.md", kind: "file" },
+    ])
     expect(rows.map((row) => row.insert)).toEqual([
-      '"/Users/dev/work/superapp/My Docs"',
+      '"/Users/dev/work/superapp/My Docs/old notes"',
       '"/Users/dev/work/superapp/My Docs/read me.md"',
     ])
   })
@@ -191,27 +199,32 @@ describe("nextMentionIndex", () => {
 
 describe("applyMention", () => {
   const token = { start: 4, end: 8, query: "sup" }
+  const [superapp] = projectRows(PROJECTS, "sup")
 
-  it("inserting replaces only the token and steps past it with a space", () => {
-    const row = { key: "file:x", kind: "file" as const, label: "x.ts", insert: "/Users/dev/work/superapp/x.ts" }
-    expect(applyMention("see @sup and", token, row)).toEqual({
-      text: "/Users/dev/work/superapp/x.ts ",
-      value: "see /Users/dev/work/superapp/x.ts  and",
-      caret: 34,
+  it("inserting replaces only the token with the path and steps past it with a space", () => {
+    expect(applyMention("see @sup and", token, superapp!, "insert")).toEqual({
+      text: "/Users/dev/work/superapp ",
+      value: "see /Users/dev/work/superapp  and",
+      caret: 29,
       nav: null,
     })
   })
 
   it("opening a project or folder writes where you are and hands the picker its identity", () => {
-    const [project] = projectRows(PROJECTS, "sup")
-    expect(applyMention("see @sup", token, project!)).toEqual({
+    expect(applyMention("see @sup", token, superapp!, "open")).toEqual({
       text: "@superapp/",
       value: "see @superapp/",
       caret: 14,
       nav: { start: 4, prefix: "@superapp/", project: PROJECTS[1], dir: "" },
     })
-    const folder = { key: "dir:My Docs", kind: "dir" as const, label: "My Docs/", open: { project: PROJECTS[1]!, dir: "My Docs" } }
-    const opened = applyMention("see @superapp/", { start: 4, end: 14, query: "superapp/" }, folder)
+    const folder = {
+      key: "dir:My Docs",
+      kind: "dir" as const,
+      label: "My Docs/",
+      insert: '"/Users/dev/work/superapp/My Docs"',
+      open: { project: PROJECTS[1]!, dir: "My Docs" },
+    }
+    const opened = applyMention("see @superapp/", { start: 4, end: 14, query: "superapp/" }, folder, "open")
     expect(opened).toMatchObject({ value: "see @superapp/My Docs/", caret: 22, nav: { prefix: "@superapp/My Docs/", dir: "My Docs" } })
     // the opened folder survives its own space: the next keystrokes still read it
     expect(mentionTokenAt(opened.value + "re", 24, opened.nav)).toMatchObject({ nav: opened.nav, rest: "re" })
