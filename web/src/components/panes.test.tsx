@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs"
+import { resolve } from "node:path"
+
 import { act, fireEvent, render, screen } from "@testing-library/react"
 import { useEffect, useState } from "react"
 import { describe, expect, it, vi } from "vitest"
@@ -25,6 +28,49 @@ function panel(props: { terminalKey: string; toolOpen: boolean; terminalOpen: bo
     />
   )
 }
+
+// As much of a browser's layout as the library reads: the shell's children
+// sit side by side in a 1600px row, a panel as wide as its flex-grow share,
+// a divider one pixel; an undisplayed element has no box, so it reads 0.
+// jsdom has no Tailwind, so `hidden` is declared here.
+const WIDTH = 1600
+function laidOutInDom() {
+  const style = document.createElement("style")
+  style.textContent = ".hidden { display: none }"
+  document.head.append(style)
+  const boxWidth = (el: HTMLElement) => {
+    if (getComputedStyle(el).display === "none") return 0
+    if (el.hasAttribute("data-panel")) {
+      const share = el.style.flexGrow === "" ? 100 / 3 : Number(el.style.flexGrow)
+      return Math.round((share / 100) * WIDTH)
+    }
+    return el.getAttribute("role") === "separator" ? 1 : WIDTH
+  }
+  const boxLeft = (el: HTMLElement) => {
+    if (getComputedStyle(el).display === "none") return 0
+    const siblings = [...(el.parentElement?.children ?? [])]
+    return siblings.slice(0, siblings.indexOf(el)).reduce((sum, sibling) => sum + boxWidth(sibling as HTMLElement), 0)
+  }
+  const spies = [
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return boxWidth(this)
+    }),
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(800),
+    vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
+      return boxLeft(this)
+    }),
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      const x = boxLeft(this)
+      const width = boxWidth(this)
+      return { x, y: 0, left: x, top: 0, right: x + width, bottom: 800, width, height: 800, toJSON: () => ({}) } as DOMRect
+    }),
+  ]
+  return () => {
+    spies.forEach((spy) => spy.mockRestore())
+    style.remove()
+  }
+}
+
 
 describe("the tool panel", () => {
   it("does not start a task's terminal until it is first shown, then only hides it", () => {
@@ -372,6 +418,50 @@ describe("the panel's glide", () => {
     }
   })
 
+  it("lets nothing in the centre ease while a drag collapses the panel", async () => {
+    const restore = laidOutInDom()
+    vi.stubGlobal("matchMedia", (query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }))
+    let open = true
+    const shell = () => (
+      <PaneShell sidebar={<div />} centre={<main className="wisp-centre" />} panel={<div>tools</div>} panelOpen={open} onPanelDraggedShut={() => (open = false)} />
+    )
+    try {
+      localStorage.setItem("wisp_tool_panel_width", "400")
+      const view = render(shell())
+      await act(async () => {})
+      const divider = screen.getAllByRole("separator").find((s) => s.nextElementSibling === toolPanel())!
+      const at = divider.getBoundingClientRect().x
+      fireEvent.pointerDown(divider, { pointerType: "mouse", button: 0, buttons: 1, clientX: at, clientY: 400 })
+      expect(outer()).toHaveAttribute("data-resizing")
+      // far past the panel's minimum: the library collapses it, mid-drag, and the centre widens under the mark
+      await act(async () => void fireEvent.pointerMove(document, { pointerType: "mouse", buttons: 1, clientX: 1590, clientY: 400 }))
+      expect((toolPanel() as HTMLElement).style.flexGrow).toBe("0")
+      expect(outer()).toHaveAttribute("data-resizing")
+      // it reports the shut on release; the collapse is the drag's own, not a glide
+      await act(async () => void fireEvent.pointerUp(document, { pointerType: "mouse", button: 0, clientX: 1590, clientY: 400 }))
+      expect(open).toBe(false)
+      view.rerender(shell())
+      await act(async () => {})
+      expect(outer()).not.toHaveAttribute("data-glide")
+      expect(outer()).toHaveAttribute("data-resizing")
+      // two frames on, so the card's new place has landed inside the mark
+      await act(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))))
+      expect(outer()).not.toHaveAttribute("data-resizing")
+    } finally {
+      // a failure mid-drag must not leave the library dragging into the next test
+      fireEvent.pointerUp(document, { pointerType: "mouse", button: 0 })
+      restore()
+      vi.unstubAllGlobals()
+      localStorage.removeItem("wisp_tool_panel_width")
+      localStorage.removeItem("react-resizable-panels:wisp-ui-main-v2")
+    }
+  })
+
+  it("has the stylesheet drop the centre's transition under the mark", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../index.css"), "utf8")
+    expect(css).toMatch(/\[data-resizing\] \.wisp-centre \{\s*transition: none;/)
+  })
+
   it("does not glide or pin anything under reduced motion", async () => {
     const settling = vi.fn()
     const shell = (open: boolean) => (
@@ -389,48 +479,6 @@ describe("the panel's glide", () => {
 })
 
 describe("the sidebar's divider", () => {
-  // As much of a browser's layout as the library reads: the shell's children
-  // sit side by side in a 1600px row, a panel as wide as its flex-grow share,
-  // a divider one pixel; an undisplayed element has no box, so it reads 0.
-  // jsdom has no Tailwind, so `hidden` is declared here.
-  const WIDTH = 1600
-  function laidOut() {
-    const style = document.createElement("style")
-    style.textContent = ".hidden { display: none }"
-    document.head.append(style)
-    const boxWidth = (el: HTMLElement) => {
-      if (getComputedStyle(el).display === "none") return 0
-      if (el.hasAttribute("data-panel")) {
-        const share = el.style.flexGrow === "" ? 100 / 3 : Number(el.style.flexGrow)
-        return Math.round((share / 100) * WIDTH)
-      }
-      return el.getAttribute("role") === "separator" ? 1 : WIDTH
-    }
-    const boxLeft = (el: HTMLElement) => {
-      if (getComputedStyle(el).display === "none") return 0
-      const siblings = [...(el.parentElement?.children ?? [])]
-      return siblings.slice(0, siblings.indexOf(el)).reduce((sum, sibling) => sum + boxWidth(sibling as HTMLElement), 0)
-    }
-    const spies = [
-      vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
-        return boxWidth(this)
-      }),
-      vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockReturnValue(800),
-      vi.spyOn(HTMLElement.prototype, "offsetLeft", "get").mockImplementation(function (this: HTMLElement) {
-        return boxLeft(this)
-      }),
-      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
-        const x = boxLeft(this)
-        const width = boxWidth(this)
-        return { x, y: 0, left: x, top: 0, right: x + width, bottom: 800, width, height: 800, toJSON: () => ({}) } as DOMRect
-      }),
-    ]
-    return () => {
-      spies.forEach((spy) => spy.mockRestore())
-      style.remove()
-    }
-  }
-
   const sidebarWidth = () => (Number(document.getElementById("sidebar")!.style.flexGrow) / 100) * WIDTH
   const divider = () => document.getElementById("sidebar")!.nextElementSibling as HTMLElement
   // the tool panel closed, as every task opens
@@ -439,7 +487,7 @@ describe("the sidebar's divider", () => {
   async function withShell(run: (errors: unknown[]) => Promise<void>) {
     // a saved sidebar with room to move both ways
     localStorage.setItem("react-resizable-panels:wisp-ui-main-v2", JSON.stringify({ sidebar: 18.75, centre: 81.25, tool: 0 }))
-    const restore = laidOut()
+    const restore = laidOutInDom()
     const errors: unknown[] = []
     const onError = (event: ErrorEvent) => errors.push(event.error)
     window.addEventListener("error", onError)

@@ -667,6 +667,10 @@
 [data-glide="out"] .wisp-centre {
   transition-duration: var(--dur-in);
 }
+/* …but a divider moved by hand moves it at once: a drag adds no easing */
+[data-resizing] .wisp-centre {
+  transition: none;
+}
 .wisp-gutter {
   transition: opacity var(--dur-size) var(--ease-out);
 }
