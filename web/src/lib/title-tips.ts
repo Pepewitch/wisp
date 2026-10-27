@@ -151,6 +151,11 @@ function show(instant: boolean): void {
   }, 250)
 }
 
+/** Close the tip now: its owner is about to move, and the tip would stay where it was. */
+export function closeTitleTip(): void {
+  release()
+}
+
 /** Give the title back and close the tip. `quiet`: a new owner is taking over at once. */
 function release(quiet = false): void {
   window.clearTimeout(timer)

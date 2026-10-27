@@ -20,6 +20,10 @@ import type { ApiTask, ConversationDetail, ProjectVerifyAgent, ProjectVerifySeco
  *
  * Query keys come from `qk` (lib/query.ts) — the same factory the SSE bridge
  * invalidates through, so a write and an event agree on what went stale.
+ *
+ * The one write not here is PUT /api/repos/order: its saves queue one at a
+ * time behind an optimistic order, which a mutation hook cannot hold
+ * (useProjectOrder, lib/project-order-queue.ts).
  */
 
 /* ---------------- tasks ---------------- */

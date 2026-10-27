@@ -730,6 +730,24 @@
   transition: rotate var(--dur-in) var(--ease-out);
 }
 
+/* A project header being dragged (useProjectDrag.ts) lifts off the list: a
+   float shadow and a hair of scale, arriving on the popup's ease. While any
+   drag runs, nothing selects and the pointer says it is holding something. */
+.wisp-lift {
+  transition:
+    box-shadow var(--dur-in) var(--ease-out),
+    scale var(--dur-in) var(--ease-out);
+}
+.wisp-lift[data-dragging] {
+  scale: 1.02;
+  box-shadow: var(--shadow-float);
+}
+body[data-project-drag],
+body[data-project-drag] * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
 /* The phone's task sheet (task-sheet.tsx) rises from the bottom edge and
    leaves quicker; a surface, so no spring. While a finger swipes it, it
    follows base-ui's --drawer-swipe-movement-y with no easing at all. */
@@ -848,7 +866,8 @@
   .wisp-summary-card,
   .wisp-unfold,
   .wisp-turn,
-  .wisp-sheet {
+  .wisp-sheet,
+  .wisp-lift {
     transition: none;
   }
   .wisp-tip[data-state]::before,

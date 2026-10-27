@@ -85,7 +85,8 @@ The accent appears in exactly five places:
 2. the **one primary action** on a screen — `<Button tone="primary">`, and never
    two at once
 3. the **send** button in the steer box
-4. the **focus ring**
+4. the **focus ring**, and its kin while a project is dragged: the 2px drop
+   line that says where it will land (§5o)
 5. **inline code** in agent prose
 
 Selection and active tabs are a **background change** — `bg-accent`. They never
@@ -1738,6 +1739,41 @@ and instant under `prefers-reduced-motion`.
 The gallery's *Summary card* section draws five states, open rows, the chip's
 popover and the 999px / 1001px panes from the real components, one
 `data-frame` each.
+
+## 5o. Project order — the daemon's, moved by hand
+
+The sidebar lists the configured projects in `config.json`'s `repos` order,
+then the repos Wisp knows only from tasks. Reordering writes that order
+(`PUT /api/repos/order`), so the browser, Desktop and the phone all show one
+order; nothing about it lives in `localStorage`. Gated on
+`features.projectOrder`: without it nothing drags and no row has a menu.
+
+- **Drag the header row**, the whole row, once the press has moved 4px; under
+  that it is still a click, so the chevron, gear and `+` keep working. The row
+  lifts (`wisp-lift`: the float shadow and a hair of scale on `--dur-in`, none
+  under reduced motion), its tasks fold away, and a 2px violet line sits in
+  the gap where it will land. Escape cancels; the release never folds the
+  project it lands on. Pointer events only, no library (`useProjectDrag`).
+- **The row's `⋯` menu** holds Move up and Move down, disabled at the ends,
+  with their keys: **Alt+↑ / Alt+↓** (⌥ on Apple) on a focused header. Touch
+  has no drag; the phone uses the menu.
+- **Optimistic, one save at a time** (`ProjectOrderQueue`, one per
+  connection, owned by the QueryClient so a connection switch and back finds
+  the same one). The repos cache is never written: it holds what the daemon
+  last said. The order being saved is the queue's `pending`, a small external
+  store, and `useSidebarTree` lays it over the cache (`shownRepos`): a
+  project added meanwhile goes after the ordered ones, one removed is gone.
+  Each move works from what is shown, not the last render. A move made while
+  a save is out waits as the queued order, and a later one replaces it, so
+  only the latest is sent, with any added or removed project folded in. When
+  the queue drains the list is read once and `pending` clears. A refusal
+  clears `pending`, drops the queued order, reads the list again and says why
+  on the pane's inline error line, with Dismiss (a 409 says the project list
+  changed meanwhile).
+- A keyboard move closes the header's path tooltip, which would otherwise
+  stay where the row was.
+- A repo known only from its tasks never moves and has no menu: it has no
+  config entry to put anywhere.
 
 ## 6. Panes and dividers
 

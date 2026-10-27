@@ -206,6 +206,8 @@ vi.mock("@/hooks/mutations", () => ({
   useRefreshHarnessLimits: () => ({ mutate: vi.fn(), isPending: false }),
 }))
 
+vi.mock("@/hooks/useProjectOrder", () => ({ useProjectOrder: () => undefined }))
+
 vi.mock("@/hooks/useLogStream", () => ({
   useLogStream: mocks.useLogStream,
 }))
