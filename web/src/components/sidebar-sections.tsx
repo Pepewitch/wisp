@@ -1,7 +1,6 @@
-import { useState, type KeyboardEvent, type PointerEvent } from "react"
+import { useId, useState, type KeyboardEvent, type PointerEvent } from "react"
 
-import { ChevronDown, Gear, More, Plus, Verify } from "@/components/icons"
-import { Menu, MenuItem } from "@/components/menu"
+import { ChevronDown, Gear, Plus, Verify } from "@/components/icons"
 import { Button, Eyebrow } from "@/components/primitives"
 import { TaskTree } from "@/components/subtask-rows"
 import type { SubtaskTreeView } from "@/hooks/useSidebarTree"
@@ -93,14 +92,15 @@ function VerificationButton({
 export interface ProjectOrderControls {
   canMoveUp: boolean
   canMoveDown: boolean
-  /** `keyboard`: the move came from the focused header, which keeps focus */
-  onMove: (step: -1 | 1, keyboard?: boolean) => void
+  /** a move from the focused header's keys; the header keeps focus */
+  onMove: (step: -1 | 1) => void
   /** this project's header is the one being dragged */
   dragging: boolean
   onPointerDown: (event: PointerEvent) => void
 }
 
-const MOVE_KEY = isApplePlatform() ? "⌥" : "Alt+"
+/** The modifier's name as the keyboard prints it; `aria-keyshortcuts` says Alt everywhere. */
+const MOVE_KEY = isApplePlatform() ? "Option" : "Alt"
 
 /** Alt+↑ / Alt+↓ on a focused header move its project. */
 function moveKey(event: KeyboardEvent, order: ProjectOrderControls): void {
@@ -108,29 +108,13 @@ function moveKey(event: KeyboardEvent, order: ProjectOrderControls): void {
   const step = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0
   if (step === 0) return
   event.preventDefault()
-  if (step === -1 ? order.canMoveUp : order.canMoveDown) order.onMove(step, true)
+  if (step === -1 ? order.canMoveUp : order.canMoveDown) order.onMove(step)
 }
 
-/** Move up / Move down: how touch and the keyboard reorder, and the drag's spelled-out twin. */
-function ProjectMenu({ group, order, touch }: { group: ProjectGroup; order: ProjectOrderControls; touch: boolean }) {
-  return (
-    <Menu
-      iconOnly
-      label={`More for ${group.name}`}
-      icon={<More />}
-      align="end"
-      touch={touch}
-      // hover reveals it like the gear; keyboard focus and an open menu keep it
-      className={cn(!touch && "hidden group-focus-within/project:inline-flex group-hover/project:inline-flex data-[popup-open]:inline-flex")}
-    >
-      <MenuItem disabled={!order.canMoveUp} hint={touch ? undefined : `${MOVE_KEY}↑`} onClick={() => order.onMove(-1)}>
-        Move up
-      </MenuItem>
-      <MenuItem disabled={!order.canMoveDown} hint={touch ? undefined : `${MOVE_KEY}↓`} onClick={() => order.onMove(1)}>
-        Move down
-      </MenuItem>
-    </Menu>
-  )
+/** The row has no visible move control, so its toggle says how to move it. */
+function moveDescription(touch: boolean): string {
+  const drag = touch ? "press and hold the row, then drag it" : "drag the row"
+  return `To reorder, ${drag}, or press ${MOVE_KEY}+Up Arrow or ${MOVE_KEY}+Down Arrow.`
 }
 
 /** One project: a 28px header row over its task list. */
@@ -164,6 +148,7 @@ export function ProjectSection({
   order?: ProjectOrderControls
 }) {
   const [open, setOpen] = useState(true)
+  const moveHintId = useId()
   const dragging = order?.dragging === true
   return (
     <section className="mt-2 first:mt-0">
@@ -185,6 +170,8 @@ export function ProjectSection({
           type="button"
           onClick={() => setOpen(!open)}
           aria-expanded={open}
+          aria-keyshortcuts={order ? "Alt+ArrowUp Alt+ArrowDown" : undefined}
+          aria-describedby={order ? moveHintId : undefined}
           title={group.path}
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left focus-visible:outline-none"
         >
@@ -211,6 +198,11 @@ export function ProjectSection({
             </span>
           )}
         </button>
+        {order && (
+          <span id={moveHintId} className="sr-only">
+            {moveDescription(touch)}
+          </span>
+        )}
         <span
           className={cn(
             "font-mono text-[10.5px] text-faint",
@@ -252,7 +244,6 @@ export function ProjectSection({
         >
           <Plus />
         </Button>
-        {order && <ProjectMenu group={group} order={order} touch={touch} />}
       </div>
 
       {/* a dragged project folds its tasks away, so the drop slots stay close together */}
