@@ -45,13 +45,6 @@ export function verifyAgent(cfg: WispConfig, adapters: Record<string, AdapterDef
   return { harness: fallback.harness, model: fallback.model ?? undefined, effort: fallback.effort ?? undefined }
 }
 
-/** The author's goal for the reviewer: what it was asked. */
-function authorGoal(author: Task): string {
-  const first = db.query("SELECT prompt FROM turns WHERE task_id = ? ORDER BY n LIMIT 1").get(author.id) as { prompt: string } | null
-  const asked = (first?.prompt ?? author.title).trim()
-  return asked.length > 2000 ? `${asked.slice(0, 2000)}…` : asked
-}
-
 export interface ReviewerStart {
   cfg: WispConfig
   adapters: Record<string, AdapterDef>
@@ -167,7 +160,7 @@ export async function launchReview(start: ReviewerStart, input: {
     role: review.role, tier: round.tier ?? "standard", signals: snapshot.signals, projectRules: rules.length > 0 ? rules.join("\n\n") : null,
     rebuttal: authorRebuttal(author, previous[0]?.finished_at ?? null),
     pr: { number: pr.number, title: author.custom_title ? author.title : `the change from task ${author.id}`, url: pr.url, base: pr.baseRefName, head: pr.head },
-    round: round.round, budget: input.budget, counted: round.counted === 1, goal: authorGoal(author), repoPath: author.repo_path,
+    round: round.round, budget: input.budget, counted: round.counted === 1, repoPath: author.repo_path,
     changed: snapshot.changed, previous: previous.map((earlier) => roundView(earlier)), authorTaskId: author.id,
     capture: captureAvailable(start.cfg.chromePath), required: parsedList(round.required_json),
     recipe: {
