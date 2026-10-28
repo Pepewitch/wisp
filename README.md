@@ -1,5 +1,3 @@
-https://github.com/user-attachments/assets/93c9376d-e671-44b8-9f34-82a747d929da
-
 <div align="center">
 
 <p>Run your coding agents in parallel, each task in its own worktree.<br />
