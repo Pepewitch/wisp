@@ -1,21 +1,30 @@
 import { QueryClient } from "@tanstack/react-query"
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import type { ReactNode } from "react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
+import { LONG_PRESS_MS } from "@/hooks/useProjectDrag"
 import { TASKS } from "@/lib/fixtures"
+import type { ProjectGroup } from "@/lib/projects"
+import type { ApiTask } from "@/lib/types"
+import { inertProjectSearch } from "@/test/project-search"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 import { MobileShell } from "./mobile-shell"
+import { Sidebar } from "./sidebar"
 
 /** The drawer's width in these tests; jsdom lays nothing out. */
 const WIDTH = 300
 
-function mount(conversation = <div>Transcript</div>) {
+function mount(
+  conversation = <div>Transcript</div>,
+  sidebar: (dismiss: () => void) => ReactNode = (dismiss) => <button type="button" onClick={dismiss}>Pick a task</button>,
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <MobileShell
       task={TASKS[0]!}
-      sidebar={(dismiss) => <button type="button" onClick={dismiss}>Pick a task</button>}
+      sidebar={sidebar}
       conversation={conversation}
       changes={<div>Diff</div>}
       terminal={<div>Shell</div>}
@@ -304,5 +313,93 @@ describe("the hamburger", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Pick a task" }))
     await waitFor(() => expect(drawer()).toBeNull())
+  })
+})
+
+describe("a project held in the open drawer", () => {
+  const project = (name: string): ProjectGroup => {
+    const path = `/src/${name}`
+    const task = { id: `t-${name}`, title: `task ${name}`, repo_path: path, archived: false, state: "done" } as ApiTask
+    return { path, name, exists: true, unlisted: false, configured: true, tasks: [task] }
+  }
+  const onReorder = vi.fn()
+  const groups = [project("alpha"), project("beta")]
+  const search = inertProjectSearch()
+  const projectOrder = { onReorder, pending: null, error: null, onDismissError: () => {} }
+
+  function mountWithProjects() {
+    mount(undefined, (dismiss) => (
+      <Sidebar
+        groups={groups}
+        archivedTasks={[]}
+        status={{}}
+        pullRequests={{}}
+        selectedId={null}
+        onSelect={dismiss}
+        showArchived={false}
+        onShowArchivedChange={() => {}}
+        onNewTask={() => {}}
+        onConfigureProject={() => {}}
+        search={search}
+        error={null}
+        loading={false}
+        touch
+        projectOrder={projectOrder}
+      />
+    ))
+  }
+  const header = (name: string) => document.querySelector<HTMLElement>(`[data-project-header][data-project-path="/src/${name}"]`)!
+  const toggle = (name: string) => header(name).querySelector<HTMLElement>("[aria-expanded]")!
+  /** A finger as the browser reports it: the pointer event, then the touch event. */
+  function finger(target: Element, phase: "down" | "move" | "up", x: number, t: number, y = 400) {
+    const pointer = { pointerId: 1, pointerType: "touch", button: 0, clientX: x, clientY: y }
+    if (phase === "down") fireEvent.pointerDown(target, pointer)
+    else if (phase === "move") fireEvent.pointerMove(window, pointer)
+    else fireEvent.pointerUp(window, pointer)
+    return touch(target, phase === "down" ? "touchstart" : phase === "move" ? "touchmove" : "touchend", x, t, y)
+  }
+
+  /** Opened by the hamburger, then the clock is the test's, for the hold. */
+  async function openDrawer(): Promise<HTMLElement> {
+    mountWithProjects()
+    fireEvent.click(screen.getByRole("button", { name: "Open tasks" }))
+    const popup = await screen.findByRole("dialog", { name: "Tasks" })
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] })
+    return popup
+  }
+
+  beforeEach(() => onReorder.mockReset())
+  afterEach(() => vi.useRealTimers())
+
+  it("still closes the drawer on a sideways swipe that starts on a header", async () => {
+    await openDrawer()
+
+    finger(toggle("alpha"), "down", 250, 0)
+    finger(toggle("alpha"), "move", 238, 16)
+    finger(toggle("alpha"), "move", 90, 400)
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS))
+    expect(header("alpha")).not.toHaveAttribute("data-dragging")
+    finger(toggle("alpha"), "up", 90, 600)
+
+    expect(drawer()).toBeNull()
+    expect(onReorder).not.toHaveBeenCalled()
+  })
+
+  it("lifts a header held still, and the lifted row's moves never take the drawer", async () => {
+    const popup = await openDrawer()
+
+    finger(toggle("alpha"), "down", 250, 0)
+    act(() => vi.advanceTimersByTime(LONG_PRESS_MS))
+    expect(header("alpha")).toHaveAttribute("data-dragging")
+
+    // leftward, as far as a closing swipe goes: the finger is the row's
+    const moved = finger(toggle("alpha"), "move", 90, 400)
+    await frame()
+    expect(moved.defaultPrevented).toBe(true)
+    expect(popup.style.transform).toBe("")
+    finger(toggle("alpha"), "up", 90, 600)
+
+    expect(drawer()).not.toBeNull()
+    expect(header("alpha")).not.toHaveAttribute("data-dragging")
   })
 })

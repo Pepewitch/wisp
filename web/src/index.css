@@ -742,7 +742,8 @@
 
 /* A project header being dragged (useProjectDrag.ts) lifts off the list: a
    float shadow and a hair of scale, arriving on the popup's ease. While any
-   drag runs, nothing selects and the pointer says it is holding something. */
+   drag runs, nothing selects, iOS shows no long-press callout, and the
+   pointer says it is holding something. */
 .wisp-lift {
   transition:
     box-shadow var(--dur-in) var(--ease-out),
@@ -755,7 +756,9 @@
 body[data-project-drag],
 body[data-project-drag] * {
   cursor: grabbing !important;
+  -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
 }
 
 /* The phone's task sheet (task-sheet.tsx) rises from the bottom edge and

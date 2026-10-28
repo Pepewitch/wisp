@@ -1746,7 +1746,8 @@ The sidebar lists the configured projects in `config.json`'s `repos` order,
 then the repos Wisp knows only from tasks. Reordering writes that order
 (`PUT /api/repos/order`), so the browser, Desktop and the phone all show one
 order; nothing about it lives in `localStorage`. Gated on
-`features.projectOrder`: without it nothing drags and no row has a menu.
+`features.projectOrder`: without it nothing drags, no long press lifts and
+the move keys do nothing. The row has no menu for it: it ends with `+`.
 
 - **Drag the header row**, the whole row, once the press has moved 4px; under
   that it is still a click, so the chevron, gear and `+` keep working. The row
@@ -1754,9 +1755,20 @@ order; nothing about it lives in `localStorage`. Gated on
   under reduced motion), its tasks fold away, and a 2px violet line sits in
   the gap where it will land. Escape cancels; the release never folds the
   project it lands on. Pointer events only, no library (`useProjectDrag`).
-- **The row's `⋯` menu** holds Move up and Move down, disabled at the ends,
-  with their keys: **Alt+↑ / Alt+↓** (⌥ on Apple) on a focused header. Touch
-  has no drag; the phone uses the menu.
+- **Touch lifts by a long press**: a finger held 400ms without drifting 8px
+  lifts the row (the same lift, the line shows at once, `navigator.vibrate(10)`
+  where there is one), then drags it. A finger that moves first is a scroll, a
+  tap or the phone drawer's swipe, and never lifts; 8px is under the drawer's
+  10px claim, so a swipe that starts on a header still closes the drawer. A
+  lifted row let go before it has moved 4px changes nothing. While lifted, the
+  list defaults the finger's touchmoves (no scroll to cancel the pointer) and
+  stops them there (the drawer's swipe never sees them), defaults its touchend
+  (no click), holds back Android's context menu, and `body[data-project-drag]`
+  turns off selection and iOS's callout.
+- **Alt+↑ / Alt+↓** (Option on Apple) on a focused header move it, nothing
+  past the ends. The header's toggle says so: `aria-keyshortcuts="Alt+ArrowUp
+  Alt+ArrowDown"` and a visually hidden description of the drag (or long
+  press) and the keys.
 - **Optimistic, one save at a time** (`ProjectOrderQueue`, one per
   connection, owned by the QueryClient so a connection switch and back finds
   the same one). The repos cache is never written: it holds what the daemon
@@ -1772,8 +1784,8 @@ order; nothing about it lives in `localStorage`. Gated on
   changed meanwhile).
 - A keyboard move closes the header's path tooltip, which would otherwise
   stay where the row was.
-- A repo known only from its tasks never moves and has no menu: it has no
-  config entry to put anywhere.
+- A repo known only from its tasks never moves and has no move keys: it has
+  no config entry to put anywhere.
 
 ## 6. Panes and dividers
 
