@@ -60,6 +60,8 @@ export interface AutopilotStatus {
   fixRounds: number
   /** counted auto-review rounds for the bound PR (absent from an older daemon) */
   reviewRounds?: number
+  /** the round the current review budget ends at: 3, more after a Resume or a switch-on (absent from an older daemon) */
+  reviewBudget?: number
   /**
    * Nothing left for it to do right now: with auto-merge on, the current PR
    * has merged; with auto-fix alone, CI is green and no review has come in
@@ -74,6 +76,15 @@ export interface AutopilotStatus {
    * failed and waits for a person. Absent from an older daemon.
    */
   network?: { resumesAt: string; resume: number; of: number } | null
+  /**
+   * Review now (POST …/autopilot/review-now): offered while auto-review is
+   * held on the PR's head `head` — its checks are still running or failed,
+   * or an auto-fix round is counting down ahead of it — and no round has
+   * started on that head. `requested`: a person asked, and the round has not
+   * started yet (it waits for a free task slot, or the next look). Null
+   * otherwise; absent from an older daemon.
+   */
+  reviewNow?: { head: string; requested: boolean } | null
   /** when `reason` last changed, ISO-8601; null when never armed */
   updatedAt: string | null
 }

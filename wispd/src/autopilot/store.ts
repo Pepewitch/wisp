@@ -8,6 +8,7 @@ import { mergeGrant, MergeRightsError, subtaskAutopilotRefusal } from "./subtask
 import { holdClass, latestHead, recordPrEvent } from "../subtask-reports"
 import type { AutopilotBy, AutopilotHistoryEntry, AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
 import { db } from "../store-database"
+import { MAX_REVIEW_ROUNDS } from "../verify/rounds"
 import { emit } from "../events"
 import { createTaskMessage, getTask, randomId } from "../store"
 import type { TaskState, TurnSource } from "../types"
@@ -66,6 +67,8 @@ export interface AutopilotCheckpoint {
   by?: AutopilotBy
   /** when auto-fix was switched on: turns before it were never asked to mark their GitHub posts */
   fixArmedAt?: string
+  /** when auto-review was switched on: its round rows from before belong to an earlier budget */
+  reviewArmedAt?: string
   /** review items sent to the agent: item id → the fingerprint sent */
   delivered?: Record<string, string>
   /** the review judge's answers: item id → the version it read and what it said (judge.ts) */
@@ -101,6 +104,10 @@ export interface AutopilotCheckpoint {
   reviewBase?: number
   /** Resume was pressed: a round whose reviewer gave no verdict is asked again */
   reviewRetry?: boolean
+  /** Review now was pressed for this head: its round starts without waiting for checks or auto-fix (review-now.ts) */
+  reviewNow?: string
+  /** the last look found no round on this head and base and auto-review held on it; `checks`: by its checks (what offers Review now) */
+  reviewOpen?: { head: string; base: string; checks: boolean }
   /** automatic resumes after turns that ended on the network, in a row, and the last one's message (network.ts) */
   network?: { messageId: string; resumes: number }
   /** the next of those resumes, due at `at` after turn `turn` ended on the network: what the status shows */
@@ -145,8 +152,11 @@ function latestRow(taskId: string): WorkflowRow | null {
 
 const OFF: AutopilotStatus = {
   autoMerge: false, autoFix: false, autoReview: false, reviewRounds: 0, pr: null, state: "off", reason: "", about: "task", by: "auto-merge", mergedByWisp: false,
-  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, network: null, updatedAt: null,
+  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, network: null, reviewNow: null, reviewBudget: MAX_REVIEW_ROUNDS, updatedAt: null,
 }
+
+/** The round the current review budget ends at: three, and three more for each Resume or switch-on that started one afresh. */
+export const reviewBudgetOf = (checkpoint: AutopilotCheckpoint): number => (checkpoint.reviewBase ?? 0) + MAX_REVIEW_ROUNDS
 
 export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   if (!row) return OFF
@@ -180,8 +190,17 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   return {
     done: isDone(row, state, checkpoint),
     autoMerge: params.autoMerge, autoFix: params.autoFix, autoReview: params.autoReview, pr, state, reason, about, by, mergedByWisp: false, lastMerged,
-    pendingFix, fixRounds: checkpoint.rounds ?? 0, reviewRounds: checkpoint.reviewRounds ?? 0, network: networkWaitOf(row, checkpoint), updatedAt: row.updated_at,
+    pendingFix, fixRounds: checkpoint.rounds ?? 0, reviewRounds: checkpoint.reviewRounds ?? 0, reviewBudget: reviewBudgetOf(checkpoint), network: networkWaitOf(row, checkpoint),
+    reviewNow: reviewNowOf(params, state, checkpoint, pendingFix !== null), updatedAt: row.updated_at,
   }
+}
+
+/** Review now, while auto-review is held on the head by its checks or by an auto-fix countdown ahead of it; or asked for and not started. */
+function reviewNowOf(params: AutopilotParams, state: AutopilotState, checkpoint: AutopilotCheckpoint, countdown: boolean): AutopilotStatus["reviewNow"] {
+  if (!params.autoReview || (state !== "waiting" && state !== "needs-you")) return null
+  if (checkpoint.reviewNow) return { head: checkpoint.reviewNow, requested: true }
+  const open = checkpoint.reviewOpen
+  return open && (open.checks || countdown) ? { head: open.head, requested: false } : null
 }
 
 /**
@@ -282,7 +301,7 @@ export function setAutopilot(
     // the one-time note, the attribution and the "next PR above it" rule hold
     const before = latestRow(taskId)
     const lastMerged = before ? checkpointOf(before).lastMerged : undefined
-    const initial: AutopilotCheckpoint = { ...(next.autoFix ? { fixArmedAt: at } : {}), ...(lastMerged ? { lastMerged } : {}) }
+    const initial: AutopilotCheckpoint = { ...(next.autoFix ? { fixArmedAt: at } : {}), ...(next.autoReview ? { reviewArmedAt: at } : {}), ...(lastMerged ? { lastMerged } : {}) }
     db.run(`INSERT INTO workflows(id, task_id, type, version, params_json, checkpoint_json, state, reason, context_n, next_check_at, expires_at, created_at, updated_at)
       VALUES (?, ?, ?, '1', ?, ?, 'active', 'Waiting for a PR', ?, ?, ?, ?, ?)`,
     [id, taskId, AUTOPILOT_TYPE, JSON.stringify(next), JSON.stringify(initial), task.context_n, at, FAR_FUTURE, at, at])
@@ -325,8 +344,11 @@ function reconfigure(row: WorkflowRow, current: AutopilotParams, next: Autopilot
     delete checkpoint.rounds
     checkpoint.fixArmedAt = at
   }
-  // switching auto-review on again is a fresh start for its round budget
-  if (!current.autoReview && next.autoReview) { delete checkpoint.reviewRounds; delete checkpoint.reviewBase }
+  // switching auto-review on again is a fresh start for its round budget; numbering goes on
+  if (!current.autoReview && next.autoReview) {
+    checkpoint.reviewBase = checkpoint.reviewRounds ?? 0
+    checkpoint.reviewArmedAt = at
+  }
   // A pause a switch made is not the others' to keep once that switch is off.
   const fixOff = current.autoFix && !next.autoFix
   const lift = row.state === "paused" && ((fixOff && checkpoint.by === "auto-fix") || (current.autoReview && !next.autoReview && checkpoint.by === "auto-review"))
@@ -483,6 +505,7 @@ export function rebindAfterMerge(row: WorkflowRow, merged: { pr: number; base: s
     const checkpoint: AutopilotCheckpoint = {
       ...(previous.stopHold ? { stopHold: previous.stopHold } : {}),
       ...(previous.fixArmedAt ? { fixArmedAt: previous.fixArmedAt } : {}),
+      ...(previous.reviewArmedAt ? { reviewArmedAt: previous.reviewArmedAt } : {}),
       ...(previous.unmarkedTurns ? { unmarkedTurns: previous.unmarkedTurns } : {}),
       // a merge is not the task's turn ending another way: the count of resumes stands
       ...(previous.network ? { network: previous.network } : {}),

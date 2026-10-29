@@ -132,8 +132,12 @@ export function fixRoundsWords(rounds: number): string {
   return rounds === 0 ? "no fix rounds yet" : rounds === 1 ? "1 fix round sent" : `${rounds} fix rounds sent`
 }
 
-/** The review rounds a PR has spent, as the quiet line under Auto-review says it: three to a budget, Resume adds three more. */
-export function reviewRoundsWords(rounds: number): string {
+/**
+ * The review rounds a PR has spent, as the quiet line under Auto-review says
+ * it, against the daemon's budget; an older daemon sends none, and its
+ * budgets went in threes.
+ */
+export function reviewRoundsWords(rounds: number, budget?: number): string {
   if (rounds <= 0) return "no review rounds yet"
-  return `round ${rounds} of ${Math.ceil(rounds / 3) * 3}`
+  return `round ${rounds} of ${budget ?? Math.ceil(rounds / 3) * 3}`
 }

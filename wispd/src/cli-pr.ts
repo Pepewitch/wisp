@@ -7,7 +7,7 @@ import { wispCommand } from "./command"
 
 type Api = (path: string, method?: string, body?: unknown) => Promise<unknown>
 
-export const PR_USAGE = `usage: ${wispCommand()} pr <task> [merge on|off | fix on|off | review on|off | resume | send-now | skip | history] [--json]`
+export const PR_USAGE = `usage: ${wispCommand()} pr <task> [merge on|off | fix on|off | review on|off|now | resume | send-now | skip | history] [--json]`
 
 export function formatAutopilot(status: AutopilotStatus): string {
   const pr = status.pr ? ` · PR #${status.pr}` : ""
@@ -19,6 +19,7 @@ export function formatAutopilot(status: AutopilotStatus): string {
   const rounds = [
     status.autoFix && status.fixRounds > 0 ? `fix round ${status.fixRounds}` : null,
     status.autoReview && (status.reviewRounds ?? 0) > 0 ? `review round ${status.reviewRounds}` : null,
+    status.reviewNow ? `review now ${status.reviewNow.requested ? "asked for" : "offered"} (${status.reviewNow.head.slice(0, 7)})` : null,
   ].filter(Boolean).map((part) => ` · ${part}`).join("")
   return `${on}: on${pr} · ${status.state} · ${status.reason}${rounds}`
 }
@@ -48,6 +49,7 @@ export async function prCommand(positional: string[], flags: Flags, api: Api): P
   else if (action === "merge" && (value === "on" || value === "off")) status = await api(path, "PUT", { autoMerge: value === "on" }) as AutopilotStatus
   else if (action === "fix" && (value === "on" || value === "off")) status = await api(path, "PUT", { autoFix: value === "on" }) as AutopilotStatus
   else if (action === "review" && (value === "on" || value === "off")) status = await api(path, "PUT", { autoReview: value === "on" }) as AutopilotStatus
+  else if (action === "review" && value === "now") status = await api(`${path}/review-now`, "POST", {}) as AutopilotStatus
   else if ((action === "resume" || action === "send-now" || action === "skip") && value === undefined) status = await api(`${path}/${action}`, "POST", {}) as AutopilotStatus
   else throw new Error(PR_USAGE)
   if (flags.json) printJson(status)

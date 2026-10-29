@@ -281,6 +281,18 @@ const REVIEW_PAUSED: AutopilotStatus = {
   ...WAITING, autoFix: false, autoReview: true, by: "auto-review", state: "paused", reviewRounds: 3,
   reason: "Auto-review rejected 3 rounds: the save toast never appeared", updatedAt: ago(4),
 }
+const HELD_HEAD = "9c41e07aa11b2c3d4e5f60718293a4b5c6d7e8f9"
+const REVIEW_HELD: AutopilotStatus = {
+  ...WAITING, autoReview: true, by: "auto-review", reviewRounds: 1, reason: "Waiting for checks (2 running) before auto-review",
+  reviewNow: { head: HELD_HEAD, requested: false },
+}
+const REVIEW_HELD_FIX: AutopilotStatus = { ...PENDING_FIX, autoReview: true, reviewRounds: 1, reviewNow: { head: HELD_HEAD, requested: false } }
+const REVIEW_ASKED: AutopilotStatus = {
+  ...REVIEW_HELD, reason: "Waiting for a free task slot to start the reviewers", reviewNow: { head: HELD_HEAD, requested: true },
+}
+const REVIEW_EARLY: AutopilotStatus = {
+  ...REVIEW_HELD, reviewRounds: 2, reason: "Auto-review round 2 of 3 (started by you, checks still running): A reviewing", reviewNow: null, updatedAt: ago(1),
+}
 
 const REPOSITORY = "https://github.com/example/editor"
 const LINKS: HistoryLinks = { repository: REPOSITORY, pullRequest: { number: 318, lifecycle: "open" }, onViewMessage: noop }
@@ -416,6 +428,29 @@ export function AutopilotTabSpecimen() {
           <div>
             <Caption>Touch</Caption>
             <Panel touch width={390} height={520}><TabPane touch automation={automationOf(REVIEWING, null, ROUNDS)} /></Panel>
+          </div>
+        </Frame>
+        <Frame id="autopilot-review-now" title="Review now: a round on this head without waiting for its checks"
+          note="Offered under Auto-review only while it holds a head with no round yet: its checks still running or failed, or an auto-fix countdown ahead of it. One click for one head: a push cancels it, its round counts toward the budget, and auto-merge still waits for green checks.">
+          <div>
+            <Caption>Checks still running</Caption>
+            <Panel height={300}><TabPane automation={automationOf(REVIEW_HELD, null, ROUNDS.slice(1))} /></Panel>
+          </div>
+          <div>
+            <Caption>…with an auto-fix countdown ahead of it</Caption>
+            <Panel height={300}><TabPane automation={automationOf(REVIEW_HELD_FIX, null, ROUNDS.slice(1))} /></Panel>
+          </div>
+          <div>
+            <Caption>Asked for, waiting for a slot</Caption>
+            <Panel height={300}><TabPane automation={automationOf(REVIEW_ASKED, null, ROUNDS.slice(1))} /></Panel>
+          </div>
+          <div>
+            <Caption>Its round, started by you</Caption>
+            <Panel height={400}><TabPane automation={automationOf(REVIEW_EARLY, null, ROUNDS)} /></Panel>
+          </div>
+          <div>
+            <Caption>Touch</Caption>
+            <Panel touch width={390} height={600}><TabPane touch automation={automationOf(REVIEW_HELD_FIX, null, ROUNDS.slice(1))} /></Panel>
           </div>
         </Frame>
         <Frame id="autopilot-review-panel" title="Auto-review's panel: a row per reviewer, and the tier"

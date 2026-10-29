@@ -40,10 +40,13 @@ describe("auto-review in autopilot's words", () => {
     expect(autopilotChoiceLabel({ autoMerge: false, autoFix: false })).toBe("Manual PR")
   })
 
-  it("says a round against its budget of three", () => {
+  it("says a round against the daemon's budget, or threes from an older daemon", () => {
     expect(reviewRoundsWords(0)).toBe("no review rounds yet")
     expect(reviewRoundsWords(2)).toBe("round 2 of 3")
     expect(reviewRoundsWords(4)).toBe("round 4 of 6")
+    // switched off and on after two rounds: the next budget ends at 5
+    expect(reviewRoundsWords(2, 5)).toBe("round 2 of 5")
+    expect(reviewRoundsWords(3, 5)).toBe("round 3 of 5")
   })
 })
 

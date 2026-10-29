@@ -105,7 +105,7 @@ export async function diffSnapshot(repoPath: string, pr: Pick<PrSnapshot, "numbe
  * when slots allow (launchReview), and the panel never shrinks on its own.
  */
 export async function planRound(start: ReviewerStart, input: {
-  author: Task; workflowId: string; pr: PrSnapshot; round: number; counted: boolean; carried?: ReviewRow[]
+  author: Task; workflowId: string; pr: PrSnapshot; round: number; counted: boolean; carried?: ReviewRow[]; early?: boolean
 }): Promise<RoundRow> {
   const { author, pr } = input
   const snapshot = await diffSnapshot(author.repo_path, pr)
@@ -119,7 +119,7 @@ export async function planRound(start: ReviewerStart, input: {
   const recipe = activeRecipe(author.repo_path)
   const { round } = createPanelRound({
     taskId: author.id, workflowId: input.workflowId, pr: pr.number, head: pr.head, base: pr.baseRefName, round: input.round, counted: input.counted,
-    recipeVersion: recipe ? await recipeVersion(author.repo_path) : null, tier, signals: snapshot.signals, agents, carried: input.carried,
+    recipeVersion: recipe ? await recipeVersion(author.repo_path) : null, tier, signals: snapshot.signals, agents, carried: input.carried, early: input.early,
     // an unreadable diff keeps the floor: every area that asks for a capture needs one
     required: !recipe ? [] : snapshot.touched === null
       ? recipe.areas.filter((area) => area.evidence === "screenshot").map((area) => area.name)

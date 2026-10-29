@@ -4,17 +4,19 @@
  * POST /api/tasks/:id/autopilot/resume      resume a pause, or release a Stop hold
  * POST /api/tasks/:id/autopilot/send-now    send a pending auto-fix round without its delay
  * POST /api/tasks/:id/autopilot/skip        never send the pending round's evidence
+ * POST /api/tasks/:id/autopilot/review-now  { head? } — start auto-review's round on that head without waiting for its checks
  * GET  /api/tasks/:id/autopilot/history     what it did, newest first (AutopilotHistoryResponse)
  */
 import type { AutopilotUpdate } from "../../../shared/autopilot"
 import type { AutopilotHistoryResponse } from "../../../shared/api/autopilot"
+import { askReviewNow } from "../autopilot/review-now"
 import { AutopilotError, autopilotHistory, autopilotRow, autopilotStatus, checkpointOf, resumeAutopilot, sendPendingFix, setAutopilot, skipPendingFix } from "../autopilot/store"
 import { getTask } from "../store"
 import { autopilotSwitchDetail, recordAudit, requestActor } from "../task-audit"
 import { typeName } from "../validate"
 import { err, json, jsonObjectBody } from "./http"
 
-export const AUTOPILOT_PATH = /^\/api\/tasks\/([a-z0-9]+)\/autopilot(?:\/(resume|send-now|skip|history))?$/
+export const AUTOPILOT_PATH = /^\/api\/tasks\/([a-z0-9]+)\/autopilot(?:\/(resume|send-now|skip|review-now|history))?$/
 
 export function autopilotUpdateError(body: Record<string, unknown>): string | null {
   for (const key of Object.keys(body)) if (key !== "autoMerge" && key !== "autoFix" && key !== "autoReview") return `unknown field '${key}'`
@@ -22,6 +24,18 @@ export function autopilotUpdateError(body: Record<string, unknown>): string | nu
     if (body[key] !== undefined && typeof body[key] !== "boolean") return `${key} must be a boolean, got ${typeName(body[key])}`
   }
   return null
+}
+
+/** Review now: the head the person saw, so a push in between is refused rather than reviewed in its place. */
+async function reviewNowRoute(req: Request, taskId: string): Promise<Response> {
+  const body = await jsonObjectBody(req)
+  if (body instanceof Response) return body
+  for (const key of Object.keys(body)) if (key !== "head") return err(`unknown field '${key}'`, 400)
+  if (body.head !== undefined && (typeof body.head !== "string" || !/^[0-9a-f]{40,64}$/.test(body.head))) return err("head must be a full commit sha", 400)
+  const { status, asked } = askReviewNow(taskId, body.head as string | undefined)
+  // a repeat click on the same head changes nothing, so it is not audited again
+  if (asked) recordAudit(taskId, "autopilot-review-now", requestActor(req), status.reviewNow?.head.slice(0, 7) ?? null)
+  return json(status)
 }
 
 /** What a resume releases: a pause, a Stop hold, a merge-failure count, or a finished PR. */
@@ -38,6 +52,7 @@ export async function autopilotRoute(req: Request, path: string): Promise<Respon
   if (!getTask(taskId)) return err("Task not found", 404)
   try {
     if (match[2] === "history") return req.method === "GET" ? json<AutopilotHistoryResponse>({ history: autopilotHistory(taskId) }) : err("Method not allowed", 405)
+    if (match[2] === "review-now") return req.method === "POST" ? await reviewNowRoute(req, taskId) : err("Method not allowed", 405)
     if (match[2]) {
       if (req.method !== "POST") return err("Method not allowed", 405)
       const verb = match[2] as "resume" | "send-now" | "skip"

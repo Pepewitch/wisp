@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils"
 
 export type { HistoryLinks } from "@/components/autopilot-history-view"
 
-type Act = "resume" | "send-now" | "skip"
+type Act = "resume" | "send-now" | "skip" | "review-now"
 type Change = AutopilotUpdate
 
 /** The Automation section's inputs: what the task row says, and what this surface may do about it. */
@@ -46,7 +46,8 @@ export interface AutomationModel {
    */
   reviews?: ReviewsModel | null
   onSet: (change: Change) => void
-  onAct: (act: Act) => void
+  /** `head`: the PR head the person saw, for Review now, so a push in between refuses it instead of reviewing what they never saw */
+  onAct: (act: Act, head?: string) => void
 }
 
 const OFF: AutopilotStatus = {
@@ -113,7 +114,7 @@ export function AutopilotPane({
     history: historySupported ? { entries: history.data, error: history.error ? failureReason(history.error) : null } : null,
     reviews,
     onSet: (change) => autopilot.mutate({ id: task.id, set: change }),
-    onAct: (act) => autopilot.mutate({ id: task.id, act }),
+    onAct: (act, head) => autopilot.mutate({ id: task.id, act, head }),
   } : null
 
   const found = pullRequest?.kind === "found" ? pullRequest.pullRequest : null
@@ -273,6 +274,12 @@ export function Switches({ automation, reviewable, touch, now, links }: {
   const actions = action && (
     <AutopilotActions status={status} action={action} pending={automation.pending} touch={touch} now={now} act={automation.onAct} />
   )
+  const reviewNow = review && status.reviewNow
+    ? <ReviewNow ask={status.reviewNow} pendingFix={status.pendingFix !== null} pending={automation.pending} touch={touch} act={automation.onAct} />
+    : null
+  const reviewActions = review && actsOn === "auto-review" && actions
+    ? <>{actions}{reviewNow}</>
+    : reviewNow
   const off = (which: "auto-merge" | "auto-fix" | "auto-review") => (offReason && status.by === which ? offReason : AUTOPILOT_OFF_WORDS[which])
   return (
     <div className="pb-1">
@@ -312,10 +319,10 @@ export function Switches({ automation, reviewable, touch, now, links }: {
           disabled={disabled}
           touch={touch}
           onChange={() => automation.onSet({ autoReview: !review })}
-          actions={review && actsOn === "auto-review" ? actions : null}
+          actions={reviewActions}
         >
           {!review ? off("auto-review") : speaker === "auto-review" ? live : (
-            <>On · {status.pr === null ? "for the task's next PR" : reviewRoundsWords(status.reviewRounds ?? 0)}</>
+            <>On · {status.pr === null ? "for the task's next PR" : reviewRoundsWords(status.reviewRounds ?? 0, status.reviewBudget)}</>
           )}
         </SwitchRow>
       )}
@@ -412,6 +419,28 @@ function AutopilotActions({
       <Button tone="outline" size={size} disabled={pending} onClick={() => act("send-now")}>Send now</Button>
       <Button size={size} disabled={pending} onClick={() => act("skip")}>Skip</Button>
       {status.pendingFix && <span className="text-[11px] text-faint">{sendsIn(status.pendingFix.sendsAt, now)}</span>}
+    </>
+  )
+}
+
+/**
+ * Review now: offered only while auto-review holds a head with no round yet
+ * (its checks still running or failed, or an auto-fix countdown ahead of it).
+ * Once asked for, it says so until the round starts.
+ */
+function ReviewNow({ ask, pendingFix, pending, touch, act }: {
+  ask: NonNullable<AutopilotStatus["reviewNow"]>
+  pendingFix: boolean
+  pending: boolean
+  touch: boolean
+  act: (action: Act, head?: string) => void
+}) {
+  const sha = ask.head.slice(0, 7)
+  if (ask.requested) return <span className="text-[11px] text-faint">Review now asked for {sha}</span>
+  return (
+    <>
+      <Button tone="outline" size={touch ? "touch" : "sm"} disabled={pending} onClick={() => act("review-now", ask.head)}>Review now</Button>
+      {pendingFix && <span className="text-[11px] text-faint">auto-fix may push after this; that push ends this review.</span>}
     </>
   )
 }

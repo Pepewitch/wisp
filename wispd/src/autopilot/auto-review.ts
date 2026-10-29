@@ -27,7 +27,7 @@ import { historySays, recordWorkflow, seenWake, getWorkflow, type WorkflowRow } 
 import { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
 import { checksGate } from "./gate"
 import type { PrSnapshot } from "./github"
-import { pauseAutopilot, reserveRound, writeAutopilotCheckpoint, type AutopilotCheckpoint } from "./store"
+import { pauseAutopilot, reserveRound, reviewBudgetOf as budgetOf, writeAutopilotCheckpoint, type AutopilotCheckpoint } from "./store"
 import { activeRecipe, latestDraft, recipeActivatedAt, recipeVersion } from "../verify/recipe"
 import {
   launchReview, nudgeReviewer, planRound, RETIRE_GRACE_MS, retireReviewer, secondAgent, startRecipeTask, verifyAgent, type ReviewerStart,
@@ -37,7 +37,7 @@ import {
   type ReviewRow,
 } from "../verify/reviews"
 import { fallbackAgent, infrastructureFailure } from "../verify/fallback"
-import { latestRound, MAX_REVIEW_ROUNDS, orphanedRounds, runningRounds, staleRunningRounds, type RoundRow } from "../verify/rounds"
+import { armReviewEpoch, countedRound, latestRound, MAX_REVIEW_ROUNDS, orphanedRounds, runningRounds, staleRunningRounds, type RoundRow } from "../verify/rounds"
 import { busyVerifyTask, currentVerifyTask, draftTaskExists, verifyTaskOf } from "../verify/status"
 import { taskIsIdle } from "./idle"
 import { projectName } from "../verify/project"
@@ -55,6 +55,8 @@ export interface ReviewLook {
   pr: PrSnapshot
   required: ReadonlySet<string>
   autoFix: boolean
+  /** a person pressed Review now for this head (review-now.ts): the words its round's status carries; it waits for no check */
+  early?: string | null
   now: Date
   start: ReviewerStart
   hasSlot(task: Task, workload?: Workload): boolean
@@ -66,7 +68,6 @@ const short = (sha: string): string => sha.slice(0, 7)
 const letter = (review: Pick<ReviewRow, "role">): string => (review.role === "primary" ? "A" : "B")
 const agentWords = (agent: { harness: string; model: string | null }): string => `${agent.harness}${agent.model ? ` ${agent.model}` : ""}`
 /** The last round number this budget allows: three, and three more after each Resume. */
-const budgetOf = (checkpoint: AutopilotCheckpoint): number => (checkpoint.reviewBase ?? 0) + MAX_REVIEW_ROUNDS
 const verb = (round: RoundRow): string => round.state === "fail" ? "rejected" : "could not verify"
 
 /** A review that ended goes away (in the background, unless awaited) once its reviewer's turn is over. */
@@ -136,9 +137,16 @@ export function supersedeStaleRounds(row: WorkflowRow, pr: PrSnapshot, cfg: Revi
  */
 export async function autoReviewLook(look: ReviewLook): Promise<"passed" | null> {
   const { row, checkpoint, pr, now } = look
+  // the rows keep the count: a look that started a round may have lost its checkpoint (a moved revision, a throw).
+  // Only rows since auto-review was switched on count; a checkpoint from before
+  // reviewArmedAt existed cannot say which rows those are, so its epoch starts
+  // now, stored before any round can be planned against it.
+  checkpoint.reviewArmedAt ??= armReviewEpoch(row.id, now.toISOString())
+  const kept = countedRound(row.id, pr.number, checkpoint.reviewArmedAt)
+  if (kept > (checkpoint.reviewRounds ?? 0)) checkpoint.reviewRounds = kept
   supersedeStaleRounds(row, pr, look.start.cfg, now)
   if (pr.isDraft) return look.say("needs-you", "Draft — auto-review starts once it is ready for review", WAITING_ON_YOU_MS)
-  const checks = checksGate({
+  const checks = look.early ? null : checksGate({
     pr, requiredNames: look.required, nowMs: now.getTime(),
     headFirstSeenMs: Math.max(Date.parse(checkpoint.heads?.[pr.head] ?? ""), Date.parse(checkpoint.readySince ?? "")),
   })
@@ -155,6 +163,8 @@ export async function autoReviewLook(look: ReviewLook): Promise<"passed" | null>
   if (!round) {
     const spent = checkpoint.reviewRounds ?? 0
     if (spent - (checkpoint.reviewBase ?? 0) >= MAX_REVIEW_ROUNDS) {
+      // a Review now the budget cannot answer is moot: after Resume, the head is reviewed the usual way
+      delete checkpoint.reviewNow
       writeAutopilotCheckpoint(row, { ...checkpoint, by: "auto-review" }, now)
       pauseAutopilot(getWorkflow(row.id) ?? row, `Auto-review did not pass after ${MAX_REVIEW_ROUNDS} rounds — resume to try again`, now)
       return null
@@ -196,11 +206,18 @@ async function actOn(look: ReviewLook, round: RoundRow): Promise<"passed" | null
 async function startRound(look: ReviewLook, number: number, counted: boolean, carried?: ReviewRow[]): Promise<null> {
   const { row, task, checkpoint, pr, now } = look
   if (!look.hasSlot(task, "reviewer")) return look.say("waiting", "Waiting for a free task slot to start the reviewers", MOVING_MS)
-  const round = await planRound(look.start, { author: task, workflowId: row.id, pr, round: number, counted, carried })
+  // Review now's round, or a Resume re-run of one, waits for no check; its row
+  // says so for every later look, whatever becomes of this look's checkpoint
+  const byYou = checkpoint.reviewNow === pr.head
+  const early = byYou || (carried !== undefined && latestRound(row.id, pr.number, pr.head, pr.baseRefName)?.early === 1)
+  const round = await planRound(look.start, { author: task, workflowId: row.id, pr, round: number, counted, carried, early })
   if (counted) checkpoint.reviewRounds = number
   delete checkpoint.reviewRetry
+  delete checkpoint.reviewOpen
+  if (byYou) delete checkpoint.reviewNow
   const panel = reviewsOf(round.id).map((review) => `${letter(review)} ${review.harness}${review.model ? ` ${review.model}` : ""}${review.carried_from ? " (kept)" : ""}`).join(", ")
-  recordWorkflow(row.id, "review", `Round ${number}${counted ? "" : " (re-run)"} started (${round.tier ?? "standard"}): ${panel}`, now.toISOString(), null, { pr: pr.number, sha: pr.head })
+  recordWorkflow(row.id, "review", `Round ${number}${counted ? "" : " (re-run)"} started (${round.tier ?? "standard"})${byYou ? `, by Review now (${look.early ?? "started by you"})` : ""}: ${panel}`,
+    now.toISOString(), null, { pr: pr.number, sha: pr.head })
   const settled = await driveRound(look, round)
   return settled ? actOn(look, settled).then(() => null) : null
 }
@@ -224,7 +241,7 @@ async function driveRound(look: ReviewLook, round: RoundRow): Promise<RoundRow |
     return settled
   }
   const status = notes.length > 0 ? notes.join(" · ") : "reviewing"
-  look.say("waiting", `Auto-review round ${round.round} of ${budgetOf(look.checkpoint)}: ${status}`, BUSY_MS)
+  look.say("waiting", `Auto-review round ${round.round} of ${budgetOf(look.checkpoint)}${look.early ? ` (${look.early})` : ""}: ${status}`, BUSY_MS)
   return null
 }
 

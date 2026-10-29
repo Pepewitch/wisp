@@ -74,6 +74,8 @@ export function createPanelRound(input: {
   carried?: ReviewRow[]
   /** recipe areas whose change needs reviewer A to show a capture (verify/evidence.ts) */
   required?: string[]
+  /** Review now's round (autopilot/review-now.ts): it waits for no check */
+  early?: boolean
 }, now = new Date()): { round: RoundRow; reviews: ReviewRow[] } {
   return db.transaction(() => {
     const id = randomId("r", 12)
@@ -81,9 +83,9 @@ export function createPanelRound(input: {
     const roles = input.agents.map((agent) => agent.role)
     // the round's own token is a phase-1 column (NOT NULL): no route accepts it any more, each review carries its own
     db.run(`INSERT INTO auto_review_rounds(id, task_id, workflow_id, pr, head, base, round, counted, token, recipe_version, state,
-      tier, signals_json, roles, protocol, required_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, 2, ?, ?)`,
+      tier, signals_json, roles, protocol, required_json, early, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, 2, ?, ?, ?)`,
     [id, input.taskId, input.workflowId, input.pr, input.head, input.base, input.round, input.counted ? 1 : 0, newToken(), input.recipeVersion,
-      input.tier, input.signals ? JSON.stringify(input.signals) : null, JSON.stringify(roles), JSON.stringify(input.required ?? []), at])
+      input.tier, input.signals ? JSON.stringify(input.signals) : null, JSON.stringify(roles), JSON.stringify(input.required ?? []), input.early ? 1 : 0, at])
     for (const agent of input.agents) {
       const carried = input.carried?.find((review) => review.role === agent.role && review.state === "pass")
       if (carried) {

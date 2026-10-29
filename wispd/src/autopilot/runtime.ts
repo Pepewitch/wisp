@@ -18,12 +18,12 @@ import { taskBranches } from "../pull-request-branches"
 import { startNextQueuedMessage } from "../runner"
 import { getTask } from "../store"
 import { hasTaskCapacity, type Workload } from "../task-admission"
-import { nothingToSend } from "./fix-plan"
+import { autoFixAlone, nothingToSend } from "./fix-plan"
 import { inheritedRightsLost } from "./subtask-policy"
 import { recordAudit } from "../task-audit"
 import type { Task } from "../types"
 import { announceWorkflow, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
-import { conversationsBlock, mergeEvidence, mergeGate, sameReviewState, type PublishedWork } from "./gate"
+import { mergeEvidence, mergeGate, sameReviewState, type PublishedWork } from "./gate"
 import { taskIsIdle } from "./idle"
 import { droppedOnNetwork, networkLook } from "./network"
 import { createGhAutopilot, ghAutopilot, type AutopilotGitHub, type BaseRules, type PrComment, type PrSnapshot } from "./github"
@@ -45,8 +45,9 @@ import {
   reserveRound, saveAutopilotCheck, unmarkedTurns, withdrawQueuedRound, writeAutopilotCheckpoint, type AutopilotCheck, type AutopilotCheckpoint,
 } from "./store"
 import { CONTEXT_CHANGE_PAUSE } from "./type"
-import { busyReason, forgetIdle, forgetPending, lastActivity, nextPrReason, observe } from "./look"
+import { busyReason, forgetIdle, forgetPending, nextPrReason, observe } from "./look"
 import { autoReviewLook, endUnwantedReviews, supersedeStaleRounds, sweepReviews } from "./auto-review"
+import { EarlyAnswers, reviewNowLook } from "./review-now"
 import { createAndLaunchTask } from "../domain/task-create"
 import type { ModelProbeCache } from "../model-probes"
 import type { Launch } from "../verify/reviewer"
@@ -58,8 +59,7 @@ const REQUIRED_TTL_MS = 10 * 60_000
 /** How long after the task goes idle an auto-fix round waits before it is sent. */
 export const SEND_DELAY_MS = 2 * 60_000
 const MERGE_FAILURE_LIMIT = 3
-/** Auto-fix alone counts as done once CI is green and the PR has been quiet this long. */
-export const QUIET_MS = 15 * 60_000
+export { QUIET_MS } from "./fix-plan"
 /** After a merge, with no next PR yet: a turn settling looks at once, so this only covers a PR opened by hand. */
 export const AFTER_MERGE_MS = 60 * 60_000
 /** A PR that changed while a look worked is looked at again this soon, not a minute later. */
@@ -92,6 +92,8 @@ interface FixContext {
   repository: string; autoMerge: boolean; signal: AbortSignal
   /** the review judge's answers, only while a judge is configured */
   judged?: Record<string, Judged>
+  /** a look that reviews early keeps auto-fix's words to weigh (review-now.ts) instead of saving them */
+  speak?: (check: AutopilotCheck) => void
 }
 
 export class AutopilotRuntime {
@@ -238,6 +240,9 @@ export class AutopilotRuntime {
     // afresh from current evidence rather than sending a stale one.
     if (withdrawQueuedRound(row)) return
     const checkpoint: AutopilotCheckpoint = checkpointOf(row)
+    // what offers Review now is each look's to find again; with auto-review off, a click is moot
+    delete checkpoint.reviewOpen
+    if (!params.autoReview) delete checkpoint.reviewNow
     const idle = taskIsIdle(task)
     const save = (state: AutopilotState, reason: string, delayMs: number, about: "pr" | "task" = "task", patient?: boolean) =>
       this.saveCheck(row, { state, reason, checkpoint, delayMs, about, patient })
@@ -334,15 +339,12 @@ export class AutopilotRuntime {
     const required = rules.checks
     // a rule the snapshot could not read is "not required" when the branch has no classic protection at all
     if (pr.conversationRule === "unknown" && rules.classicProtection === false) pr.conversationRule = "not-required"
-    // Auto-fix acts first: a red check or a conflict is fixed before anything merges.
-    const nothingToFix = ctx.autoFix
-      ? await this.autoFix({ row, task, checkpoint, pr, required: new Set(required), repository, autoMerge: ctx.autoMerge, signal, judged: judging?.judged })
-      : "Nothing to fix"
+    const nothingToFix = await this.fixThenReview({
+      row, task, checkpoint, pr, required: new Set(required), repository, autoMerge: ctx.autoMerge, signal, judged: judging?.judged, autoFix: ctx.autoFix, autoReview: ctx.autoReview,
+    })
     if (nothingToFix === null) return
-    // Then the independent reviewer: nothing merges past a head it has not passed.
-    if (ctx.autoReview && await this.autoReview(row, task, checkpoint, pr, new Set(required), ctx.autoFix) === null) return
     if (!ctx.autoMerge) {
-      if (ctx.autoFix) this.autoFixAlone(row, checkpoint, pr, nothingToFix)
+      if (ctx.autoFix) autoFixAlone((state, reason, delayMs, done, patient) => this.saveCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix", done, patient }), checkpoint, pr, nothingToFix, now)
       else this.saveCheck(row, { state: "waiting", reason: `Auto-review passed ${pr.head.slice(0, 7)}`, checkpoint, delayMs: WAITING_ON_YOU_MS, about: "pr", by: "auto-review", done: true, patient: true })
       return
     }
@@ -373,6 +375,27 @@ export class AutopilotRuntime {
   }
 
   /**
+   * Auto-fix, then auto-review. Returns the reason there is nothing to fix
+   * once both let the head through, or null when either acted or explained
+   * itself. On a head a person asked to review now, auto-review goes first
+   * and the look saves one answer for both (review-now.ts).
+   */
+  private async fixThenReview(ctx: FixContext & { autoFix: boolean; autoReview: boolean }): Promise<string | null> {
+    const { row, task, checkpoint, pr, required } = ctx
+    const early = ctx.autoReview ? reviewNowLook(row, checkpoint, pr, required, this.now().getTime()) : null
+    const answers = early === null ? null : new EarlyAnswers()
+    const reviewed = answers ? await this.autoReview(row, task, checkpoint, pr, required, ctx.autoFix, early, answers.onReview) : null
+    // it sent the author its findings, or paused: nothing else acts on this read
+    if (answers && getWorkflow(row.id)?.revision !== row.revision) return null
+    // Auto-fix acts first: a red check or a conflict is fixed before anything merges.
+    const nothingToFix = ctx.autoFix ? await this.autoFix({ ...ctx, speak: answers?.onFix }) : "Nothing to fix"
+    if (answers) return answers.finish(reviewed === "passed", nothingToFix, (check) => this.saveCheck(row, check)) ? null : nothingToFix
+    if (nothingToFix === null) return null
+    // Then the independent reviewer: nothing merges past a head it has not passed.
+    return ctx.autoReview && await this.autoReview(row, task, checkpoint, pr, required, ctx.autoFix) === null ? null : nothingToFix
+  }
+
+  /**
    * One auto-fix look. Returns null when it acted or explained itself (a rerun,
    * a round, a wait, a needs-you), or the reason there is nothing to fix — in
    * which case auto-merge, if it is on, takes over.
@@ -380,10 +403,7 @@ export class AutopilotRuntime {
   private async autoFix(ctx: FixContext): Promise<string | null> {
     const { row, task, checkpoint, pr } = ctx
     const now = this.now()
-    const say = (state: AutopilotState, reason: string, delayMs: number): null => {
-      this.saveCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix" })
-      return null
-    }
+    const say = this.fixSay(ctx)
     const rerun = checkpoint.rerun?.head === pr.head ? checkpoint.rerun.runs : []
     const { items, relayed } = await this.feedbackFor(ctx)
     // A bot's verdict check beside the sticky comment being sent is the review flow's.
@@ -450,14 +470,29 @@ export class AutopilotRuntime {
     return this.sendRound({ ...ctx, content: { ci, items, summary }, key, round: rounds + 1 })
   }
 
+  /** Auto-fix's words: saved, or kept for a look that reviews early to weigh. */
+  private fixSay(ctx: FixContext): (state: AutopilotState, reason: string, delayMs: number) => null {
+    return (state, reason, delayMs) => {
+      const check: AutopilotCheck = { state, reason, checkpoint: ctx.checkpoint, delayMs, about: "pr", by: "auto-fix" }
+      if (ctx.speak) ctx.speak(check)
+      else this.saveCheck(ctx.row, check)
+      return null
+    }
+  }
+
   /** Auto-review's look at this head (auto-review.ts): "passed", or null when it acted or explained itself. */
-  private autoReview(row: WorkflowRow, task: Task, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, required: ReadonlySet<string>, autoFix: boolean): Promise<"passed" | null> {
+  private autoReview(
+    row: WorkflowRow, task: Task, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, required: ReadonlySet<string>, autoFix: boolean,
+    early: string | null = null, speak?: (check: AutopilotCheck) => void,
+  ): Promise<"passed" | null> {
     const launch: Launch = this.options.launch ?? ((input) => createAndLaunchTask(input, this.cfg, this.adapters, this.options.models ?? null))
     return autoReviewLook({
-      row, task, checkpoint, pr, required, autoFix, now: this.now(), start: { cfg: this.cfg, adapters: this.adapters, launch },
+      row, task, checkpoint, pr, required, autoFix, early, now: this.now(), start: { cfg: this.cfg, adapters: this.adapters, launch },
       hasSlot: (t, workload) => this.hasSlot(t, workload),
       say: (state, reason, delayMs, patient) => {
-        this.saveCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-review", patient })
+        const check: AutopilotCheck = { state, reason, checkpoint, delayMs, about: "pr", by: "auto-review", patient }
+        if (speak) speak(check)
+        else this.saveCheck(row, check)
         return null
       },
     })
@@ -538,10 +573,7 @@ export class AutopilotRuntime {
   /** Gather one round's evidence and queue it for the agent, unless something moved meanwhile. */
   private async sendRound(ctx: FixContext & { content: RoundContent; key: string; round: number }): Promise<null> {
     const { row, task, checkpoint, pr, content, key, round } = ctx
-    const say = (state: AutopilotState, reason: string, delayMs: number): null => {
-      this.saveCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix" })
-      return null
-    }
+    const say = this.fixSay(ctx)
     // A full slot table would refuse the turn: wait for a slot rather than
     // read logs for a round that cannot start.
     if (!this.hasSlot(task)) return say("waiting", "Waiting for a free task slot", MOVING_MS)
@@ -596,31 +628,6 @@ export class AutopilotRuntime {
     if (!pr || pr.state === "OPEN") return false
     this.settle(row, checkpoint, pr)
     return true
-  }
-
-  /**
-   * Auto-fix alone, with nothing for it to do. Open conversations need a
-   * person only where the repository requires them resolved to merge. It is
-   * done for now once CI is green and the PR has been quiet a while: no push,
-   * round, review or comment since, and green for that long too.
-   */
-  private autoFixAlone(row: WorkflowRow, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, nothingToFix: string): void {
-    const now = this.now()
-    const say = (state: AutopilotState, reason: string, delayMs: number, done = false, patient?: boolean) =>
-      this.saveCheck(row, { state, reason, checkpoint, delayMs, about: "pr", by: "auto-fix", done, patient })
-    if (conversationsBlock(pr)) {
-      say("needs-you", `${pr.unresolvedThreads} unresolved conversation${pr.unresolvedThreads === 1 ? "" : "s"}`, WAITING_ON_YOU_MS)
-      return
-    }
-    // only a green PR counts as done; a red that is main's own is still red
-    const green = nothingToFix === "Nothing to fix"
-    if (!green) { delete checkpoint.greenHead; delete checkpoint.greenAt }
-    else if (checkpoint.greenHead !== pr.head) { checkpoint.greenHead = pr.head; checkpoint.greenAt = now.toISOString() }
-    const quietFor = now.getTime() - lastActivity(pr, checkpoint)
-    const done = green && quietFor >= QUIET_MS
-    const reason = done ? `${nothingToFix} · no new review for ${QUIET_MS / 60_000} min` : nothingToFix
-    // idle (done, or nothing it can fix) backs off; the quiet countdown looks exactly when it completes
-    say("waiting", reason, done || !green ? WAITING_ON_YOU_MS : Math.min(WAITING_ON_YOU_MS, QUIET_MS - quietFor), done, done || !green)
   }
 
   /** GitHub's own auto-merge is on: that pause is auto-merge's, whichever switch spoke last. */
@@ -756,8 +763,8 @@ export class AutopilotRuntime {
     // What changed about the task while gh ran (a Stop hold, auto-fix armed,
     // an unsigned turn) is kept: only the merge's own fields come from before.
     const fresh = checkpointOf(current)
-    const attempt: AutopilotCheckpoint = { ...started, stopHold: fresh.stopHold, fixArmedAt: fresh.fixArmedAt, unmarkedTurns: fresh.unmarkedTurns }
-    for (const key of ["stopHold", "fixArmedAt", "unmarkedTurns"] as const) if (attempt[key] === undefined) delete attempt[key]
+    const attempt: AutopilotCheckpoint = { ...started, stopHold: fresh.stopHold, fixArmedAt: fresh.fixArmedAt, reviewArmedAt: fresh.reviewArmedAt, unmarkedTurns: fresh.unmarkedTurns }
+    for (const key of ["stopHold", "fixArmedAt", "reviewArmedAt", "unmarkedTurns"] as const) if (attempt[key] === undefined) delete attempt[key]
     if (after && after.state !== "OPEN") { this.settle(current, attempt, after); return }
     if (after?.queued) { this.saveCheck(current, { state: "queued", reason: "Queued to merge", checkpoint: attempt, delayMs: MOVING_MS, about: "pr" }); return }
     if (after?.providerAutoMerge) {

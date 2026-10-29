@@ -40,6 +40,8 @@ export interface RoundRow {
   roles?: string | null
   /** 1: a phase-1 round (one reviewer, no rubric); 2: a panel */
   protocol?: number
+  /** 1: started by Review now, or a re-run of such a round: reviewed and acted on whatever its checks say (migration 29) */
+  early?: number
 }
 
 /** How many counted rounds one PR gets before auto-review pauses for a person. */
@@ -56,6 +58,25 @@ export function getRound(id: string): RoundRow | null {
 export function latestRound(workflowId: string, pr: number, head: string, base: string): RoundRow | null {
   return db.query(`SELECT * FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND head = ? AND base = ?
     ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(workflowId, pr, head, base) as RoundRow | null
+}
+
+/** The highest counted round number of this PR under this workflow since `since`, whatever became of it; 0 for none. */
+export function countedRound(workflowId: string, pr: number, since: string): number {
+  const row = db.query("SELECT MAX(round) AS n FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND counted = 1 AND created_at >= ?").get(workflowId, pr, since) as { n: number | null } | null
+  return row?.n ?? 0
+}
+
+/**
+ * Auto-review's epoch, written straight to the row when it has none (a
+ * checkpoint from before reviewArmedAt existed). It does not wait for a look's
+ * save, which a moved revision or a throw can drop, so no round is ever
+ * planned before the epoch that counts it is stored. Fills a missing value
+ * only; returns the stored one.
+ */
+export function armReviewEpoch(workflowId: string, at: string): string {
+  db.run("UPDATE workflows SET checkpoint_json = json_set(checkpoint_json, '$.reviewArmedAt', ?) WHERE id = ? AND json_extract(checkpoint_json, '$.reviewArmedAt') IS NULL", [at, workflowId])
+  const row = db.query("SELECT json_extract(checkpoint_json, '$.reviewArmedAt') AS armed FROM workflows WHERE id = ?").get(workflowId) as { armed: string | null } | null
+  return row?.armed ?? at
 }
 
 /** Every round of a task, newest first; one PR's when given. */

@@ -25,7 +25,8 @@ and the PR merges when it's ready.</p>
   touched, and passes it or sends its findings back. It follows a verification
   recipe Wisp keeps per project, outside your repository, which a recipe task
   writes and you activate. A reviewer whose agent fails on the network, its
-  provider or setup can hand the round to a fallback agent you name.
+  provider or setup can hand the round to a fallback agent you name. **Review
+  now** starts a head's review without waiting for CI; merging still waits.
   [Auto-review](docs/AUTO-REVIEW.md)
 - **Keep watch while you're away.** A heartbeat wakes a task on a schedule
   until its goal is met: "check staging until the smoke test passes." Each

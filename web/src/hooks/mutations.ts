@@ -143,10 +143,10 @@ export function useAutopilot() {
   const client = useQueryClient();
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
-    mutationFn: ({ id, set, act }: { id: string; set?: AutopilotUpdate; act?: "resume" | "send-now" | "skip" }) =>
+    mutationFn: ({ id, set, act, head }: { id: string; set?: AutopilotUpdate; act?: "resume" | "send-now" | "skip" | "review-now"; head?: string }) =>
       set
         ? transport.request<AutopilotStatus>(`/api/tasks/${id}/autopilot`, { method: "PUT", body: set })
-        : transport.request<AutopilotStatus>(`/api/tasks/${id}/autopilot/${act ?? "resume"}`, { method: "POST", body: {} }),
+        : transport.request<AutopilotStatus>(`/api/tasks/${id}/autopilot/${act ?? "resume"}`, { method: "POST", body: head ? { head } : {} }),
     onSuccess: (status, { id }) => {
       client.setQueriesData<ApiTask[]>({ queryKey: qk.tasks }, (current) =>
         current?.map((task) => (task.id === id ? { ...task, autopilot: status } : task)),

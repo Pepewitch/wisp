@@ -68,7 +68,7 @@ export function useTaskSummary(task: ApiTask, pullRequest: PullRequestStatus | u
         pending: sentHere && autopilot.isPending,
         error: sentHere && autopilot.error ? failureReason(autopilot.error) : null,
         onSet: (change) => autopilot.mutate({ id: task.id, set: change }),
-        onAct: (act) => autopilot.mutate({ id: task.id, act }),
+        onAct: (act, head) => autopilot.mutate({ id: task.id, act, head }),
       },
       reviewable: features.autoReview === true,
     } : null,
