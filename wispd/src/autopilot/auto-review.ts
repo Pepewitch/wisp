@@ -27,7 +27,7 @@ import { historySays, recordWorkflow, seenWake, getWorkflow, type WorkflowRow } 
 import { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
 import { checksGate } from "./gate"
 import type { PrSnapshot } from "./github"
-import { pauseAutopilot, reserveRound, writeAutopilotCheckpoint, type AutopilotCheckpoint } from "./store"
+import { pauseAutopilot, reserveRound, reviewBudgetOf as budgetOf, writeAutopilotCheckpoint, type AutopilotCheckpoint } from "./store"
 import { activeRecipe, latestDraft, recipeActivatedAt, recipeVersion } from "../verify/recipe"
 import {
   launchReview, nudgeReviewer, planRound, RETIRE_GRACE_MS, retireReviewer, secondAgent, startRecipeTask, verifyAgent, type ReviewerStart,
@@ -37,7 +37,7 @@ import {
   type ReviewRow,
 } from "../verify/reviews"
 import { fallbackAgent, infrastructureFailure } from "../verify/fallback"
-import { countedRound, latestRound, MAX_REVIEW_ROUNDS, orphanedRounds, runningRounds, staleRunningRounds, type RoundRow } from "../verify/rounds"
+import { armReviewEpoch, countedRound, latestRound, MAX_REVIEW_ROUNDS, orphanedRounds, runningRounds, staleRunningRounds, type RoundRow } from "../verify/rounds"
 import { busyVerifyTask, currentVerifyTask, draftTaskExists, verifyTaskOf } from "../verify/status"
 import { taskIsIdle } from "./idle"
 import { projectName } from "../verify/project"
@@ -68,7 +68,6 @@ const short = (sha: string): string => sha.slice(0, 7)
 const letter = (review: Pick<ReviewRow, "role">): string => (review.role === "primary" ? "A" : "B")
 const agentWords = (agent: { harness: string; model: string | null }): string => `${agent.harness}${agent.model ? ` ${agent.model}` : ""}`
 /** The last round number this budget allows: three, and three more after each Resume. */
-const budgetOf = (checkpoint: AutopilotCheckpoint): number => (checkpoint.reviewBase ?? 0) + MAX_REVIEW_ROUNDS
 const verb = (round: RoundRow): string => round.state === "fail" ? "rejected" : "could not verify"
 
 /** A review that ended goes away (in the background, unless awaited) once its reviewer's turn is over. */
@@ -140,12 +139,11 @@ export async function autoReviewLook(look: ReviewLook): Promise<"passed" | null>
   const { row, checkpoint, pr, now } = look
   // the rows keep the count: a look that started a round may have lost its checkpoint (a moved revision, a throw).
   // Only rows since auto-review was switched on count; a checkpoint from before
-  // reviewArmedAt existed cannot say which rows those are, so its epoch starts now.
-  if (checkpoint.reviewArmedAt === undefined) checkpoint.reviewArmedAt = now.toISOString()
-  else {
-    const kept = countedRound(row.id, pr.number, checkpoint.reviewArmedAt)
-    if (kept > (checkpoint.reviewRounds ?? 0)) checkpoint.reviewRounds = kept
-  }
+  // reviewArmedAt existed cannot say which rows those are, so its epoch starts
+  // now, stored before any round can be planned against it.
+  checkpoint.reviewArmedAt ??= armReviewEpoch(row.id, now.toISOString())
+  const kept = countedRound(row.id, pr.number, checkpoint.reviewArmedAt)
+  if (kept > (checkpoint.reviewRounds ?? 0)) checkpoint.reviewRounds = kept
   supersedeStaleRounds(row, pr, look.start.cfg, now)
   if (pr.isDraft) return look.say("needs-you", "Draft — auto-review starts once it is ready for review", WAITING_ON_YOU_MS)
   const checks = look.early ? null : checksGate({

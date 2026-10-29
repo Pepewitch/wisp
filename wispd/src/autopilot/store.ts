@@ -8,6 +8,7 @@ import { mergeGrant, MergeRightsError, subtaskAutopilotRefusal } from "./subtask
 import { holdClass, latestHead, recordPrEvent } from "../subtask-reports"
 import type { AutopilotBy, AutopilotHistoryEntry, AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
 import { db } from "../store-database"
+import { MAX_REVIEW_ROUNDS } from "../verify/rounds"
 import { emit } from "../events"
 import { createTaskMessage, getTask, randomId } from "../store"
 import type { TaskState, TurnSource } from "../types"
@@ -151,8 +152,11 @@ function latestRow(taskId: string): WorkflowRow | null {
 
 const OFF: AutopilotStatus = {
   autoMerge: false, autoFix: false, autoReview: false, reviewRounds: 0, pr: null, state: "off", reason: "", about: "task", by: "auto-merge", mergedByWisp: false,
-  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, network: null, reviewNow: null, updatedAt: null,
+  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, network: null, reviewNow: null, reviewBudget: MAX_REVIEW_ROUNDS, updatedAt: null,
 }
+
+/** The round the current review budget ends at: three, and three more for each Resume or switch-on that started one afresh. */
+export const reviewBudgetOf = (checkpoint: AutopilotCheckpoint): number => (checkpoint.reviewBase ?? 0) + MAX_REVIEW_ROUNDS
 
 export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   if (!row) return OFF
@@ -186,7 +190,7 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   return {
     done: isDone(row, state, checkpoint),
     autoMerge: params.autoMerge, autoFix: params.autoFix, autoReview: params.autoReview, pr, state, reason, about, by, mergedByWisp: false, lastMerged,
-    pendingFix, fixRounds: checkpoint.rounds ?? 0, reviewRounds: checkpoint.reviewRounds ?? 0, network: networkWaitOf(row, checkpoint),
+    pendingFix, fixRounds: checkpoint.rounds ?? 0, reviewRounds: checkpoint.reviewRounds ?? 0, reviewBudget: reviewBudgetOf(checkpoint), network: networkWaitOf(row, checkpoint),
     reviewNow: reviewNowOf(params, state, checkpoint, pendingFix !== null), updatedAt: row.updated_at,
   }
 }

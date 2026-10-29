@@ -61,6 +61,12 @@ async function reviewNow(taskId: string, body: unknown = {}): Promise<AutopilotS
   return await response.json() as AutopilotStatus;
 }
 const latest = (taskId: string) => roundsOf(taskId)[0]!;
+/** The checkpoint as a version from before reviewArmedAt left it. */
+function forgetEpoch(taskId: string, clock: { now: number }) {
+  const row = autopilotRow(taskId)!;
+  const { reviewArmedAt: _armed, ...legacy } = checkpointOf(row);
+  writeAutopilotCheckpoint(row, legacy, new Date(clock.now));
+}
 const primary = (taskId: string) => reviewsOf(latest(taskId).id).find((review) => review.role === "primary")!;
 const short = HEAD.slice(0, 7);
 
@@ -160,11 +166,16 @@ describe("Review now", () => {
     expect(autopilotStatus(task.id)).toMatchObject({ reviewRounds: 1, reviewNow: null });
   });
 
-  test("GitHub pauses in auto-fix, one launching the round and one settling it, leave the round counted", async () => {
+  test.each(["armed", "upgraded"])("GitHub pauses in auto-fix, one launching the round and one settling it, leave the round counted (%s)", async (profile) => {
     const RERUNNABLE = [{ ...FAILED[0]!, conclusion: "CANCELLED", checkRunId: 11, run: { id: 5, event: "pull_request" }, deployment: false }];
     const { clock, state, github, launched, task, rt } = setup({ autoFix: true });
+    // upgraded: a checkpoint from before the epoch; auto-fix answers the first look before auto-review stores one
+    if (profile === "upgraded") forgetEpoch(task.id, clock);
     await pass(rt, task.id, clock);
+    if (profile === "upgraded") expect(checkpointOf(autopilotRow(task.id)!)).not.toHaveProperty("reviewArmedAt");
     await reviewNow(task.id);
+    // the click stores the epoch the round it starts is counted from
+    expect(checkpointOf(autopilotRow(task.id)!).reviewArmedAt).toBeString();
     state.pr = snapshot({ checks: RERUNNABLE });
     github.rerunRun = async () => { throw new GitHubPausedError(clock.now + 60_000, "share"); };
     await pass(rt, task.id, clock);
@@ -214,10 +225,8 @@ test("rounds from before an upgraded profile's switch reset do not spend its fre
     // a schema-28 checkpoint: auto-review was switched off and on, which deleted the count, and the old rounds stayed
     const { clock, launched, task, rt } = setup({ checks: GREEN });
     const old = "e".repeat(40);
-    const row = autopilotRow(task.id)!;
-    const { reviewArmedAt: _armed, ...legacy } = checkpointOf(row);
-    writeAutopilotCheckpoint(row, legacy, new Date(clock.now));
-    const workflow = row.id;
+    forgetEpoch(task.id, clock);
+    const workflow = autopilotRow(task.id)!.id;
     for (const number of [1, 2, 3]) {
       db.run(`INSERT INTO auto_review_rounds (id, task_id, workflow_id, pr, head, base, round, token, state, created_at)
         VALUES (?, ?, ?, 7, ?, 'main', ?, ?, 'fail', ?)`, [`rold${number}`, task.id, workflow, old, number, `tok${number}`, new Date(START + number * 1000).toISOString()]);

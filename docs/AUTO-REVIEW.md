@@ -230,6 +230,8 @@ earlier blocker.
 
 **Three rounds per PR.** After three counted rounds that did not pass, auto-review
 pauses. **Resume** gives it three more, and the numbering goes on ("round 4 of 6").
+Switching auto-review off and on again also gives three more from where it
+was: after two rounds, the next is "round 3 of 5".
 A new PR after a merge starts at round 1 again. Expect up to two reviewer tasks
 a round.
 

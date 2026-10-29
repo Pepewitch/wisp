@@ -66,6 +66,19 @@ export function countedRound(workflowId: string, pr: number, since: string): num
   return row?.n ?? 0
 }
 
+/**
+ * Auto-review's epoch, written straight to the row when it has none (a
+ * checkpoint from before reviewArmedAt existed). It does not wait for a look's
+ * save, which a moved revision or a throw can drop, so no round is ever
+ * planned before the epoch that counts it is stored. Fills a missing value
+ * only; returns the stored one.
+ */
+export function armReviewEpoch(workflowId: string, at: string): string {
+  db.run("UPDATE workflows SET checkpoint_json = json_set(checkpoint_json, '$.reviewArmedAt', ?) WHERE id = ? AND json_extract(checkpoint_json, '$.reviewArmedAt') IS NULL", [at, workflowId])
+  const row = db.query("SELECT json_extract(checkpoint_json, '$.reviewArmedAt') AS armed FROM workflows WHERE id = ?").get(workflowId) as { armed: string | null } | null
+  return row?.armed ?? at
+}
+
 /** Every round of a task, newest first; one PR's when given. */
 export function roundsOf(taskId: string, pr?: number): RoundRow[] {
   return (pr === undefined

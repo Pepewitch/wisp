@@ -322,7 +322,7 @@ export function Switches({ automation, reviewable, touch, now, links }: {
           actions={reviewActions}
         >
           {!review ? off("auto-review") : speaker === "auto-review" ? live : (
-            <>On · {status.pr === null ? "for the task's next PR" : reviewRoundsWords(status.reviewRounds ?? 0)}</>
+            <>On · {status.pr === null ? "for the task's next PR" : reviewRoundsWords(status.reviewRounds ?? 0, status.reviewBudget)}</>
           )}
         </SwitchRow>
       )}

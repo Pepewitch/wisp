@@ -11,7 +11,7 @@
 import type { AutopilotStatus } from "../../../shared/autopilot"
 import { db } from "../store-database"
 import { latestHead } from "../subtask-reports"
-import { latestRound } from "../verify/rounds"
+import { armReviewEpoch, latestRound } from "../verify/rounds"
 import { announceWorkflow, recordWorkflow, type WorkflowRow } from "../workflows/store"
 import { checksGate } from "./gate"
 import type { PrSnapshot } from "./github"
@@ -39,6 +39,8 @@ export function askReviewNow(taskId: string, head: string | undefined, now = new
   if (!row || !paramsOf(row).autoReview) throw new AutopilotError("Auto-review is not on for this task", 409)
   if (row.state !== "active") throw new AutopilotError("Autopilot is paused — resume it first", 409)
   const checkpoint = checkpointOf(row)
+  // the round this click starts is counted from a stored epoch, whatever becomes of the look that starts it
+  checkpoint.reviewArmedAt ??= armReviewEpoch(row.id, now.toISOString())
   const current = latestHead(checkpoint.heads)
   if (!checkpoint.pr || !current) throw new AutopilotError("Auto-review has no pull request head to review yet", 409)
   const seen = head ?? current

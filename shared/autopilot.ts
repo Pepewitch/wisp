@@ -60,6 +60,8 @@ export interface AutopilotStatus {
   fixRounds: number
   /** counted auto-review rounds for the bound PR (absent from an older daemon) */
   reviewRounds?: number
+  /** the round the current review budget ends at: 3, more after a Resume or a switch-on (absent from an older daemon) */
+  reviewBudget?: number
   /**
    * Nothing left for it to do right now: with auto-merge on, the current PR
    * has merged; with auto-fix alone, CI is green and no review has come in
