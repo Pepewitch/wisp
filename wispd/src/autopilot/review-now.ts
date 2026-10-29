@@ -13,7 +13,7 @@ import { db } from "../store-database"
 import { latestHead } from "../subtask-reports"
 import { armReviewEpoch, latestRound } from "../verify/rounds"
 import { announceWorkflow, recordWorkflow, type WorkflowRow } from "../workflows/store"
-import { checksGate } from "./gate"
+import { checksGate, type GateResult } from "./gate"
 import type { PrSnapshot } from "./github"
 import { AutopilotError, autopilotRow, autopilotStatus, checkpointOf, paramsOf, type AutopilotCheck, type AutopilotCheckpoint } from "./store"
 
@@ -79,17 +79,24 @@ export function reviewNowLook(row: WorkflowRow, checkpoint: AutopilotCheckpoint,
   const headFirstSeenMs = Math.max(Date.parse(checkpoint.heads?.[pr.head] ?? ""), Date.parse(checkpoint.readySince ?? ""))
   const checks = checksGate({ pr, requiredNames: required, nowMs, headFirstSeenMs })
   if (!round && !pr.isDraft) checkpoint.reviewOpen = { head: pr.head, base: pr.baseRefName, checks: checks !== null }
-  if (round ? round.early !== 1 : checkpoint.reviewNow === undefined) return null
-  if (!checks) return "started by you"
-  return `started by you, ${checks.kind === "needs-you" ? `${checks.reason.charAt(0).toLowerCase()}${checks.reason.slice(1)}` : "checks still running"}`
+  if (round ? !round.early : checkpoint.reviewNow === undefined) return null
+  return earlyWords(round?.early === 2 ? "started on ready" : "started by you", checks)
+}
+
+/** A round reviewed whatever its checks say: who started it, and what its checks were doing ("started by you, checks still running"). */
+export function earlyWords(who: string, checks: GateResult | null): string {
+  if (!checks) return who
+  return `${who}, ${checks.kind === "needs-you" ? `${checks.reason.charAt(0).toLowerCase()}${checks.reason.slice(1)}` : "checks still running"}`
 }
 
 /**
- * A look that reviews early: auto-review goes first and auto-fix after it,
- * each keeping its words here, and the look saves one answer. Auto-review's
- * words stand, with the sooner of the two waits so an auto-fix countdown
- * still goes out on time; auto-fix's stand once auto-review has nothing to
- * say (its round passed).
+ * A look where auto-review goes first (review-first.ts) and auto-fix after
+ * it, each keeping its words here, and the look saves one answer. With both
+ * speaking, auto-review's words lead and auto-fix's follow ("… · Auto-fix
+ * will send after the review: …"), with the sooner of the two waits so an
+ * auto-fix countdown still goes out on time. Auto-fix's stand alone once
+ * auto-review has nothing to say (its round passed), or once auto-review
+ * handed it a rejection to send (`deferred`).
  */
 export class EarlyAnswers {
   private review: AutopilotCheck | null = null
@@ -98,10 +105,12 @@ export class EarlyAnswers {
   readonly onFix = (check: AutopilotCheck): void => { this.fix = check }
 
   /** True when the look ends here, its answer saved; false when the head passed and auto-fix had nothing to do: the merge gate goes on. */
-  finish(passed: boolean, nothingToFix: string | null, save: (check: AutopilotCheck) => boolean): boolean {
+  finish(passed: boolean, nothingToFix: string | null, save: (check: AutopilotCheck) => boolean, deferred = false): boolean {
     if (passed && nothingToFix !== null) return false
     const { review, fix } = this
-    const answer = review && fix ? { ...review, delayMs: Math.min(review.delayMs, fix.delayMs) } : review ?? fix
+    const answer = deferred && fix ? fix
+      : review && fix ? { ...review, reason: `${review.reason} · ${fix.reason}`, delayMs: Math.min(review.delayMs, fix.delayMs) }
+      : review ?? fix
     if (answer) save(answer)
     return true
   }

@@ -1,9 +1,11 @@
 /**
- * What auto-fix says when a look has no round to send. Beside runtime.ts
- * because that file is at its size limit.
+ * What auto-fix sends and says when a look has no round to send. Beside
+ * runtime.ts because that file is at its size limit.
  */
 import type { AutopilotState } from "../../../shared/autopilot"
+import { seenWake } from "../workflows/store"
 import { MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
+import { MAX_ROUNDS, type Fix } from "./evidence"
 import type { FixPlan } from "./fix"
 import { conversationsBlock } from "./gate"
 import type { PrSnapshot } from "./github"
@@ -12,6 +14,20 @@ import type { AutopilotCheckpoint } from "./store"
 
 /** Auto-fix alone counts as done once CI is green and the PR has been quiet this long. */
 export const QUIET_MS = 15 * 60_000
+
+/** Auto-fix has sent every round its budget allows: what it has left goes nowhere until Resume. */
+export const autoFixAtCap = (checkpoint: AutopilotCheckpoint): boolean => (checkpoint.rounds ?? 0) >= MAX_ROUNDS
+
+/**
+ * CI's part of auto-fix's next round, unless that evidence already went out
+ * (alone, or in a round with review feedback: the round's key is then a
+ * combined one) or was skipped.
+ */
+export function ciToSend(plan: FixPlan, checkpoint: AutopilotCheckpoint, rowId: string): Fix | null {
+  if (plan.kind !== "fix") return null
+  const sent = seenWake(rowId, plan.key) || (checkpoint.sentCi ?? []).includes(plan.key)
+  return sent || checkpoint.skipped?.includes(plan.key) ? null : plan
+}
 
 /** No round to send: what CI alone says. */
 export function nothingToSend(plan: FixPlan, checkpoint: AutopilotCheckpoint, say: (state: AutopilotState, reason: string, delayMs: number) => null): string | null {

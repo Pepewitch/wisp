@@ -164,6 +164,46 @@ describe("project settings base branch", () => {
   })
 })
 
+describe("project settings review start", () => {
+  const STARTS: RepoInfo = { ...CONFIGURED, reviewStart: "ready" }
+  const saved = async (calls: Call[]) => {
+    fireEvent.click(screen.getByRole("button", { name: "Save" }))
+    await waitFor(() => expect(calls.some((call) => call.method === "POST")).toBe(true))
+    return calls.find((call) => call.method === "POST")!.body
+  }
+
+  it("is absent on a daemon that sends no reviewStart, and Save never sends one", async () => {
+    const calls = stubApi()
+    mount(<ProjectSettingsSpecimen project={CONFIGURED} />)
+    expect(screen.queryByRole("group", { name: "Auto-review starts" })).toBeNull()
+    expect(await saved(calls)).not.toHaveProperty("reviewStart")
+  })
+
+  it("defaults to when the PR is ready, and Save leaves it alone until a person picks", async () => {
+    const calls = stubApi()
+    mount(<ProjectSettingsSpecimen project={STARTS} />)
+    const group = screen.getByRole("group", { name: "Auto-review starts" })
+    expect(within(group).getByRole("button", { name: "When the PR is ready" })).toHaveAttribute("aria-pressed", "true")
+    expect(within(group).getByRole("button", { name: "After checks pass" })).toHaveAttribute("aria-pressed", "false")
+    expect(await saved(calls)).not.toHaveProperty("reviewStart")
+  })
+
+  it("saves After checks pass as \"checks\"", async () => {
+    const calls = stubApi()
+    mount(<ProjectSettingsSpecimen project={STARTS} />)
+    fireEvent.click(screen.getByRole("button", { name: "After checks pass" }))
+    expect(screen.getByRole("button", { name: "After checks pass" })).toHaveAttribute("aria-pressed", "true")
+    expect(await saved(calls)).toMatchObject({ reviewStart: "checks" })
+  })
+
+  it("going back to ready clears the stored choice with null", async () => {
+    const calls = stubApi()
+    mount(<ProjectSettingsSpecimen project={{ ...STARTS, reviewStart: "checks" }} />)
+    fireEvent.click(screen.getByRole("button", { name: "When the PR is ready" }))
+    expect(await saved(calls)).toMatchObject({ reviewStart: null })
+  })
+})
+
 describe("project settings verification", () => {
   const STATUS_NONE: VerificationStatus = {
     state: "none", version: null, activatedAt: null, areas: [], draft: null, task: null, reviewer: null, attention: null,

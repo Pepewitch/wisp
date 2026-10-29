@@ -11,6 +11,7 @@ import { RETIRE_GRACE_MS, submitVerdict } from "../src/verify/reviewer";
 import { getRound, roundOfReviewer, roundsOf, type RoundRow } from "../src/verify/rounds";
 import { reviewTurnEnv, reviewsOf, type ReviewRow } from "../src/verify/reviews";
 import { loadConfig } from "../src/config";
+import { SEND_DELAY_MS } from "../src/autopilot/runtime";
 import { verifyTaskOf } from "../src/verify/status";
 import { HEAD, START, capture, created, doneTask, fakeGitHub, forgetTasks, pass, runtime, seed, snapshot, until } from "./autopilot-harness";
 
@@ -47,18 +48,18 @@ function armed(options: { autoMerge?: boolean; autoFix?: boolean; repo?: string;
  * defaults to the first's agent; a fixture repo's diff cannot be read, so its
  * rounds are deep and get both).
  */
-function cfgFor(repo: string, panel: boolean) {
-  return { ...loadConfig(), repos: [{ path: repo, ...(panel ? {} : { verifySecond: "off" as const }) }] };
+function cfgFor(repo: string, panel: boolean, reviewStart?: "checks") {
+  return { ...loadConfig(), repos: [{ path: repo, ...(panel ? {} : { verifySecond: "off" as const }), ...(reviewStart ? { reviewStart } : {}) }] };
 }
 
-function setup(options: Parameters<typeof armed>[0] & { adapters?: Record<string, never>; panel?: boolean; realClock?: boolean } = {}) {
+function setup(options: Parameters<typeof armed>[0] & { adapters?: Record<string, never>; panel?: boolean; realClock?: boolean; reviewStart?: "checks" } = {}) {
   // a recipe activation is stamped with the real time: a test that activates one runs on it too
   const clock = { now: options.realClock ? Date.now() : START + 10 * 60_000 };
   const { state, github } = fakeGitHub();
   const { launched, launch, ids } = launcher();
   const task = armed(options);
   seed(task.id, clock);
-  const rt = runtime(github, clock, options.adapters ?? {}, cfgFor(options.repo ?? "/fixture/repo", options.panel === true), undefined, { launch });
+  const rt = runtime(github, clock, options.adapters ?? {}, cfgFor(options.repo ?? "/fixture/repo", options.panel === true, options.reviewStart), undefined, { launch });
   return { clock, state, launched, ids, task, rt };
 }
 
@@ -92,10 +93,10 @@ describe("auto-review", () => {
       base: { ref: "refs/pull/7/head", commit: HEAD, from: "pr#7" }, subtask: { parentId: task.id, kind: "review" },
       mode: "worktree", verifyRole: "reviewer", repoPath: task.repo_path, actor: "autopilot",
     });
-    expect(launched[0]!.firstTurnPrompt).toContain("Round 1 of 3");
+    expect(launched[0]!.firstTurnPrompt).toContain("Round 1 · 0 of 3 rejections used.");
     expect(launched[0]!.firstTurnPrompt).toContain("review submit --stdin");
     expect(autopilotStatus(task.id)).toMatchObject({ autoReview: true, state: "waiting", by: "auto-review", reviewRounds: 1 });
-    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 of 3: A reviewing");
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 · 0 of 3 rejections used: A reviewing");
     expect(state.merges).toHaveLength(0);
 
     // still running: no second reviewer
@@ -107,11 +108,11 @@ describe("auto-review", () => {
     transition(reviewerOf(round).id, "done");
     await pass(rt, task.id, clock);
     expect(state.merges).toEqual([{ number: 7, method: "SQUASH", head: HEAD }]);
-    expect(autopilotHistory(task.id).find((entry) => entry.kind === "merging")?.detail).toContain("auto-review passed (round 1)");
+    expect(autopilotHistory(task.id).find((entry) => entry.kind === "merging")?.detail).toContain("auto-review passed (round 1 · 0 of 3 rejections used)");
   });
 
-  test("checks still running or red spend no reviewer", async () => {
-    const { clock, state, launched, task, rt } = setup();
+  test("under reviewStart \"checks\", checks still running or red spend no reviewer", async () => {
+    const { clock, state, launched, task, rt } = setup({ reviewStart: "checks" });
     state.pr = snapshot({ checks: [{ name: "test", status: "IN_PROGRESS", conclusion: null, required: true, url: "" }] });
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(0);
@@ -133,18 +134,22 @@ describe("auto-review", () => {
     expect(autopilotStatus(task.id).reason).toBe(`Auto-review rejected ${HEAD.slice(0, 7)}: Save is dead`);
   });
 
-  test("with auto-fix, a rejection goes back to the author once, with the findings beside its data", async () => {
+  test("with auto-fix, a rejection goes back to the author once, in auto-fix's round, with the findings beside its data", async () => {
     const { dir, file, adapters } = capture();
     const { clock, task, rt } = setup({ autoFix: true, harness: "capture", worktree: dir, adapters: adapters as never });
     await pass(rt, task.id, clock);
     const round = latest(task.id);
     verdict(round, { verdict: "fail", summary: "Dark mode is unreadable", findings: [{ title: "White on white", detail: "Opened settings in dark mode", file: "web/theme.css", line: 12 }] });
     await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).reason).toBe("Auto-fix will send: auto-review's findings");
+    clock.now += SEND_DELAY_MS;
+    await pass(rt, task.id, clock);
     await until(() => existsSync(file), "the author's round turn");
     const prompt = readFileSync(file, "utf8");
-    expect(prompt).toContain(`[Wisp auto-review · PR #7 · round 1 of 3 · head ${HEAD.slice(0, 7)}]`);
+    expect(prompt).toContain(`[Wisp auto-fix · PR #7 · round 1 of 5 · head ${HEAD.slice(0, 7)}]`);
+    expect(prompt).toContain(`Auto-review, round 1 · 1 of 3 rejections used, head ${HEAD.slice(0, 7)}:`);
     const bounced = messagesFor(task.id).find((message) => message.origin === "workflow")!;
-    expect(JSON.parse(bounced.source_json!)).toEqual({ by: "autopilot", kind: "auto-review", pr: 7, round: 1, rounds: 3 });
+    expect(JSON.parse(bounced.source_json!)).toEqual({ by: "autopilot", kind: "auto-fix", pr: 7, round: 1, rounds: 5 });
     const feedback = prompt.match(/Read (\S+REVIEW-FEEDBACK\.md)/)![1]!;
     expect(feedback.startsWith(dir)).toBe(false);
     expect(readFileSync(feedback, "utf8")).toContain("White on white");
@@ -185,6 +190,8 @@ describe("auto-review", () => {
       const round = latest(task.id);
       expect(round.round).toBe(n);
       verdict(round, { verdict: "fail", findings: [{ title: `bug ${n}` }] });
+      // settled before the next push: a round a push ends gives no verdict, and spends nothing
+      await pass(rt, task.id, clock);
     }
     state.pr = snapshot({ head: "4".repeat(40) });
     clock.now += 5 * 60_000;
@@ -198,8 +205,8 @@ describe("auto-review", () => {
     expect(launched).toHaveLength(4);
     // numbering goes on, and the budget is three more
     expect(latest(task.id)).toMatchObject({ round: 4, counted: 1 });
-    expect(launched[3]!.firstTurnPrompt).toContain("Round 4 of 6");
-    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 4 of 6: A reviewing");
+    expect(launched[3]!.firstTurnPrompt).toContain("Round 4 · 0 of 3 rejections used.");
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 4 · 0 of 3 rejections used: A reviewing");
   });
 
   test("Resume has a rejected head looked at again, without a push and without spending a round", async () => {
@@ -243,7 +250,7 @@ describe("auto-review", () => {
     refuse = true;
     await pass(rt, task.id, clock);
     // the round exists with its reviewer pending: it starts when a slot frees, the panel never shrinks
-    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 of 3: A waiting for a free task slot");
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 · 1 of 3 rejections used: A waiting for a free task slot");
     expect(primaryOf(latest(task.id)).state).toBe("pending");
     refuse = false;
     await pass(rt, task.id, clock);
@@ -301,7 +308,7 @@ describe("auto-review", () => {
     transition(reviewerOf(round).id, "done");
     await pass(rt, task.id, clock);
     expect(primaryOf(round).nudged).toBe(1);
-    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 of 3: A asked for its verdict");
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 · 0 of 3 rejections used: A asked for its verdict");
     // the nudge's turn could not start (no harness here): once the reviewer is idle again, the round ends
     db.run("UPDATE task_messages SET status = 'cancelled' WHERE task_id = ?", [reviewerOf(round).id]);
     transition(reviewerOf(round).id, "done");

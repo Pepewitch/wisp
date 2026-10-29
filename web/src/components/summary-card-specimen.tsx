@@ -29,7 +29,10 @@ const OFF: AutopilotStatus = {
 }
 const WAITING: AutopilotStatus = {
   ...OFF, autoMerge: true, autoFix: true, autoReview: true, pr: 318, state: "waiting", reason: "Waiting for checks", about: "pr",
-  fixRounds: 1, reviewRounds: 1, updatedAt: minutes(4),
+  fixRounds: 1, reviewRounds: 1, reviewBudget: 3, reviewSpent: 0, updatedAt: minutes(4),
+}
+const REVIEWING: AutopilotStatus = {
+  ...WAITING, by: "auto-review", reason: "Auto-review round 1 · 0 of 3 rejections used (started on ready, checks still running): A reviewing",
 }
 const MERGED: AutopilotStatus = {
   ...WAITING, pr: null, state: "waiting", reason: "#318 merged by Wisp · Waiting for the task's next PR", about: "task",
@@ -83,8 +86,8 @@ function model(task: ApiTask, over: Partial<SummaryModel> = {}): SummaryModel {
 const STATES: { frame: string; label: string; model: SummaryModel }[] = [
   {
     frame: "running",
-    label: "Running, a PR open, autopilot waiting",
-    model: model({ ...base, state: "running", autopilot: WAITING, context_tokens: 84_000 }, {
+    label: "Running, a PR open, auto-review on it",
+    model: model({ ...base, state: "running", autopilot: REVIEWING, context_tokens: 84_000 }, {
       pullRequest: OPEN_PR, runningSince: new Date(Date.now() - 67_000).toISOString(), children: CHILDREN,
     }),
   },

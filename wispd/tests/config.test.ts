@@ -142,6 +142,11 @@ describe("validateConfig (a prior audit)", () => {
     expect(thrownMessage(() => validateConfig({ repos: [{ path: "/ok", name: 42 }] }))).toBe(
       "config.json: repos[0].name must be a string, got number",
     );
+    expect(validateConfig({ repos: [{ path: "/ok", reviewStart: "checks" }] })).toEqual({ repos: [{ path: "/ok", reviewStart: "checks" }] });
+    expect(validateConfig({ repos: [{ path: "/ok", reviewStart: null }] })).toEqual({ repos: [{ path: "/ok" }] });
+    expect(thrownMessage(() => validateConfig({ repos: [{ path: "/ok", reviewStart: "green" }] }))).toBe(
+      'config.json: repos[0].reviewStart must be "ready" or "checks", got "green"',
+    );
     expect(thrownMessage(() => validateConfig({ stuckMinutes: "10" }))).toBe(
       "config.json: stuckMinutes must be a number, got string",
     );

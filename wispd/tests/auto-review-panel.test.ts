@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { autopilotHistory, autopilotStatus, autopilotTurnNotes, resumeAutopilot, setAutopilot } from "../src/autopilot/store";
 import { loadConfig } from "../src/config";
+import { SEND_DELAY_MS } from "../src/autopilot/runtime";
 import type { NewTaskInput } from "../src/domain/task-create";
 import { AUTO_REVIEW } from "../src/migration-auto-review";
 import { REVIEW_PANEL } from "../src/migration-review-panel";
@@ -319,6 +320,9 @@ describe("a rejection's images", () => {
     publishOutputImage(turnId, gif, "spinner.gif", "published");
     publishOutputImage(turnId, samplePng(), "page.png", "published");
     submit(review, { verdict: "fail", findings: [blocker("The total is wrong")] });
+    await pass(rt, task.id, clock);
+    // auto-fix carries the findings, after its short delay
+    clock.now += SEND_DELAY_MS;
     await pass(rt, task.id, clock);
     const message = db.query("SELECT attachments_json FROM task_messages WHERE task_id = ? ORDER BY created_at DESC LIMIT 1").get(task.id) as { attachments_json: string | null };
     expect((JSON.parse(message.attachments_json ?? "[]") as { name: string }[]).map((file) => file.name)).toEqual(["page.png"]);

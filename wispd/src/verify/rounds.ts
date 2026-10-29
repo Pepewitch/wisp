@@ -22,6 +22,12 @@ export interface RoundRow {
   token: string
   recipe_version: string | null
   state: AutoReviewRoundState
+  /**
+   * Two uses, by state: a settled verdict's cause (settleRound: `change` on an
+   * inconclusive round), and why a superseded round ended (supersedeRound:
+   * `head` a push, `base` a retarget, `off` a switch-off or archive). A
+   * round superseded before that was written has none.
+   */
   cause: string | null
   summary: string | null
   findings_json: string | null
@@ -40,12 +46,19 @@ export interface RoundRow {
   roles?: string | null
   /** 1: a phase-1 round (one reviewer, no rubric); 2: a panel */
   protocol?: number
-  /** 1: started by Review now, or a re-run of such a round: reviewed and acted on whatever its checks say (migration 29) */
+  /**
+   * Reviewed and acted on whatever its checks say (migration 29), and so is a
+   * re-run of it: 1 started by Review now, 2 started on its own once the head
+   * was ready (repos[].reviewStart "ready"); 0 waited for the checks.
+   */
   early?: number
 }
 
-/** How many counted rounds one PR gets before auto-review pauses for a person. */
+/** How many rejections one PR's review budget allows before auto-review pauses for a person. */
 export const MAX_REVIEW_ROUNDS = 3
+
+/** Rounds that end without a verdict (pushed over once launched, an error, a recipe hold) before a PR's rounds wait for its checks again. */
+export const UNPRODUCTIVE_LIMIT = 2 * MAX_REVIEW_ROUNDS
 
 /** A verdict that ends the round (the rest are what became of it). */
 export const VERDICT_STATES: readonly AutoReviewRoundState[] = ["pass", "fail", "inconclusive", "recipe"]
@@ -60,10 +73,56 @@ export function latestRound(workflowId: string, pr: number, head: string, base: 
     ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(workflowId, pr, head, base) as RoundRow | null
 }
 
-/** The highest counted round number of this PR under this workflow since `since`, whatever became of it; 0 for none. */
-export function countedRound(workflowId: string, pr: number, since: string): number {
-  const row = db.query("SELECT MAX(round) AS n FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND counted = 1 AND created_at >= ?").get(workflowId, pr, since) as { n: number | null } | null
+/** The newest round of this PR under this workflow since `since`, on any head. */
+export function latestPrRound(workflowId: string, pr: number, since: string): RoundRow | null {
+  return db.query(`SELECT * FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND created_at >= ?
+    ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(workflowId, pr, since) as RoundRow | null
+}
+
+/** The highest round number of this PR under this workflow, in any state and from any epoch; 0 for none. The next round is one more. */
+export function highestRound(workflowId: string, pr: number): number {
+  const row = db.query("SELECT MAX(round) AS n FROM auto_review_rounds WHERE workflow_id = ? AND pr = ?").get(workflowId, pr) as { n: number | null } | null
   return row?.n ?? 0
+}
+
+/** A round as the author, the reviewers and the status read it: "round 4 · 1 of 3 rejections used". */
+export const budgetWords = (round: number, spent: number): string => `round ${round} · ${spent} of ${MAX_REVIEW_ROUNDS} rejections used`
+
+/** What a PR's review budget stands at, read from its round rows alone. */
+export interface ReviewLedger {
+  /** the highest round number (highestRound) */
+  highest: number
+  /** rejections spent from the current budget */
+  spent: number
+  /** rounds in the PR's whole life on this task (every workflow and epoch) that ended without a verdict worth their tokens */
+  unproductive: number
+}
+
+/**
+ * Only a round that rejected the head, or could not verify the change,
+ * spends the budget: one per round number (an error's re-run that fails
+ * spends that number once), since `since` (auto-review's epoch) and above
+ * `base` (the round numbers spent before the latest Resume). A round pushed
+ * over after its reviewers launched (cause `head` or `base`), an error and a
+ * recipe hold are unproductive, counted over the PR's whole life on this
+ * task, whatever workflow and epoch they ran under: free up to
+ * UNPRODUCTIVE_LIMIT rows. Each row past it that belongs to the current
+ * budget (this workflow, since `since`, above `base`) spends one, so the
+ * pause bounds them too; an older workflow's rows only count toward the limit.
+ */
+export function reviewLedger(workflowId: string, pr: number, since: string, base = 0): ReviewLedger {
+  const rejected = db.query(`SELECT COUNT(DISTINCT round) AS n FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND created_at >= ? AND round > ?
+    AND state IN ('fail', 'inconclusive')`).get(workflowId, pr, since, base) as { n: number }
+  // Keyed by task, not workflow: switching every switch off completes the workflow and switching
+  // back on starts a new one, which must not hand back free rounds.
+  const unproductive = db.query(`SELECT r.round, r.workflow_id, r.created_at FROM auto_review_rounds r
+    WHERE r.task_id = (SELECT task_id FROM workflows WHERE id = ?) AND r.pr = ?
+    AND (r.state IN ('error', 'recipe') OR (r.state = 'superseded' AND r.cause IN ('head', 'base')
+      AND EXISTS (SELECT 1 FROM round_reviews v WHERE v.round_id = r.id AND v.launched_at IS NOT NULL AND v.carried_from IS NULL)))
+    ORDER BY r.created_at, r.rowid`).all(workflowId, pr) as { round: number; workflow_id: string; created_at: string }[]
+  const over = unproductive.slice(UNPRODUCTIVE_LIMIT)
+    .filter((row) => row.workflow_id === workflowId && row.created_at >= since && row.round > base).length
+  return { highest: highestRound(workflowId, pr), spent: rejected.n + over, unproductive: unproductive.length }
 }
 
 /**

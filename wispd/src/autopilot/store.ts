@@ -8,11 +8,11 @@ import { mergeGrant, MergeRightsError, subtaskAutopilotRefusal } from "./subtask
 import { holdClass, latestHead, recordPrEvent } from "../subtask-reports"
 import type { AutopilotBy, AutopilotHistoryEntry, AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
 import { db } from "../store-database"
-import { MAX_REVIEW_ROUNDS } from "../verify/rounds"
+import { highestRound, MAX_REVIEW_ROUNDS } from "../verify/rounds"
 import { emit } from "../events"
 import { createTaskMessage, getTask, randomId } from "../store"
 import type { TaskState, TurnSource } from "../types"
-import { keyParts, markerOf, withDelivered } from "./feedback"
+import { markerOf } from "./feedback"
 import { taskIsIdle } from "./idle"
 import { isTaskMerging } from "./merging"
 import type { Judged, JudgeMiss } from "./judge"
@@ -57,8 +57,8 @@ export interface AutopilotCheckpoint {
   /** when Wisp first saw the task idle after turn `idleTurn`: rounds wait a moment after it */
   idleSince?: string
   idleTurn?: number
-  /** a round ready to go once its delay passes */
-  pending?: { key: string; summary: string; sendsAt: string }
+  /** a round ready to go once its delay passes; `afterReview`: held while an auto-review round on the head runs */
+  pending?: { key: string; summary: string; sendsAt: string; afterReview?: boolean }
   /** the owner said Send now — to this evidence key, and no other */
   sendNow?: string
   /** looks in a row that could read none of a round's logs: past a few, it is sent with links only */
@@ -77,6 +77,8 @@ export interface AutopilotCheckpoint {
   judgeMisses?: Record<string, JudgeMiss>
   /** CI evidence keys sent in a round, alone or with review feedback */
   sentCi?: string[]
+  /** auto-review rounds whose findings went out in an auto-fix round, or that a person skipped or cancelled (newest 20) */
+  reviewsSent?: string[]
   /** turn numbers that started without the note asking the agent to sign its GitHub posts (a slash command) */
   unmarkedTurns?: number[]
   /**
@@ -98,9 +100,11 @@ export interface AutopilotCheckpoint {
   greenAt?: string
   /** how long the current patient wait has been backing off (cadence.ts) */
   backoff?: Backoff
-  /** counted auto-review rounds for the bound PR (verify/rounds.ts keeps each round) */
+  /** the highest auto-review round number on the bound PR, for display: the rows (verify/rounds.ts reviewLedger) decide */
   reviewRounds?: number
-  /** rounds spent before the latest Resume of auto-review's pause: each Resume gives three more, and numbering goes on */
+  /** rejections spent from the current review budget, for display; the rows decide */
+  reviewSpent?: number
+  /** the highest round number at the latest Resume of auto-review's pause or switch-on: only rounds above it spend the fresh budget */
   reviewBase?: number
   /** Resume was pressed: a round whose reviewer gave no verdict is asked again */
   reviewRetry?: boolean
@@ -152,11 +156,13 @@ function latestRow(taskId: string): WorkflowRow | null {
 
 const OFF: AutopilotStatus = {
   autoMerge: false, autoFix: false, autoReview: false, reviewRounds: 0, pr: null, state: "off", reason: "", about: "task", by: "auto-merge", mergedByWisp: false,
-  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, network: null, reviewNow: null, reviewBudget: MAX_REVIEW_ROUNDS, updatedAt: null,
+  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, network: null, reviewNow: null, reviewBudget: MAX_REVIEW_ROUNDS, reviewSpent: 0, updatedAt: null,
 }
 
-/** The round the current review budget ends at: three, and three more for each Resume or switch-on that started one afresh. */
-export const reviewBudgetOf = (checkpoint: AutopilotCheckpoint): number => (checkpoint.reviewBase ?? 0) + MAX_REVIEW_ROUNDS
+/** Where a fresh review budget starts: above every round number the bound PR has had. */
+function freshReviewBase(row: WorkflowRow, checkpoint: AutopilotCheckpoint): number {
+  return checkpoint.pr ? highestRound(row.id, checkpoint.pr) : 0
+}
 
 export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   if (!row) return OFF
@@ -183,14 +189,14 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   const followingSwitch = row.state === "paused" && row.reason === CONTEXT_CHANGE_PAUSE
   const about = followingSwitch || state === "held" ? "task" : state === "paused" ? "pr" : checkpoint.about ?? "task"
   const pendingFix = row.state === "active" && params.autoFix && state !== "held" && checkpoint.pending
-    ? { summary: checkpoint.pending.summary, sendsAt: checkpoint.pending.sendsAt }
+    ? { summary: checkpoint.pending.summary, sendsAt: checkpoint.pending.sendsAt, ...(checkpoint.pending.afterReview ? { afterReview: true } : {}) }
     : null
   const by = speakerOf(checkpoint, params)
   const lastMerged = checkpoint.lastMerged ? { pr: checkpoint.lastMerged.pr, byWisp: checkpoint.lastMerged.byWisp } : null
   return {
     done: isDone(row, state, checkpoint),
     autoMerge: params.autoMerge, autoFix: params.autoFix, autoReview: params.autoReview, pr, state, reason, about, by, mergedByWisp: false, lastMerged,
-    pendingFix, fixRounds: checkpoint.rounds ?? 0, reviewRounds: checkpoint.reviewRounds ?? 0, reviewBudget: reviewBudgetOf(checkpoint), network: networkWaitOf(row, checkpoint),
+    pendingFix, fixRounds: checkpoint.rounds ?? 0, reviewRounds: checkpoint.reviewRounds ?? 0, reviewBudget: MAX_REVIEW_ROUNDS, reviewSpent: checkpoint.reviewSpent ?? 0, network: networkWaitOf(row, checkpoint),
     reviewNow: reviewNowOf(params, state, checkpoint, pendingFix !== null), updatedAt: row.updated_at,
   }
 }
@@ -346,7 +352,8 @@ function reconfigure(row: WorkflowRow, current: AutopilotParams, next: Autopilot
   }
   // switching auto-review on again is a fresh start for its round budget; numbering goes on
   if (!current.autoReview && next.autoReview) {
-    checkpoint.reviewBase = checkpoint.reviewRounds ?? 0
+    checkpoint.reviewBase = freshReviewBase(row, checkpoint)
+    checkpoint.reviewSpent = 0
     checkpoint.reviewArmedAt = at
   }
   // A pause a switch made is not the others' to keep once that switch is off.
@@ -388,8 +395,9 @@ export function resumeAutopilot(taskId: string, now = new Date()): AutopilotStat
   // round budgets too; Continue after a Stop hold is not.
   if (row.state === "paused") {
     delete checkpoint.rounds
-    // auto-review's numbering goes on (round 4 of 6), its budget starts afresh
-    checkpoint.reviewBase = checkpoint.reviewRounds ?? 0
+    // auto-review's numbering goes on (round 4), its budget starts afresh
+    checkpoint.reviewBase = freshReviewBase(row, checkpoint)
+    checkpoint.reviewSpent = 0
   }
   // Resume of auto-review's own pause or needs-you asks a reviewer again;
   // Continue after a Stop hold, or a row without auto-review, does not
@@ -784,13 +792,6 @@ export function reserveRound(row: WorkflowRow, round: {
   return messageId
 }
 
-/** A round's evidence, skipped: its CI part is never sent, and its review items count as seen. */
-function handled(checkpoint: AutopilotCheckpoint, key: string): void {
-  const parts = keyParts(key)
-  if (parts.ci) checkpoint.skipped = [...(checkpoint.skipped ?? []).slice(-20), parts.ci]
-  checkpoint.delivered = withDelivered(checkpoint.delivered, parts.delivered)
-}
-
 /** Turns of a task that were never asked to sign their GitHub posts: before auto-fix was armed, or listed. */
 export function unmarkedTurns(taskId: string, before: string, listed: number[]): { started_at: string; ended_at: string | null }[] {
   const numbers = listed.filter(Number.isInteger)
@@ -812,48 +813,4 @@ export function noteTurnSigning(taskId: string, turn: number, signs: boolean): v
   if (listed.includes(turn) === !signs) return
   checkpoint.unmarkedTurns = signs ? listed.filter((n) => n !== turn) : [...listed.slice(-50), turn]
   db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1 WHERE id = ?", [JSON.stringify(checkpoint), row.id])
-}
-
-/** Send now: skip the short delay before a pending round. */
-export function sendPendingFix(taskId: string, now = new Date()): AutopilotStatus {
-  return touchPending(taskId, now, (checkpoint) => { checkpoint.sendNow = checkpoint.pending!.key })
-}
-
-/** Skip: never send this evidence. A later head brings new evidence, and a round again. */
-export function skipPendingFix(taskId: string, now = new Date()): AutopilotStatus {
-  return touchPending(taskId, now, (checkpoint) => {
-    handled(checkpoint, checkpoint.pending!.key)
-    delete checkpoint.pending
-    delete checkpoint.sendNow
-  })
-}
-
-function touchPending(taskId: string, now: Date, change: (checkpoint: AutopilotCheckpoint) => void): AutopilotStatus {
-  const row = autopilotRow(taskId)
-  if (!row || row.state !== "active") throw new AutopilotError("Auto-fix is not on for this task", 409)
-  const checkpoint = checkpointOf(row)
-  if (!checkpoint.pending) throw new AutopilotError("No auto-fix round is waiting to be sent", 409)
-  change(checkpoint)
-  db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
-    [JSON.stringify(checkpoint), now.toISOString(), now.toISOString(), row.id])
-  announceWorkflow(taskId)
-  return autopilotStatus(taskId)
-}
-
-/** A person cancelled a queued round from the message list: that means Skip, not a pause. */
-export function skipCancelledRound(workflowId: string, messageId: string): boolean {
-  const row = getWorkflow(workflowId)
-  if (!row || row.type !== AUTOPILOT_TYPE) return false
-  const wake = db.query("SELECT event_key FROM workflow_wakes WHERE workflow_id = ? AND message_id = ?").get(workflowId, messageId) as { event_key: string } | null
-  const current = getWorkflow(workflowId)!
-  const checkpoint = checkpointOf(current)
-  if (wake) handled(checkpoint, wake.event_key)
-  // the cancel restored the countdown this round came from: it is answered
-  delete checkpoint.pending
-  delete checkpoint.sendNow
-  delete checkpoint.done
-  db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1 WHERE id = ?", [JSON.stringify(checkpoint), workflowId])
-  recordWorkflow(workflowId, "skipped", "A queued auto-fix round was cancelled", new Date().toISOString())
-  announceWorkflow(row.task_id)
-  return true
 }

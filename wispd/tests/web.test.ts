@@ -509,6 +509,7 @@ describe("S1 create-modal and project APIs", () => {
         verifySecond?: unknown;
         verifyFallback?: unknown;
         verifySecondFallback?: unknown;
+        reviewStart?: unknown;
         verification?: unknown;
         configured: boolean;
       }[];
@@ -527,6 +528,7 @@ describe("S1 create-modal and project APIs", () => {
       verifySecond: null,
       verifyFallback: null,
       verifySecondFallback: null,
+      reviewStart: "ready",
       verification: { state: "none", areas: 0, draft: false, attention: false, busy: false },
       configured: true,
     });
@@ -642,6 +644,21 @@ describe("S1 create-modal and project APIs", () => {
     const onDisk = JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as { repos: Array<Record<string, unknown>> };
     expect(onDisk.repos[0]).toMatchObject({ name: "Hooked", archiveScript: "rm -rf node_modules" });
     expect(onDisk.repos[0]!.setupScript).toBeUndefined();
+
+    // reviewStart: "checks" is stored; null or "ready" goes back to the default, which is never written
+    const waits = (await (await post({ path: repo, reviewStart: "checks" })).json()) as Row & { reviewStart: string };
+    expect(waits.reviewStart).toBe("checks");
+    expect(waits.archiveScript).toBe("rm -rf node_modules");
+    const kept = (await (await post({ path: repo, name: "Hooked" })).json()) as Row & { reviewStart: string };
+    expect(kept.reviewStart).toBe("checks");
+    const ready = (await (await post({ path: repo, reviewStart: null })).json()) as Row & { reviewStart: string };
+    expect(ready.reviewStart).toBe("ready");
+    expect((JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as { repos: Array<Record<string, unknown>> }).repos[0]!.reviewStart).toBeUndefined();
+    const refused = await post({ path: repo, reviewStart: "green" });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toBe('reviewStart must be "ready", "checks" or null, got "green"');
+    const typed = await post({ path: repo, reviewStart: 3 });
+    expect(((await typed.json()) as { error: string }).error).toBe('reviewStart must be "ready", "checks" or null, got number');
   });
 
   test("copy-preview resolves the globs against the real repo before a task depends on them", async () => {

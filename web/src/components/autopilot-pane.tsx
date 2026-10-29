@@ -18,6 +18,7 @@ import {
   autopilotSpeaker,
   autopilotTint,
   fixRoundsWords,
+  pendingFixWhen,
   reviewRoundsWords,
 } from "@/lib/autopilot-words"
 import { useDaemonRuntime } from "@/lib/runtime"
@@ -275,7 +276,7 @@ export function Switches({ automation, reviewable, touch, now, links }: {
     <AutopilotActions status={status} action={action} pending={automation.pending} touch={touch} now={now} act={automation.onAct} />
   )
   const reviewNow = review && status.reviewNow
-    ? <ReviewNow ask={status.reviewNow} pendingFix={status.pendingFix !== null} pending={automation.pending} touch={touch} act={automation.onAct} />
+    ? <ReviewNow ask={status.reviewNow} pendingFix={status.pendingFix !== null && status.pendingFix.afterReview !== true} pending={automation.pending} touch={touch} act={automation.onAct} />
     : null
   const reviewActions = review && actsOn === "auto-review" && actions
     ? <>{actions}{reviewNow}</>
@@ -322,7 +323,7 @@ export function Switches({ automation, reviewable, touch, now, links }: {
           actions={reviewActions}
         >
           {!review ? off("auto-review") : speaker === "auto-review" ? live : (
-            <>On · {status.pr === null ? "for the task's next PR" : reviewRoundsWords(status.reviewRounds ?? 0, status.reviewBudget)}</>
+            <>On · {status.pr === null ? "for the task's next PR" : reviewRoundsWords(status.reviewRounds ?? 0, status.reviewSpent, status.reviewBudget)}</>
           )}
         </SwitchRow>
       )}
@@ -418,7 +419,7 @@ function AutopilotActions({
     <>
       <Button tone="outline" size={size} disabled={pending} onClick={() => act("send-now")}>Send now</Button>
       <Button size={size} disabled={pending} onClick={() => act("skip")}>Skip</Button>
-      {status.pendingFix && <span className="text-[11px] text-faint">{sendsIn(status.pendingFix.sendsAt, now)}</span>}
+      {status.pendingFix && <span className="text-[11px] text-faint">{pendingFixWhen(status.pendingFix, now)}</span>}
     </>
   )
 }
@@ -430,6 +431,7 @@ function AutopilotActions({
  */
 function ReviewNow({ ask, pendingFix, pending, touch, act }: {
   ask: NonNullable<AutopilotStatus["reviewNow"]>
+  /** an auto-fix countdown that may push ahead of the round; one held for the review goes out after it */
   pendingFix: boolean
   pending: boolean
   touch: boolean
@@ -443,10 +445,4 @@ function ReviewNow({ ask, pendingFix, pending, touch, act }: {
       {pendingFix && <span className="text-[11px] text-faint">auto-fix may push after this; that push ends this review.</span>}
     </>
   )
-}
-
-function sendsIn(at: string, now: number): string {
-  const seconds = Math.ceil((Date.parse(at) - now) / 1000)
-  if (!Number.isFinite(seconds) || seconds <= 0) return "sending…"
-  return seconds < 60 ? `sends in ${seconds}s` : `sends in ${Math.ceil(seconds / 60)} min`
 }

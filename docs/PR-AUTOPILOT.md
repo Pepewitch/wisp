@@ -270,6 +270,15 @@ too, are listed as context, without their logs.
 With both switches on, auto-fix acts first: nothing merges while a check is
 red, and once the agent's fix is green, auto-merge takes over.
 
+With auto-review on too, a review round starts once a head is ready, while CI
+runs (unless a check auto-fix is about to fix already failed: that goes first).
+While the round runs, auto-fix holds: what it would send waits, shown as "Auto-fix
+will send after the review", with **Send now** and **Skip** acting on it. A
+pass, an error or a push releases it. A rejection goes out together with it as
+one round: the reviewers' findings first, then red CI, then the review
+feedback, with one rule for all of it (one push, local checks first, reply on a
+thread you disagree with). See [Auto-review](AUTO-REVIEW.md#how-a-round-goes).
+
 ### Review feedback
 
 Auto-fix also sends the agent review feedback it has not seen yet. That covers:

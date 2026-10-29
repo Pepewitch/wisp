@@ -369,7 +369,9 @@ describe("the ledger", () => {
     expect(parts.delivered).toEqual({
       "thread:PRRT_1": "2026-09-24T10:00:00Z", "review:PRR_1": "2026-09-24T10:00:00Z", "comment:IC_5": "2026-09-24T10:00:00Z",
     });
-    expect(keyParts(`conflict:${HEAD}:b`)).toEqual({ ci: `conflict:${HEAD}:b`, delivered: {} });
+    expect(keyParts(`conflict:${HEAD}:b`)).toEqual({ ci: `conflict:${HEAD}:b`, delivered: {}, reviews: [] });
+    // an auto-review round's findings sent with them are no CI key
+    expect(keyParts(`${key}|rv:round-1`)).toMatchObject({ ci: `ci:${HEAD}:test`, reviews: ["round-1"] });
     // a check name holding a separator is encoded in CI's key, so its Skip sticks
     const ci = `ci:${HEAD}:${encodeURIComponent("lint | format")},test`;
     expect(keyParts(`${ci}|${feedbackKey(found)}`).ci).toBe(ci);

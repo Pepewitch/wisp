@@ -7,7 +7,7 @@ import { completeAuth, verifyToken } from "@/lib/api";
 import type { AttachmentPayload } from "@/lib/attachments";
 import type { ConnectionQueryKeys } from "@/lib/query";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
-import type { ApiTask, ConversationDetail, ProjectVerifyAgent, ProjectVerifySecond, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SendWhen, SubtaskKind, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
+import type { ApiTask, ConversationDetail, ProjectReviewStart, ProjectVerifyAgent, ProjectVerifySecond, FactoryKeyTest, HarnessLimitsResponse, ReviewJudgeTest, SendResponse, SendWhen, SubtaskKind, SuffixPrompt, TaskMessage, TaskMode, UpdateStatus, WispSettings, WispSettingsPatch } from "@/lib/types";
 
 /**
  * Every WRITE the app makes, one hook each — the mirror of queries.ts.
@@ -429,6 +429,8 @@ export interface SaveProjectBody {
   archiveScript: string;
   copyFiles: string[];
   baseBranch: string;
+  /** When auto-review starts its round; null clears it back to "ready". Sent only when it changed. */
+  reviewStart?: ProjectReviewStart | null;
   /**
    * The project's auto-review agent; null clears it (each task's own agent).
    * Sent only to a daemon that advertises `features.autoReview`.

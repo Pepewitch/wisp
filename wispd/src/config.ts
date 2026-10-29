@@ -85,6 +85,19 @@ export interface RepoConfig {
   verifySecondFallback?: { harness: string; model?: string; effort?: string };
   /** whether a `wisp capture` page may load public internet hosts (fonts, CDNs); default true */
   capturePublic?: boolean;
+  /**
+   * When auto-review starts a round on a PR head. Unset or "ready": once the
+   * head is ready for review and settled, alongside its checks. "checks":
+   * once its checks pass (Review now starts one early).
+   */
+  reviewStart?: ReviewStart;
+}
+
+export type ReviewStart = "ready" | "checks";
+
+/** A project's auto-review start; unset is "ready". */
+export function reviewStartFor(cfg: WispConfig, repoPath: string): ReviewStart {
+  return repoConfigFor(cfg, repoPath)?.reviewStart ?? "ready";
 }
 
 /** The configured entry for a repo path, if it has one. Paths are compared resolved. */

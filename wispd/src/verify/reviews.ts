@@ -74,8 +74,8 @@ export function createPanelRound(input: {
   carried?: ReviewRow[]
   /** recipe areas whose change needs reviewer A to show a capture (verify/evidence.ts) */
   required?: string[]
-  /** Review now's round (autopilot/review-now.ts): it waits for no check */
-  early?: boolean
+  /** a round that waits for no check (RoundRow.early): 1 by Review now, 2 started on ready */
+  early?: number
 }, now = new Date()): { round: RoundRow; reviews: ReviewRow[] } {
   return db.transaction(() => {
     const id = randomId("r", 12)
@@ -85,7 +85,7 @@ export function createPanelRound(input: {
     db.run(`INSERT INTO auto_review_rounds(id, task_id, workflow_id, pr, head, base, round, counted, token, recipe_version, state,
       tier, signals_json, roles, protocol, required_json, early, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, 2, ?, ?, ?)`,
     [id, input.taskId, input.workflowId, input.pr, input.head, input.base, input.round, input.counted ? 1 : 0, newToken(), input.recipeVersion,
-      input.tier, input.signals ? JSON.stringify(input.signals) : null, JSON.stringify(roles), JSON.stringify(input.required ?? []), input.early ? 1 : 0, at])
+      input.tier, input.signals ? JSON.stringify(input.signals) : null, JSON.stringify(roles), JSON.stringify(input.required ?? []), input.early ?? 0, at])
     for (const agent of input.agents) {
       const carried = input.carried?.find((review) => review.role === agent.role && review.state === "pass")
       if (carried) {
@@ -320,12 +320,19 @@ export function settleRound(roundId: string, now = new Date()): RoundRow | null 
   })()
 }
 
-/** End every open review of a round and the round itself (a push, a retarget, a switch-off), in one transaction. */
-export function supersedeRound(roundId: string, why: string, now = new Date()): ReviewRow[] {
+/** Why a round was superseded: a push (`head`), a retarget (`base`), or a switch-off or archive (`off`). */
+export type SupersedeCause = "head" | "base" | "off"
+
+/**
+ * End every open review of a round and the round itself, in one transaction,
+ * with its cause: a push or a retarget over launched reviewers is an
+ * unproductive round (rounds.ts reviewLedger); a switch-off never is.
+ */
+export function supersedeRound(roundId: string, why: string, now = new Date(), cause: SupersedeCause = "off"): ReviewRow[] {
   return db.transaction(() => {
     const ended: ReviewRow[] = []
     for (const review of reviewsOf(roundId)) if (endReview(review.id, "superseded", why, now)) ended.push(getReview(review.id)!)
-    db.run("UPDATE auto_review_rounds SET state = 'superseded', summary = ?, finished_at = ? WHERE id = ? AND state = 'running'", [why, now.toISOString(), roundId])
+    db.run("UPDATE auto_review_rounds SET state = 'superseded', cause = ?, summary = ?, finished_at = ? WHERE id = ? AND state = 'running'", [cause, why, now.toISOString(), roundId])
     return ended
   })()
 }

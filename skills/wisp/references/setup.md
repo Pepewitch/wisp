@@ -156,7 +156,10 @@ harmless preferences.
   not for a turn that background work woke on its own; at-least-once, dedup
   on task_id+seq), `repos` (each entry: `path`, `name`,
   `setupScript`, `archiveScript`, `baseBranch`, `copyFiles` — see
-  `wisp project set` in [cli.md](cli.md)), `stuckMinutes` (10),
+  `wisp project set` in [cli.md](cli.md); `reviewStart`: `"ready"`, the
+  default, starts an auto-review round once a head is ready, while CI runs,
+  and `"checks"` waits for its checks first — Project settings → Auto-review
+  starts; the default is never written), `stuckMinutes` (10),
   `maxConcurrentTasks` (100), `turnTranscriptBytes` (25 MB; `logMaxBytes` is
   its legacy alias; a stored `5000000`, the old default every earlier first
   run wrote, follows the current default — pin a budget with any other

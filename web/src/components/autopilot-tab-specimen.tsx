@@ -273,25 +273,34 @@ const PANEL_MANY: AutoReviewRound[] = [
 ]
 
 const REVIEW_OFF: AutopilotStatus = { ...WAITING, autoReview: false, reviewRounds: 0 }
+const BUDGET = { reviewBudget: 3, reviewSpent: 0 } as const
 const REVIEWING: AutopilotStatus = {
-  ...WAITING, autoReview: true, by: "auto-review", reviewRounds: 2, reason: "Auto-review: reviewing 9c41e07 (round 2 of 3)", updatedAt: ago(1),
+  ...WAITING, autoReview: true, by: "auto-review", reviewRounds: 2, ...BUDGET, reviewSpent: 1,
+  reason: "Auto-review round 2 · 1 of 3 rejections used: A reviewing", updatedAt: ago(1),
 }
-const REVIEW_QUIET: AutopilotStatus = { ...WAITING, autoReview: true, reviewRounds: 2 }
+const REVIEW_QUIET: AutopilotStatus = { ...WAITING, autoReview: true, reviewRounds: 2, ...BUDGET, reviewSpent: 1 }
 const REVIEW_PAUSED: AutopilotStatus = {
-  ...WAITING, autoFix: false, autoReview: true, by: "auto-review", state: "paused", reviewRounds: 3,
-  reason: "Auto-review rejected 3 rounds: the save toast never appeared", updatedAt: ago(4),
+  ...WAITING, autoFix: false, autoReview: true, by: "auto-review", state: "paused", reviewRounds: 3, ...BUDGET, reviewSpent: 3,
+  reason: "Auto-review did not pass after 3 rounds — resume to try again", updatedAt: ago(4),
 }
 const HELD_HEAD = "9c41e07aa11b2c3d4e5f60718293a4b5c6d7e8f9"
 const REVIEW_HELD: AutopilotStatus = {
-  ...WAITING, autoReview: true, by: "auto-review", reviewRounds: 1, reason: "Waiting for checks (2 running) before auto-review",
+  ...WAITING, autoReview: true, by: "auto-review", reviewRounds: 1, ...BUDGET, reason: "Waiting for checks (2 running) before auto-review",
   reviewNow: { head: HELD_HEAD, requested: false },
 }
-const REVIEW_HELD_FIX: AutopilotStatus = { ...PENDING_FIX, autoReview: true, reviewRounds: 1, reviewNow: { head: HELD_HEAD, requested: false } }
+const REVIEW_HELD_FIX: AutopilotStatus = { ...PENDING_FIX, autoReview: true, reviewRounds: 1, ...BUDGET, reviewNow: { head: HELD_HEAD, requested: false } }
 const REVIEW_ASKED: AutopilotStatus = {
   ...REVIEW_HELD, reason: "Waiting for a free task slot to start the reviewers", reviewNow: { head: HELD_HEAD, requested: true },
 }
 const REVIEW_EARLY: AutopilotStatus = {
-  ...REVIEW_HELD, reviewRounds: 2, reason: "Auto-review round 2 of 3 (started by you, checks still running): A reviewing", reviewNow: null, updatedAt: ago(1),
+  ...REVIEW_HELD, reviewRounds: 2, reason: "Auto-review round 2 · 0 of 3 rejections used (started by you, checks still running): A reviewing", reviewNow: null, updatedAt: ago(1),
+}
+const REVIEW_ON_READY: AutopilotStatus = {
+  ...REVIEW_EARLY, reason: "Auto-review round 2 · 0 of 3 rejections used (started on ready, checks still running): A reviewing",
+}
+const REVIEW_FIX_AFTER: AutopilotStatus = {
+  ...REVIEW_ON_READY, by: "auto-review", reason: "Auto-review round 2 · 0 of 3 rejections used: A reviewing · Auto-fix will send after the review: 1 review thread",
+  pendingFix: { summary: "1 review thread", sendsAt: new Date(NOW + 45_000).toISOString(), afterReview: true },
 }
 
 const REPOSITORY = "https://github.com/example/editor"
@@ -431,7 +440,7 @@ export function AutopilotTabSpecimen() {
           </div>
         </Frame>
         <Frame id="autopilot-review-now" title="Review now: a round on this head without waiting for its checks"
-          note="Offered under Auto-review only while it holds a head with no round yet: its checks still running or failed, or an auto-fix countdown ahead of it. One click for one head: a push cancels it, its round counts toward the budget, and auto-merge still waits for green checks.">
+          note="On a project whose auto-review starts after checks pass, offered under Auto-review only while it holds a head with no round yet: its checks still running or failed, or an auto-fix countdown ahead of it. One click for one head: a push cancels it, a rejection from its round spends the budget like any other, and auto-merge still waits for green checks.">
           <div>
             <Caption>Checks still running</Caption>
             <Panel height={300}><TabPane automation={automationOf(REVIEW_HELD, null, ROUNDS.slice(1))} /></Panel>
@@ -451,6 +460,21 @@ export function AutopilotTabSpecimen() {
           <div>
             <Caption>Touch</Caption>
             <Panel touch width={390} height={600}><TabPane touch automation={automationOf(REVIEW_HELD_FIX, null, ROUNDS.slice(1))} /></Panel>
+          </div>
+        </Frame>
+        <Frame id="autopilot-review-ready" title="Auto-review on ready: a round alongside CI, and a fix held for it"
+          note="By default a round starts once a head is out of draft and has settled for a couple of minutes, while its checks still run. Evidence auto-fix gathers meanwhile (review threads, red CI) waits for the round: it says it sends after the review, with no countdown, and goes once the round settles. Send now and Skip still act on it.">
+          <div>
+            <Caption>Started on ready, checks still running</Caption>
+            <Panel height={400}><TabPane automation={automationOf(REVIEW_ON_READY, null, ROUNDS)} /></Panel>
+          </div>
+          <div>
+            <Caption>A fix held until the round settles</Caption>
+            <Panel height={420}><TabPane automation={automationOf(REVIEW_FIX_AFTER, null, ROUNDS)} /></Panel>
+          </div>
+          <div>
+            <Caption>Touch</Caption>
+            <Panel touch width={390} height={640}><TabPane touch automation={automationOf(REVIEW_FIX_AFTER, null, ROUNDS)} /></Panel>
           </div>
         </Frame>
         <Frame id="autopilot-review-panel" title="Auto-review's panel: a row per reviewer, and the tier"

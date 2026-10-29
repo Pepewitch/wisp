@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import type { PrComment, PrReview, PrThread } from "../src/autopilot/github";
-import { autopilotRow, autopilotStatus, checkpointOf, noteTurnSigning, reserveRound, setAutopilot, skipPendingFix } from "../src/autopilot/store";
+import { skipPendingFix } from "../src/autopilot/pending-fix";
+import { autopilotRow, autopilotStatus, checkpointOf, noteTurnSigning, reserveRound, setAutopilot } from "../src/autopilot/store";
 import { taskMessageRoute } from "../src/routes/task-messages";
 import { startNextQueuedMessage } from "../src/runner";
 import { loadConfig } from "../src/config";

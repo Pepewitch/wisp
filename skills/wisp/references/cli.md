@@ -102,15 +102,21 @@ push) goes back to the idle agent as a round, at most five per PR; the agent
 signs its GitHub posts so Wisp never feeds them back. See
 [Auto-merge and auto-fix](../../../docs/PR-AUTOPILOT.md).
 
-With auto-review on, each green head of the PR gets a review round: reviewer A
+With auto-review on, each ready head of the PR gets a review round: reviewer A
 runs the change (the project's verification recipe) and reviews its code;
 on a standard or deep change, reviewer B reviews the code too. Each submits
 pass, fail or inconclusive; nothing merges past a head every reviewer on its
 panel has not passed. Wisp measures the diff to pick the depth (light, standard,
-deep) and reviewers never ask how deep to go. A rejection goes back to the author (with auto-fix) at
-most three rounds per PR. `review now` starts the round on the current head
-without waiting for its checks or an auto-fix countdown (one click, one head:
-a push cancels it); the merge itself still waits for green checks. See
+deep) and reviewers never ask how deep to go. A round starts once the head is
+out of draft and has settled for a couple of minutes, while its checks run
+(a project set to `reviewStart: "checks"` waits for them); a check auto-fix is
+about to fix goes back to the author first. While a round runs, auto-fix holds
+what it would send; a rejection then goes back to the author together with it
+as one message, one push. Only rejections spend the budget: three per PR, then
+it pauses ("round 4 · 1 of 3 rejections used"). `review now` starts the round
+on the current head without waiting for its checks or an auto-fix countdown
+(one click, one head: a push cancels it); the merge itself still waits for
+green checks. See
 [Auto-review](../../../docs/AUTO-REVIEW.md).
 
 ```

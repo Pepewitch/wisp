@@ -196,6 +196,7 @@ export function reposRoute(cfg: WispConfig): Promise<Response> {
           verifySecond: config?.verifySecond ?? null,
           verifyFallback: config?.verifyFallback ?? null,
           verifySecondFallback: config?.verifySecondFallback ?? null,
+          reviewStart: config?.reviewStart ?? "ready",
           verification: await verificationSummary(resolved),
           configured: config !== undefined || (entry !== undefined && typeof entry === "string"),
         };
@@ -237,6 +238,8 @@ interface ProjectUpdateBody {
   verifyFallback?: unknown;
   /** the same for reviewer B */
   verifySecondFallback?: unknown;
+  /** when auto-review starts a round: "ready" or "checks", or null to clear (the default, "ready") */
+  reviewStart?: unknown;
 }
 
 function projectUpdateError(body: ProjectUpdateBody): Response | null {
@@ -258,6 +261,9 @@ function projectUpdateError(body: ProjectUpdateBody): Response | null {
   const second = body.verifySecond === "off" ? null : agentFieldError(body.verifySecond, "verifySecond", `an agent object, "off" or null`);
   const verify = agentFieldError(body.verify, "verify", "an object or null");
   const fallbacks = (["verifyFallback", "verifySecondFallback"] as const).map((key) => agentFieldError(body[key], key, "an object or null"));
+  if (body.reviewStart !== undefined && body.reviewStart !== null && body.reviewStart !== "ready" && body.reviewStart !== "checks") {
+    return err(`reviewStart must be "ready", "checks" or null, got ${typeof body.reviewStart === "string" ? JSON.stringify(body.reviewStart) : typeName(body.reviewStart)}`, 400);
+  }
   return second ?? verify ?? fallbacks.find((invalid) => invalid !== null) ?? null;
 }
 
@@ -290,6 +296,9 @@ function mergeProjectEntry(resolved: string, before: RepoEntry | undefined, body
   const base = (body.baseBranch as string | undefined) ?? existing?.baseBranch;
   if (base !== undefined && base.trim() !== "") merged.baseBranch = base.trim();
   Object.assign(merged, mergedReviewers(existing, body));
+  // omitted keeps it, null clears it back to the default
+  const start = body.reviewStart === undefined ? existing?.reviewStart : (body.reviewStart as RepoConfig["reviewStart"] | null) ?? undefined;
+  if (start) merged.reviewStart = start;
   return Object.keys(merged).length === 1 ? resolved : merged;
 }
 
@@ -375,6 +384,7 @@ export function addProjectRoute(req: Request, cfg: WispConfig, adapters: Readonl
         verifySecond: saved?.verifySecond ?? null,
         verifyFallback: saved?.verifyFallback ?? null,
         verifySecondFallback: saved?.verifySecondFallback ?? null,
+        reviewStart: saved?.reviewStart ?? "ready",
       },
       before === undefined ? 201 : 200,
     );

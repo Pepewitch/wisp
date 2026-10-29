@@ -20,7 +20,7 @@ import type { TaskCompactor } from "../compacts";
 import { hasRunningTurn, sendQueuedMessageNow } from "../runner";
 import { InterruptConflict } from "../turn-interrupt";
 import { changeWorkflowState } from "../workflows/store";
-import { skipCancelledRound } from "../autopilot/store";
+import { skipCancelledRound } from "../autopilot/pending-fix";
 import type { SendResponse } from "../../../shared/api/task";
 import { recordAudit, requestActor } from "../task-audit";
 import { apiTask, apiTaskMessage, err, json, jsonObjectBody } from "./http";
