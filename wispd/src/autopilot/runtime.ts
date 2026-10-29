@@ -471,6 +471,7 @@ export class AutopilotRuntime {
     // A push would end the round running on this head: what auto-fix holds goes once it settles,
     // unless a person says Send now. Before the cap's pause, which would strand the round.
     if (ctx.autoReview && checkpoint.sendNow !== key && reviewRunning(row.id, pr)) return holdForReview(checkpoint, key, summary, now, say)
+    if (checkpoint.pending) delete checkpoint.pending.afterReview
     const rounds = checkpoint.rounds ?? 0
     if (rounds >= MAX_ROUNDS) {
       writeAutopilotCheckpoint(row, { ...checkpoint, by: "auto-fix" }, now)

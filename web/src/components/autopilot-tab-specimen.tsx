@@ -299,7 +299,7 @@ const REVIEW_ON_READY: AutopilotStatus = {
   ...REVIEW_EARLY, reason: "Auto-review round 2 · 0 of 3 rejections used (started on ready, checks still running): A reviewing",
 }
 const REVIEW_FIX_AFTER: AutopilotStatus = {
-  ...REVIEW_ON_READY, by: "auto-fix", reason: "Auto-review round 2 · 0 of 3 rejections used: A reviewing · Auto-fix will send after the review: 1 review thread",
+  ...REVIEW_ON_READY, by: "auto-review", reason: "Auto-review round 2 · 0 of 3 rejections used: A reviewing · Auto-fix will send after the review: 1 review thread",
   pendingFix: { summary: "1 review thread", sendsAt: new Date(NOW + 45_000).toISOString(), afterReview: true },
 }
 

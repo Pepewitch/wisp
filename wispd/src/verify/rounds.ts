@@ -94,7 +94,7 @@ export interface ReviewLedger {
   highest: number
   /** rejections spent from the current budget */
   spent: number
-  /** rounds since the epoch that ended without a verdict worth their tokens */
+  /** rounds in the PR's whole life that ended without a verdict worth their tokens */
   unproductive: number
 }
 
@@ -104,16 +104,18 @@ export interface ReviewLedger {
  * spends that number once), since `since` (auto-review's epoch) and above
  * `base` (the round numbers spent before the latest Resume). A round pushed
  * over after its reviewers launched (cause `head` or `base`), an error and a
- * recipe hold are unproductive: free up to UNPRODUCTIVE_LIMIT rows, and each
- * row past it above `base` spends one, so the pause bounds them too.
+ * recipe hold are unproductive, counted over the PR's whole life: free up to
+ * UNPRODUCTIVE_LIMIT rows, and each row past it above `base` spends one, so
+ * the pause bounds them too.
  */
 export function reviewLedger(workflowId: string, pr: number, since: string, base = 0): ReviewLedger {
   const rejected = db.query(`SELECT COUNT(DISTINCT round) AS n FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND created_at >= ? AND round > ?
     AND state IN ('fail', 'inconclusive')`).get(workflowId, pr, since, base) as { n: number }
-  const unproductive = db.query(`SELECT r.round FROM auto_review_rounds r WHERE r.workflow_id = ? AND r.pr = ? AND r.created_at >= ?
+  // the PR's whole life, not the epoch: switching auto-review off and on must not hand back free rounds
+  const unproductive = db.query(`SELECT r.round FROM auto_review_rounds r WHERE r.workflow_id = ? AND r.pr = ?
     AND (r.state IN ('error', 'recipe') OR (r.state = 'superseded' AND r.cause IN ('head', 'base')
       AND EXISTS (SELECT 1 FROM round_reviews v WHERE v.round_id = r.id AND v.launched_at IS NOT NULL AND v.carried_from IS NULL)))
-    ORDER BY r.created_at, r.rowid`).all(workflowId, pr, since) as { round: number }[]
+    ORDER BY r.created_at, r.rowid`).all(workflowId, pr) as { round: number }[]
   const over = unproductive.slice(UNPRODUCTIVE_LIMIT).filter((row) => row.round > base).length
   return { highest: highestRound(workflowId, pr), spent: rejected.n + over, unproductive: unproductive.length }
 }

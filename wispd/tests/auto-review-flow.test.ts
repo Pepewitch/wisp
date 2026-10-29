@@ -73,7 +73,7 @@ function setup(options: Options = {}) {
   seed(task.id, clock, { reviewArmedAt: new Date(START).toISOString(), ...options.checkpoint });
   const cfg = { ...loadConfig(), repos: [{ path: "/fixture/repo", verifySecond: "off" as const, ...options.repo }] };
   const rt = runtime(github, clock, turns?.adapters ?? options.adapters ?? {}, cfg, undefined, { launch: ctl.launch as never });
-  return { clock, state, github, task, rt, file: turns?.file ?? "", ...ctl };
+  return { clock, state, github, task, rt, cfg, file: turns?.file ?? "", ...ctl };
 }
 
 const latest = (taskId: string): RoundRow => roundsOf(taskId)[0]!;
@@ -223,7 +223,8 @@ describe("auto-fix holds while a round runs", () => {
     comment(state, clock.now - 5 * 60_000);
     clock.now += SEND_DELAY_MS;
     await pass(rt, task.id, clock);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", pendingFix: { summary: "1 review thread", afterReview: true } });
+    // auto-review speaks while its round runs (the web places the live line under it)
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", by: "auto-review", pendingFix: { summary: "1 review thread", afterReview: true } });
     expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 · 0 of 3 rejections used: A reviewing · Auto-fix will send after the review: 1 review thread");
     clock.now += 10 * 60_000;
     await pass(rt, task.id, clock);
@@ -276,6 +277,24 @@ describe("auto-fix holds while a round runs", () => {
     clock.now += SEND_DELAY_MS;
     await pass(rt, task.id, clock);
     expect(sent(task.id)).toHaveLength(1);
+  });
+
+  test("once the round settles, a held round no longer says it sends after the review, even while it waits for a slot", async () => {
+    const { clock, state, task, rt, cfg } = setup();
+    await pass(rt, task.id, clock);
+    comment(state, clock.now - 5 * 60_000);
+    await pass(rt, task.id, clock);
+    expect(autopilotStatus(task.id).pendingFix).toMatchObject({ afterReview: true });
+    // the review outlasts the delay, so its release goes straight to sending
+    clock.now += SEND_DELAY_MS;
+    await pass(rt, task.id, clock);
+    passes(latest(task.id));
+    transition(primary(latest(task.id)).reviewer_task_id!, "done");
+    cfg.maxConcurrentTasks = 0;
+    await pass(rt, task.id, clock);
+    expect(sent(task.id)).toHaveLength(0);
+    expect(autopilotStatus(task.id).reason).toContain("Waiting for a free task slot");
+    expect(autopilotStatus(task.id).pendingFix).not.toHaveProperty("afterReview");
   });
 
   test("a round that errs, or that a push ends, releases it too", async () => {
@@ -549,6 +568,29 @@ describe("rounds that end without a verdict are bounded", () => {
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(0);
     expect(autopilotHistory(task.id).filter((entry) => entry.detail === note)).toHaveLength(1);
+  });
+
+  test("switching auto-review off and on keeps the PR's tally: no round on ready, and the next unproductive one spends", async () => {
+    // auto-merge stays on, so the workflow (and its rounds) outlives the switch
+    const { clock, launched, task, rt } = setup({ autoFix: false, autoMerge: true, checks: RUNNING });
+    const workflow = autopilotRow(task.id)!.id;
+    for (let n = 1; n <= UNPRODUCTIVE_LIMIT; n++) pastRound(task.id, START + n * 1000, { round: n, state: "error" });
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(0);
+    setAutopilot(task.id, { autoReview: false });
+    await pass(rt, task.id, clock);
+    clock.now += 60_000;
+    setAutopilot(task.id, { autoReview: true });
+    await pass(rt, task.id, clock);
+    const checkpoint = checkpointOf(autopilotRow(task.id)!);
+    expect(autopilotRow(task.id)!.id).toBe(workflow);
+    // a fresh epoch, and a budget that starts above every earlier round
+    expect(Date.parse(checkpoint.reviewArmedAt!)).toBeGreaterThan(START + UNPRODUCTIVE_LIMIT * 1000);
+    expect(launched).toHaveLength(0);
+    expect(autopilotStatus(task.id).reason).toContain("Waiting for checks (1 running)");
+    expect(reviewLedger(workflow, 7, checkpoint.reviewArmedAt!, checkpoint.reviewBase)).toMatchObject({ spent: 0, unproductive: UNPRODUCTIVE_LIMIT });
+    pastRound(task.id, clock.now + 1000, { round: UNPRODUCTIVE_LIMIT + 1, state: "error" });
+    expect(reviewLedger(workflow, 7, checkpoint.reviewArmedAt!, checkpoint.reviewBase)).toMatchObject({ spent: 1, unproductive: UNPRODUCTIVE_LIMIT + 1 });
   });
 
   test("a recipe hold on this PR starts no round on ready", async () => {

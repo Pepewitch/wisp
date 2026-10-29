@@ -312,13 +312,17 @@ describe("auto-review in the Autopilot tab", () => {
   it("a fix held behind a review round says it sends after the review, with no countdown, and Send now and Skip still act on it", async () => {
     const calls = stub(REVIEW)
     const held: AutopilotStatus = {
-      ...WAITING, autoReview: true, by: "auto-fix", reviewRounds: 2, reviewSpent: 0, reviewBudget: 3,
+      // as the daemon answers while a round runs: auto-review speaks, auto-fix's words follow
+      ...WAITING, autoReview: true, by: "auto-review", reviewRounds: 2, reviewSpent: 0, reviewBudget: 3,
       reason: "Auto-review round 2 · 0 of 3 rejections used: A reviewing · Auto-fix will send after the review: 1 review thread",
       pendingFix: { summary: "1 review thread", sendsAt: new Date(Date.now() + 45_000).toISOString(), afterReview: true },
     }
     mount(<AutopilotPane task={withStatus(held)} />)
     const fix = (await screen.findByRole("switch", { name: "Auto-fix" })).parentElement!
-    expect(fix.querySelector("[data-tint]")).toHaveTextContent("Auto-fix will send after the review: 1 review thread")
+    const reviewRow = screen.getByRole("switch", { name: "Auto-review" }).parentElement!
+    // the live line sits under the speaker, auto-review; the round's actions stay with auto-fix
+    expect(reviewRow.querySelector("[data-tint]")).toHaveTextContent("A reviewing · Auto-fix will send after the review: 1 review thread")
+    expect(fix.querySelector("[data-tint]")).toBeNull()
     expect(within(fix).getByText("sends after the review")).toBeInTheDocument()
     expect(within(fix).queryByText(/sends in/)).toBeNull()
     fireEvent.click(within(fix).getByRole("button", { name: "Send now" }))
