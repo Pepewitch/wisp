@@ -589,8 +589,39 @@ describe("rounds that end without a verdict are bounded", () => {
     expect(launched).toHaveLength(0);
     expect(autopilotStatus(task.id).reason).toContain("Waiting for checks (1 running)");
     expect(reviewLedger(workflow, 7, checkpoint.reviewArmedAt!, checkpoint.reviewBase)).toMatchObject({ spent: 0, unproductive: UNPRODUCTIVE_LIMIT });
-    pastRound(task.id, clock.now + 1000, { round: UNPRODUCTIVE_LIMIT + 1, state: "error" });
+    pastRound(task.id, Math.max(clock.now, Date.parse(checkpoint.reviewArmedAt!)) + 1000, { round: UNPRODUCTIVE_LIMIT + 1, state: "error" });
     expect(reviewLedger(workflow, 7, checkpoint.reviewArmedAt!, checkpoint.reviewBase)).toMatchObject({ spent: 1, unproductive: UNPRODUCTIVE_LIMIT + 1 });
+  });
+
+  test("auto-review alone, switched off and on, is a new workflow: the tally still holds, and only the new one's rows spend", async () => {
+    const { clock, launched, task, rt } = setup({ autoFix: false, checks: RUNNING });
+    const old = autopilotRow(task.id)!.id;
+    for (let n = 1; n <= UNPRODUCTIVE_LIMIT; n++) pastRound(task.id, START + n * 1000, { round: n, state: "error" });
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(0);
+    setAutopilot(task.id, { autoReview: false });
+    await pass(rt, task.id, clock);
+    clock.now += 60_000;
+    setAutopilot(task.id, { autoReview: true });
+    const workflow = autopilotRow(task.id)!.id;
+    expect(workflow).not.toBe(old);
+    // past the fresh-head floor, the author idle: only the tally keeps the round from starting
+    clock.now += 5 * 60_000;
+    await pass(rt, task.id, clock);
+    clock.now += 5 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(0);
+    expect(autopilotStatus(task.id).reason).toContain("Waiting for checks (1 running)");
+    const checkpoint = checkpointOf(autopilotRow(task.id)!);
+    const since = checkpoint.reviewArmedAt!;
+    // the new budget starts with nothing spent; the old workflow's rows only count toward the limit
+    expect(reviewLedger(workflow, 7, since, checkpoint.reviewBase)).toMatchObject({ spent: 0, unproductive: UNPRODUCTIVE_LIMIT });
+    expect(autopilotStatus(task.id)).toMatchObject({ reviewSpent: 0 });
+    // pastRound writes under the task's current workflow: the new one (setAutopilot arms on the wall clock)
+    pastRound(task.id, Math.max(clock.now, Date.parse(since)) + 1000, { round: 1, state: "error", head: sha(8) });
+    expect(reviewLedger(workflow, 7, since, checkpoint.reviewBase)).toMatchObject({ spent: 1, unproductive: UNPRODUCTIVE_LIMIT + 1 });
+    // the same row under the old workflow would only count
+    expect(reviewLedger(old, 7, new Date(START).toISOString())).toMatchObject({ spent: 0, unproductive: UNPRODUCTIVE_LIMIT + 1 });
   });
 
   test("a recipe hold on this PR starts no round on ready", async () => {

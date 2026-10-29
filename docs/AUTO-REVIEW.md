@@ -189,8 +189,10 @@ stacked parent merges ends the round too, which is right: the diff changed.
 ended after its reviewers launched, a round that erred and a recipe hold are
 unproductive. A switch-off is not. After six of them on one PR (twice the
 budget below), its rounds stop starting on ready and wait for its checks, with
-a history note; that lasts for the life of the PR, and neither Resume nor
-switching auto-review off and on undoes it.
+a history note; that lasts for the life of the PR on this task, and neither
+Resume nor switching auto-review (or every switch) off and on undoes it. An
+earlier workflow's rounds count toward the six but never spend the current
+budget.
 From then on, each further unproductive round spends budget, so the pause below
 still bounds the total.
 A pass belongs to the base it was reviewed against: retarget the PR to another

@@ -262,7 +262,7 @@ function projectUpdateError(body: ProjectUpdateBody): Response | null {
   const verify = agentFieldError(body.verify, "verify", "an object or null");
   const fallbacks = (["verifyFallback", "verifySecondFallback"] as const).map((key) => agentFieldError(body[key], key, "an object or null"));
   if (body.reviewStart !== undefined && body.reviewStart !== null && body.reviewStart !== "ready" && body.reviewStart !== "checks") {
-    return err(`reviewStart must be "ready", "checks" or null, got ${typeName(body.reviewStart)}`, 400);
+    return err(`reviewStart must be "ready", "checks" or null, got ${typeof body.reviewStart === "string" ? JSON.stringify(body.reviewStart) : typeName(body.reviewStart)}`, 400);
   }
   return second ?? verify ?? fallbacks.find((invalid) => invalid !== null) ?? null;
 }

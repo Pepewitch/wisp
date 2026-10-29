@@ -656,7 +656,9 @@ describe("S1 create-modal and project APIs", () => {
     expect((JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as { repos: Array<Record<string, unknown>> }).repos[0]!.reviewStart).toBeUndefined();
     const refused = await post({ path: repo, reviewStart: "green" });
     expect(refused.status).toBe(400);
-    expect(((await refused.json()) as { error: string }).error).toBe('reviewStart must be "ready", "checks" or null, got string');
+    expect(((await refused.json()) as { error: string }).error).toBe('reviewStart must be "ready", "checks" or null, got "green"');
+    const typed = await post({ path: repo, reviewStart: 3 });
+    expect(((await typed.json()) as { error: string }).error).toBe('reviewStart must be "ready", "checks" or null, got number');
   });
 
   test("copy-preview resolves the globs against the real repo before a task depends on them", async () => {
