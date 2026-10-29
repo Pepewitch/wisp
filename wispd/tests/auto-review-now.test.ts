@@ -159,6 +159,56 @@ describe("Review now", () => {
     expect(autopilotStatus(task.id)).toMatchObject({ reviewRounds: 1, reviewNow: null });
   });
 
+  test("GitHub pauses in auto-fix, one launching the round and one settling it, leave the round counted", async () => {
+    const RERUNNABLE = [{ ...FAILED[0]!, conclusion: "CANCELLED", checkRunId: 11, run: { id: 5, event: "pull_request" }, deployment: false }];
+    const { clock, state, github, launched, task, rt } = setup({ autoFix: true });
+    await pass(rt, task.id, clock);
+    await reviewNow(task.id);
+    state.pr = snapshot({ checks: RERUNNABLE });
+    github.rerunRun = async () => { throw new GitHubPausedError(clock.now + 60_000, "share"); };
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(1);
+    expect(latest(task.id)).toMatchObject({ round: 1, counted: 1, state: "running" });
+    // the reviewer passes before the next look, and that look throws too: the round settles, the checkpoint is lost again
+    clock.now += 2 * 60_000;
+    submitVerdict(primary(task.id).reviewer_task_id!, { token: primary(task.id).token, verdict: "pass", summary: "Checked it" } as never);
+    transition(primary(task.id).reviewer_task_id!, "done");
+    await pass(rt, task.id, clock);
+    expect(latest(task.id).state).toBe("pass");
+    expect(checkpointOf(autopilotRow(task.id)!).reviewRounds).toBeUndefined();
+    // the next head is round 2, not a second round 1
+    github.rerunRun = async () => true;
+    clock.now += 2 * 60_000;
+    const next = "d".repeat(40);
+    state.pr = snapshot({ head: next, checks: GREEN });
+    await pass(rt, task.id, clock);
+    // a new head waits a moment for its checks to start
+    clock.now += 10 * 60_000;
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(2);
+    expect(latest(task.id)).toMatchObject({ head: next, round: 2, counted: 1 });
+    expect(autopilotStatus(task.id).reviewRounds).toBe(2);
+  });
+
+  test("a round on the old base does not refuse Review now after a retarget", async () => {
+    const { clock, state, launched, task, rt } = setup();
+    await pass(rt, task.id, clock);
+    await reviewNow(task.id);
+    await pass(rt, task.id, clock);
+    submitVerdict(primary(task.id).reviewer_task_id!, { token: primary(task.id).token, verdict: "pass", summary: "Checked it" } as never);
+    transition(primary(task.id).reviewer_task_id!, "done");
+    await pass(rt, task.id, clock);
+    expect(latest(task.id)).toMatchObject({ base: "main", state: "pass" });
+    state.pr = snapshot({ baseRefName: "release", checks: RUNNING });
+    await pass(rt, task.id, clock);
+    // offered on the new base, and the click the offer invites is taken
+    expect(autopilotStatus(task.id).reviewNow).toEqual({ head: HEAD, requested: false });
+    expect(await reviewNow(task.id, { head: HEAD })).toMatchObject({ reviewNow: { head: HEAD, requested: true } });
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(2);
+    expect(latest(task.id)).toMatchObject({ base: "release", head: HEAD, round: 2, early: 1 });
+  });
+
   test("a switch moved while its reviewers launch does not leave its round behind the checks", async () => {
     const { clock, launched, task, rt, during } = setup();
     await pass(rt, task.id, clock);
@@ -242,7 +292,7 @@ describe("Review now", () => {
     // an auto-fix countdown ahead of a green head offers it too
     const row = autopilotRow(task.id)!;
     const sendsAt = new Date(clock.now + 60_000).toISOString();
-    writeAutopilotCheckpoint(row, { ...checkpointOf(row), reviewOpen: { head: HEAD, checks: false }, pending: { key: "k", summary: "a review", sendsAt } }, new Date(clock.now));
+    writeAutopilotCheckpoint(row, { ...checkpointOf(row), reviewOpen: { head: HEAD, base: "main", checks: false }, pending: { key: "k", summary: "a review", sendsAt } }, new Date(clock.now));
     db.run("UPDATE workflows SET params_json = json_set(params_json, '$.autoFix', json('true')) WHERE id = ?", [row.id]);
     expect(autopilotStatus(task.id).reviewNow).toEqual({ head: HEAD, requested: false });
     writeAutopilotCheckpoint(autopilotRow(task.id)!, { ...checkpointOf(autopilotRow(task.id)!), pending: undefined }, new Date(clock.now));

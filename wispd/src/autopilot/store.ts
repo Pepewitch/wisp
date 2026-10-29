@@ -8,6 +8,7 @@ import { mergeGrant, MergeRightsError, subtaskAutopilotRefusal } from "./subtask
 import { holdClass, latestHead, recordPrEvent } from "../subtask-reports"
 import type { AutopilotBy, AutopilotHistoryEntry, AutopilotState, AutopilotStatus, AutopilotUpdate } from "../../../shared/autopilot"
 import { db } from "../store-database"
+import { countedRound } from "../verify/rounds"
 import { emit } from "../events"
 import { createTaskMessage, getTask, randomId } from "../store"
 import type { TaskState, TurnSource } from "../types"
@@ -103,8 +104,8 @@ export interface AutopilotCheckpoint {
   reviewRetry?: boolean
   /** Review now was pressed for this head: its round starts without waiting for checks or auto-fix (review-now.ts) */
   reviewNow?: string
-  /** the last look found no round on this head and auto-review held on it; `checks`: by its checks (what offers Review now) */
-  reviewOpen?: { head: string; checks: boolean }
+  /** the last look found no round on this head and base and auto-review held on it; `checks`: by its checks (what offers Review now) */
+  reviewOpen?: { head: string; base: string; checks: boolean }
   /** automatic resumes after turns that ended on the network, in a row, and the last one's message (network.ts) */
   network?: { messageId: string; resumes: number }
   /** the next of those resumes, due at `at` after turn `turn` ended on the network: what the status shows */
@@ -338,8 +339,11 @@ function reconfigure(row: WorkflowRow, current: AutopilotParams, next: Autopilot
     delete checkpoint.rounds
     checkpoint.fixArmedAt = at
   }
-  // switching auto-review on again is a fresh start for its round budget
-  if (!current.autoReview && next.autoReview) { delete checkpoint.reviewRounds; delete checkpoint.reviewBase }
+  // switching auto-review on again is a fresh start for its round budget; numbering goes on, as the rounds kept say
+  if (!current.autoReview && next.autoReview) {
+    const spent = Math.max(checkpoint.reviewRounds ?? 0, checkpoint.pr ? countedRound(row.id, checkpoint.pr) : 0)
+    Object.assign(checkpoint, { reviewRounds: spent, reviewBase: spent })
+  }
   // A pause a switch made is not the others' to keep once that switch is off.
   const fixOff = current.autoFix && !next.autoFix
   const lift = row.state === "paused" && ((fixOff && checkpoint.by === "auto-fix") || (current.autoReview && !next.autoReview && checkpoint.by === "auto-review"))

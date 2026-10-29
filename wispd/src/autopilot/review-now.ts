@@ -19,8 +19,17 @@ import { AutopilotError, autopilotRow, autopilotStatus, checkpointOf, paramsOf, 
 
 const short = (sha: string): string => sha.slice(0, 7)
 
-/** Any round on this head that was not ended by a switch-off or a retarget: Resume, not Review now, asks it again. */
-function roundOnHead(workflowId: string, pr: number, head: string): boolean {
+/**
+ * A round on this head and base that was not ended by a switch-off or a
+ * retarget: Resume, not Review now, asks it again. The base is the one the
+ * last look offered Review now on, so the offer and the click agree; with no
+ * offer to go by, a round on any base refuses.
+ */
+function roundOnHead(workflowId: string, pr: number, head: string, base: string | undefined): boolean {
+  if (base !== undefined) {
+    const latest = latestRound(workflowId, pr, head, base)
+    return latest !== null && latest.state !== "superseded"
+  }
   return db.query("SELECT 1 FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND head = ? AND state != 'superseded' LIMIT 1").get(workflowId, pr, head) !== null
 }
 
@@ -35,7 +44,8 @@ export function askReviewNow(taskId: string, head: string | undefined, now = new
   const seen = head ?? current
   if (seen !== current) throw new AutopilotError(`PR #${checkpoint.pr} has a newer head (${short(current)}) — look again before reviewing it`, 409)
   if (!checkpoint.readySince) throw new AutopilotError(`PR #${checkpoint.pr} is a draft — auto-review starts once it is ready for review`, 409)
-  if (roundOnHead(row.id, checkpoint.pr, seen)) throw new AutopilotError(`Auto-review already has a round on ${short(seen)} — Resume reviews it again`, 409)
+  const offered = checkpoint.reviewOpen?.head === seen ? checkpoint.reviewOpen.base : undefined
+  if (roundOnHead(row.id, checkpoint.pr, seen, offered)) throw new AutopilotError(`Auto-review already has a round on ${short(seen)} — Resume reviews it again`, 409)
   const asked = checkpoint.reviewNow !== seen
   if (asked) {
     const at = now.toISOString()
@@ -66,7 +76,7 @@ export function reviewNowLook(row: WorkflowRow, checkpoint: AutopilotCheckpoint,
   if (checkpoint.reviewNow !== pr.head || pr.isDraft || round) delete checkpoint.reviewNow
   const headFirstSeenMs = Math.max(Date.parse(checkpoint.heads?.[pr.head] ?? ""), Date.parse(checkpoint.readySince ?? ""))
   const checks = checksGate({ pr, requiredNames: required, nowMs, headFirstSeenMs })
-  if (!round && !pr.isDraft) checkpoint.reviewOpen = { head: pr.head, checks: checks !== null }
+  if (!round && !pr.isDraft) checkpoint.reviewOpen = { head: pr.head, base: pr.baseRefName, checks: checks !== null }
   if (round ? round.early !== 1 : checkpoint.reviewNow === undefined) return null
   if (!checks) return "started by you"
   return `started by you, ${checks.kind === "needs-you" ? `${checks.reason.charAt(0).toLowerCase()}${checks.reason.slice(1)}` : "checks still running"}`

@@ -60,6 +60,12 @@ export function latestRound(workflowId: string, pr: number, head: string, base: 
     ORDER BY created_at DESC, rowid DESC LIMIT 1`).get(workflowId, pr, head, base) as RoundRow | null
 }
 
+/** The highest counted round number of this PR under this workflow, whatever became of it; 0 for none. */
+export function countedRound(workflowId: string, pr: number): number {
+  const row = db.query("SELECT MAX(round) AS n FROM auto_review_rounds WHERE workflow_id = ? AND pr = ? AND counted = 1").get(workflowId, pr) as { n: number | null } | null
+  return row?.n ?? 0
+}
+
 /** Every round of a task, newest first; one PR's when given. */
 export function roundsOf(taskId: string, pr?: number): RoundRow[] {
   return (pr === undefined

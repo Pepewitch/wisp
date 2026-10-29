@@ -37,7 +37,7 @@ import {
   type ReviewRow,
 } from "../verify/reviews"
 import { fallbackAgent, infrastructureFailure } from "../verify/fallback"
-import { latestRound, MAX_REVIEW_ROUNDS, orphanedRounds, runningRounds, staleRunningRounds, type RoundRow } from "../verify/rounds"
+import { countedRound, latestRound, MAX_REVIEW_ROUNDS, orphanedRounds, runningRounds, staleRunningRounds, type RoundRow } from "../verify/rounds"
 import { busyVerifyTask, currentVerifyTask, draftTaskExists, verifyTaskOf } from "../verify/status"
 import { taskIsIdle } from "./idle"
 import { projectName } from "../verify/project"
@@ -138,6 +138,9 @@ export function supersedeStaleRounds(row: WorkflowRow, pr: PrSnapshot, cfg: Revi
  */
 export async function autoReviewLook(look: ReviewLook): Promise<"passed" | null> {
   const { row, checkpoint, pr, now } = look
+  // the rows keep the count: a look that started a round may have lost its checkpoint (a moved revision, a throw)
+  const kept = countedRound(row.id, pr.number)
+  if (kept > (checkpoint.reviewRounds ?? 0)) checkpoint.reviewRounds = kept
   supersedeStaleRounds(row, pr, look.start.cfg, now)
   if (pr.isDraft) return look.say("needs-you", "Draft — auto-review starts once it is ready for review", WAITING_ON_YOU_MS)
   const checks = look.early ? null : checksGate({
@@ -166,8 +169,6 @@ export async function autoReviewLook(look: ReviewLook): Promise<"passed" | null>
     return startRound(look, spent + 1, true)
   }
   if (round.state === "running") {
-    // the look that started it may have lost its checkpoint to a moved revision; the row keeps the count
-    if (round.counted === 1 && round.round > (checkpoint.reviewRounds ?? 0)) checkpoint.reviewRounds = round.round
     const settled = await driveRound(look, round)
     if (!settled) return null
     round = settled
