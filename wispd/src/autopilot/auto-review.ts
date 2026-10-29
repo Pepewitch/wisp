@@ -166,6 +166,8 @@ export async function autoReviewLook(look: ReviewLook): Promise<"passed" | null>
     return startRound(look, spent + 1, true)
   }
   if (round.state === "running") {
+    // the look that started it may have lost its checkpoint to a moved revision; the row keeps the count
+    if (round.counted === 1 && round.round > (checkpoint.reviewRounds ?? 0)) checkpoint.reviewRounds = round.round
     const settled = await driveRound(look, round)
     if (!settled) return null
     round = settled
@@ -200,15 +202,17 @@ async function actOn(look: ReviewLook, round: RoundRow): Promise<"passed" | null
 async function startRound(look: ReviewLook, number: number, counted: boolean, carried?: ReviewRow[]): Promise<null> {
   const { row, task, checkpoint, pr, now } = look
   if (!look.hasSlot(task, "reviewer")) return look.say("waiting", "Waiting for a free task slot to start the reviewers", MOVING_MS)
-  const round = await planRound(look.start, { author: task, workflowId: row.id, pr, round: number, counted, carried })
+  // Review now's round, or a Resume re-run of one, waits for no check; its row
+  // says so for every later look, whatever becomes of this look's checkpoint
+  const byYou = checkpoint.reviewNow === pr.head
+  const early = byYou || (carried !== undefined && latestRound(row.id, pr.number, pr.head, pr.baseRefName)?.early === 1)
+  const round = await planRound(look.start, { author: task, workflowId: row.id, pr, round: number, counted, carried, early })
   if (counted) checkpoint.reviewRounds = number
   delete checkpoint.reviewRetry
   delete checkpoint.reviewOpen
-  // the click is spent; this head's round goes on without waiting for its checks
-  const byYou = checkpoint.reviewNow === pr.head
-  if (byYou) { delete checkpoint.reviewNow; checkpoint.reviewEarly = pr.head }
+  if (byYou) delete checkpoint.reviewNow
   const panel = reviewsOf(round.id).map((review) => `${letter(review)} ${review.harness}${review.model ? ` ${review.model}` : ""}${review.carried_from ? " (kept)" : ""}`).join(", ")
-  recordWorkflow(row.id, "review", `Round ${number}${counted ? "" : " (re-run)"} started (${round.tier ?? "standard"})${byYou ? `, by Review now (${look.early})` : ""}: ${panel}`,
+  recordWorkflow(row.id, "review", `Round ${number}${counted ? "" : " (re-run)"} started (${round.tier ?? "standard"})${byYou ? `, by Review now (${look.early ?? "started by you"})` : ""}: ${panel}`,
     now.toISOString(), null, { pr: pr.number, sha: pr.head })
   const settled = await driveRound(look, round)
   return settled ? actOn(look, settled).then(() => null) : null

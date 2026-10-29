@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { AutopilotStatus } from "../../shared/autopilot";
-import { autopilotHistory, autopilotRow, autopilotStatus, checkpointOf, setAutopilot, writeAutopilotCheckpoint } from "../src/autopilot/store";
+import { autopilotHistory, autopilotRow, autopilotStatus, checkpointOf, paramsOf, setAutopilot, writeAutopilotCheckpoint } from "../src/autopilot/store";
 import { prCommand } from "../src/cli-pr";
 import { GitHubPausedError } from "../src/github-budget";
 import { loadConfig, type WispConfig } from "../src/config";
@@ -19,10 +19,11 @@ const FAILED = [{ name: "test", status: "COMPLETED", conclusion: "FAILURE", requ
 const GREEN = [{ name: "test", status: "COMPLETED", conclusion: "SUCCESS", required: true, url: "" }];
 
 /** A launcher that makes the reviewer's task row the way createAndLaunchTask would, and starts nothing. */
-function launcher() {
+function launcher(during?: { launch?: () => void }) {
   const launched: NewTaskInput[] = [];
   const launch = async (input: NewTaskInput) => {
     launched.push(input);
+    during?.launch?.();
     const id = newTaskId();
     createTask({ id, title: input.prompt, repo_path: input.repoPath, harness: input.harness, model: input.model ?? null, verify_role: input.verifyRole ?? null, slot: freeSlot() });
     created.push(id);
@@ -38,14 +39,15 @@ function launcher() {
 function setup(options: { autoMerge?: boolean; autoFix?: boolean; harness?: string; worktree?: string; adapters?: Record<string, never>; checks?: typeof GREEN } = {}) {
   const clock = { now: START + 10 * 60_000 };
   const { state, github } = fakeGitHub({ pr: snapshot({ checks: options.checks ?? RUNNING }) });
-  const { launched, launch } = launcher();
+  const during: { launch?: () => void } = {};
+  const { launched, launch } = launcher(during);
   const task = doneTask(options.harness ? { harness: options.harness } : {});
   if (options.worktree) setTaskFields(task.id, { worktree_path: options.worktree, turn_count: 1 });
   setAutopilot(task.id, { autoMerge: options.autoMerge ?? true, autoFix: options.autoFix ?? false, autoReview: true });
   seed(task.id, clock);
   const cfg: WispConfig = { ...loadConfig(), repos: [{ path: "/fixture/repo", verifySecond: "off" }] };
   const rt = runtime(github, clock, options.adapters ?? {}, cfg, undefined, { launch });
-  return { clock, state, github, launched, task, rt, cfg };
+  return { clock, state, github, launched, task, rt, cfg, during };
 }
 
 const call = (taskId: string, body?: unknown, method = "POST") => {
@@ -78,7 +80,7 @@ describe("Review now", () => {
     // the click is spent: later looks drive the round, and no second one starts
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(1);
-    expect(checkpointOf(autopilotRow(task.id)!)).toMatchObject({ reviewEarly: HEAD });
+    expect(latest(task.id).early).toBe(1);
     expect(checkpointOf(autopilotRow(task.id)!).reviewNow).toBeUndefined();
   });
 
@@ -143,9 +145,9 @@ describe("Review now", () => {
     expect(launched).toHaveLength(1);
     expect(reruns).toBe(1);
     expect(autopilotStatus(task.id).reason).toContain("Paused");
+    // the round row carries what the lost checkpoint would have: it is counted, and it waits for no check
     expect(roundsOf(task.id).filter((round) => round.counted)).toHaveLength(1);
-    expect(checkpointOf(autopilotRow(task.id)!)).toMatchObject({ reviewRounds: 1, reviewEarly: HEAD });
-    expect(checkpointOf(autopilotRow(task.id)!).reviewNow).toBeUndefined();
+    expect(latest(task.id)).toMatchObject({ round: 1, counted: 1, early: 1, state: "running" });
     // the next look drives that round past the red check, and a pass is settled, not stuck behind CI
     github.rerunRun = async () => true;
     clock.now += 2 * 60_000;
@@ -154,7 +156,29 @@ describe("Review now", () => {
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(1);
     expect(latest(task.id).state).toBe("pass");
-    expect(autopilotStatus(task.id).reviewRounds).toBe(1);
+    expect(autopilotStatus(task.id)).toMatchObject({ reviewRounds: 1, reviewNow: null });
+  });
+
+  test("a switch moved while its reviewers launch does not leave its round behind the checks", async () => {
+    const { clock, launched, task, rt, during } = setup();
+    await pass(rt, task.id, clock);
+    await reviewNow(task.id);
+    // the person turns auto-merge off mid-launch: the revision moves, and this look's checkpoint is not saved
+    during.launch = () => { setAutopilot(task.id, { autoMerge: false }, new Date(clock.now)); };
+    await pass(rt, task.id, clock);
+    during.launch = undefined;
+    expect(launched).toHaveLength(1);
+    // the window the round row covers: this look's checkpoint (the count, the spent click) was refused
+    expect(checkpointOf(autopilotRow(task.id)!)).toMatchObject({ reviewNow: HEAD });
+    expect(checkpointOf(autopilotRow(task.id)!).reviewRounds).toBeUndefined();
+    expect(latest(task.id)).toMatchObject({ round: 1, counted: 1, early: 1, state: "running" });
+    submitVerdict(primary(task.id).reviewer_task_id!, { token: primary(task.id).token, verdict: "pass", summary: "Checked it" } as never);
+    transition(primary(task.id).reviewer_task_id!, "done");
+    await pass(rt, task.id, clock);
+    expect(latest(task.id).state).toBe("pass");
+    expect(launched).toHaveLength(1);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", by: "auto-review", reason: "Auto-review passed ccccccc", reviewRounds: 1, reviewNow: null });
+    expect(paramsOf(autopilotRow(task.id)!)).toMatchObject({ autoMerge: false, autoReview: true });
   });
 
   test("with no free slot it waits, then starts on the same head", async () => {

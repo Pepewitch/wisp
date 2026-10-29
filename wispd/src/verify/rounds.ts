@@ -40,6 +40,8 @@ export interface RoundRow {
   roles?: string | null
   /** 1: a phase-1 round (one reviewer, no rubric); 2: a panel */
   protocol?: number
+  /** 1: started by Review now, or a re-run of such a round: reviewed and acted on whatever its checks say (migration 29) */
+  early?: number
 }
 
 /** How many counted rounds one PR gets before auto-review pauses for a person. */

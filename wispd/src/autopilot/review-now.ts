@@ -50,34 +50,26 @@ export function askReviewNow(taskId: string, head: string | undefined, now = new
 
 /**
  * Before auto-fix, once the PR is read: forget a click a push or a draft made
- * moot, or one a round already on this head answers; note whether this head
- * has no round yet and its checks hold auto-review (what offers Review now);
- * and say whether this look reviews early. Returns the words its round's
- * status carries ("started by you, checks still running"), or null.
+ * moot, or one a round on this head answers; note whether this head has no
+ * round yet and its checks hold auto-review (what offers Review now); and say
+ * whether this look reviews early. Returns the words its round's status
+ * carries ("started by you, checks still running"), or null.
+ *
+ * Once a round on the head exists its row decides (`early`, written with the
+ * round), so dropping the click here never strands the round behind the
+ * checks, whatever the look that started it managed to save.
  */
 export function reviewNowLook(row: WorkflowRow, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, required: ReadonlySet<string>, nowMs: number): string | null {
-  if (checkpoint.reviewNow !== pr.head || pr.isDraft) delete checkpoint.reviewNow
-  if (checkpoint.reviewEarly !== pr.head) delete checkpoint.reviewEarly
-  const round = latestRound(row.id, pr.number, pr.head, pr.baseRefName)
-  if (round) delete checkpoint.reviewNow
+  const latest = pr.isDraft ? null : latestRound(row.id, pr.number, pr.head, pr.baseRefName)
+  // a round ended by a switch-off is no answer: askReviewNow accepts a click over one
+  const round = latest?.state === "superseded" ? null : latest
+  if (checkpoint.reviewNow !== pr.head || pr.isDraft || round) delete checkpoint.reviewNow
   const headFirstSeenMs = Math.max(Date.parse(checkpoint.heads?.[pr.head] ?? ""), Date.parse(checkpoint.readySince ?? ""))
   const checks = checksGate({ pr, requiredNames: required, nowMs, headFirstSeenMs })
   if (!round && !pr.isDraft) checkpoint.reviewOpen = { head: pr.head, checks: checks !== null }
-  if (checkpoint.reviewNow === undefined && checkpoint.reviewEarly === undefined) return null
+  if (round ? round.early !== 1 : checkpoint.reviewNow === undefined) return null
   if (!checks) return "started by you"
   return `started by you, ${checks.kind === "needs-you" ? `${checks.reason.charAt(0).toLowerCase()}${checks.reason.slice(1)}` : "checks still running"}`
-}
-
-/**
- * Write an early look's checkpoint down once auto-review is done with it and
- * before auto-fix awaits, so a round started here stays counted and early
- * even if auto-fix then throws (a GitHub pause). No revision bump: this look
- * is still the writer, and its own answer follows. False when the revision
- * moved: auto-review sent the author its findings or paused.
- */
-export function keepEarlyCheckpoint(row: WorkflowRow, checkpoint: AutopilotCheckpoint): boolean {
-  return db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ? AND revision = ? AND state = 'active'",
-    [JSON.stringify(checkpoint), row.id, row.revision]).changes === 1
 }
 
 /**

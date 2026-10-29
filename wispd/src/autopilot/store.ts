@@ -103,8 +103,6 @@ export interface AutopilotCheckpoint {
   reviewRetry?: boolean
   /** Review now was pressed for this head: its round starts without waiting for checks or auto-fix (review-now.ts) */
   reviewNow?: string
-  /** the head whose round a person started that way: its round is driven, and acted on, whatever its checks say */
-  reviewEarly?: string
   /** the last look found no round on this head and auto-review held on it; `checks`: by its checks (what offers Review now) */
   reviewOpen?: { head: string; checks: boolean }
   /** automatic resumes after turns that ended on the network, in a row, and the last one's message (network.ts) */
