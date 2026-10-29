@@ -6,7 +6,7 @@ import { VerificationFields, VerificationSection, type VerificationFieldsModel }
 import { useCopyPreview, useRemoveProject, useSaveProject } from "@/hooks/mutations"
 import { useVerificationField } from "@/hooks/useVerificationField"
 import { ApiError, failureReason } from "@/lib/api"
-import type { RepoInfo } from "@/lib/types"
+import type { ProjectReviewStart, RepoInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 /** A section the dialog can open scrolled to: the sidebar's verification control opens it at Verification. */
@@ -20,8 +20,9 @@ export interface ProjectSettingsTarget {
 
 /**
  * Per-project settings: the two worktree hooks, the file-copy patterns, the
- * base new worktrees fork from, the verification recipe auto-review checks
- * against (on a daemon that has it), and unregistering a configured project.
+ * base new worktrees fork from, when auto-review starts and the verification
+ * recipe it checks against (on a daemon that has them), and unregistering a
+ * configured project.
  *
  * Everything here applies to WORKTREE tasks only, and the modal says so once
  * at the top rather than four times. A local task runs in the checkout the
@@ -142,6 +143,7 @@ function Form({
   const [archiveScript, setArchiveScript] = useState(project.archiveScript)
   const [copyText, setCopyText] = useState(project.copyFiles.join("\n"))
   const [baseBranch, setBaseBranch] = useState(project.baseBranch)
+  const [reviewStart, setReviewStart] = useState<ProjectReviewStart>(project.reviewStart ?? "ready")
   const [confirmingRemove, setConfirmingRemove] = useState(false)
   const [archiveTasks, setArchiveTasks] = useState(activeTaskCount > 0)
   const field = useVerificationField(project, section, verification !== undefined)
@@ -164,7 +166,7 @@ function Form({
 
   const save = () => {
     saveProject.mutate(
-      { path: project.path, setupScript, archiveScript, copyFiles: patterns, baseBranch: baseBranch.trim(), ...field.patch },
+      { path: project.path, setupScript, archiveScript, copyFiles: patterns, baseBranch: baseBranch.trim(), ...field.patch, ...reviewStartPatch(project, reviewStart) },
       { onSuccess: onClose },
     )
   }
@@ -228,6 +230,8 @@ function Form({
           <ScriptBox value={copyText} onChange={setCopyText} placeholder=".env*" aria-label="Files to copy" rows={3} />
           <CopyPreview path={project.path} patterns={patterns} />
         </Section>
+
+        {project.reviewStart !== undefined && <ReviewStartSection value={reviewStart} onChange={setReviewStart} />}
 
         {field.show && (
           <Section
@@ -394,6 +398,40 @@ function BaseBranchField({ value, onChange }: { value: string; onChange: (value:
         Reset
       </Button>
     </div>
+  )
+}
+
+const REVIEW_START_LABEL: Record<ProjectReviewStart, string> = { ready: "When the PR is ready", checks: "After checks pass" }
+
+/** Sent only when it changed. "ready" is the default, so choosing it clears the stored choice rather than pinning it. */
+function reviewStartPatch(project: RepoInfo, value: ProjectReviewStart): { reviewStart?: ProjectReviewStart | null } {
+  if (project.reviewStart === undefined || value === project.reviewStart) return {}
+  return { reviewStart: value === "ready" ? null : value }
+}
+
+function ReviewStartSection({ value, onChange }: { value: ProjectReviewStart; onChange: (value: ProjectReviewStart) => void }) {
+  return (
+    <Section
+      label="Auto-review starts"
+      hint="When the PR is ready: once a head is out of draft and has settled for a couple of minutes, while CI runs. After checks pass: once its checks are green, with Review now to start sooner."
+    >
+      <div role="group" aria-label="Auto-review starts" className="flex max-w-sm rounded-md border border-input bg-surface p-0.5">
+        {(["ready", "checks"] as const).map((choice) => (
+          <button
+            key={choice}
+            type="button"
+            aria-pressed={value === choice}
+            onClick={() => onChange(choice)}
+            className={cn(
+              "flex-1 rounded-sm px-2 py-1 text-[12px] transition-colors",
+              value === choice ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {REVIEW_START_LABEL[choice]}
+          </button>
+        ))}
+      </div>
+    </Section>
   )
 }
 

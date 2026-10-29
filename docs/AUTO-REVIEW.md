@@ -101,22 +101,35 @@ is matched by both its old and its new path. Within one PR a tier only goes up.
    tells its agent that reviewers will check the head, that the project's
    verification recipe and Wisp's rubric are the bar (`wisp verify show`,
    `wisp review rubric`), and to open a pull request when the work is ready.
-2. **The head goes green.** Auto-review waits for the PR's checks the way the
-   merge gate does: no reviewer is spent on a red or running head. With
-   auto-fix on, a red check goes back to the author first.
+2. **The head is ready.** By default a round starts on its own, alongside
+   CI and any review bot, once the head:
+   - is out of draft and has no round yet (on this base);
+   - has settled for a couple of minutes, with the author's turn over;
+   - is not about to get a CI fix: with auto-fix on, a counting check that
+     already failed goes back to the author first, and the round starts on the
+     fixed head. While auto-fix still waits for the failing run to finish, the
+     round starts, and the CI fix joins its findings (below);
+   - is not held by a broken recipe on this PR.
+
+   Its status says "started on ready, checks still running". **Auto-merge still
+   waits for every required check to pass**, whatever the round says.
+
+   A project can keep the older order instead: Project settings → Auto-review
+   starts → *After checks pass*, saved as `repos[].reviewStart: "checks"` in
+   `config.json` (`"ready"`, the default, is never written). Rounds then wait
+   for the PR's checks the way the merge gate does, and no reviewer is spent on
+   a red or running head.
 
    **Review now** (under the Auto-review switch, or `wisp pr <task> review
-   now`) skips that wait once, for the head you are looking at. It is offered
+   now`) skips that wait once, for the head you are looking at: under
+   `"checks"`, or for a head still inside its settling minutes. It is offered
    only while auto-review holds a ready head that has no round yet: its checks
    still running or failed, or an auto-fix countdown ahead of it. The round
    starts at the next look, and its status says so ("started by you, checks
-   still running"). Auto-fix is not held back by it: a countdown still sends on
-   time, and a fix push makes a new head, which ends the early round like any
-   push. A push between the click and the look cancels the click. Everything
-   else stays: the round counts toward the PR's three, it waits for a free task
-   slot, a draft is refused, a head that already has a round is refused
-   (Resume asks again), and **auto-merge still waits for every required check
-   to pass**, whatever the round says.
+   still running"). A push between the click and the look cancels the click.
+   Everything else stays: it waits for a free task slot, a draft is refused, a
+   head that already has a round is refused (Resume asks again), and the merge
+   still waits for green checks.
 3. **The round is written with its whole panel**, then each reviewer starts
    when a task slot is free: `Auto-review A · PR #7 · round 1 · abc1234`, then
    `Auto-review B …`. A reviewer that cannot start yet waits on the round; the
@@ -153,6 +166,32 @@ wait on it; Wisp's own archiving of a finished reviewer does not.
 
 A push while a round runs makes it moot: its reviewers are stopped at once,
 even while the author is still working, and the new head gets a fresh round.
+
+**Auto-fix holds while a round runs.** A running round is always seen
+through first, even when a check turns red or goes back to running while it
+runs. Review feedback, red CI and conflicts that arrive meanwhile are not sent
+to the author, so no push of Wisp's own ends the round. The Autopilot panel
+shows the held round as "Auto-fix will send after the review: 1 review
+thread", with **Send now** (sends at once, and may end the round) and **Skip**.
+Auto-fix still reruns cancelled jobs, since a rerun does not push. When the
+round settles:
+- **a pass, an error, a recipe hold or a push** releases the held round, which
+  goes out the usual way;
+- **a rejection, with auto-fix on**, goes out together with it (below);
+- **a rejection, with auto-fix off**, needs you, as before.
+
+What still reaches the author mid-round, and ends the round if it pushes: a
+subtask's report to an author that is itself a parent, other workflow wakes, a
+resume after the network dropped, and your own messages. A retarget after a
+stacked parent merges ends the round too, which is right: the diff changed.
+
+**Rounds that end without a verdict are bounded.** A round a push or a retarget
+ended after its reviewers launched, a round that erred and a recipe hold are
+unproductive. A switch-off is not. After six of them on one PR (twice the
+budget below), its rounds stop starting on ready and wait for its checks, with
+a history note; that lasts for the life of the PR, and Resume does not undo it.
+From then on, each further unproductive round spends budget, so the pause below
+still bounds the total.
 A pass belongs to the base it was reviewed against: retarget the PR to another
 base and the same head is reviewed again before anything merges. A PR from a
 fork is not supported by autopilot at all, so it never gets a reviewer.
@@ -218,22 +257,42 @@ oversized shot is the app's or the request's failure, never a waiver. Waivers sh
 Reviewer B never captures and is never held to this. Reviews in flight across
 the upgrade and passes carried from an earlier round are exempt.
 
-**Back to the author.** A rejection is sent once per round as
-`[Wisp auto-review · PR #7 · round 1 of 3 · head abc1234]`, pointing at a
-`REVIEW-FEEDBACK.md` beside the task's data (never in its worktree): both
-reviewers' findings grouped by file, blockers first, each saying which
-reviewer found it. Up to six screenshots are attached when the author's agent
-can take images. If the author's turn ends with no new push, the task needs
-you ("Still rejected after review round 1, with no new push"). The author's
-final message goes to the next round's reviewers, who must address each
-earlier blocker.
+**Back to the author.** A rejection is sent once per round. Its findings
+point at a `REVIEW-FEEDBACK.md` beside the task's data (never in its
+worktree): both reviewers' findings grouped by file, blockers first, each
+saying which reviewer found it. Up to six screenshots are attached when the
+author's agent can take images.
 
-**Three rounds per PR.** After three counted rounds that did not pass, auto-review
-pauses. **Resume** gives it three more, and the numbering goes on ("round 4 of 6").
-Switching auto-review off and on again also gives three more from where it
-was: after two rounds, the next is "round 3 of 5".
-A new PR after a merge starts at round 1 again. Expect up to two reviewer tasks
-a round.
+With auto-fix on, the rejection is one more part of auto-fix's round: one
+message, one push. It opens with the findings (`Auto-review, round 1 · 1 of 3
+rejections used, head abc1234:`), then any red CI, then the review feedback
+auto-fix held, and ends with one rule for all of it: fix everything in one
+push, run the project's local checks before pushing, and reply on a review
+comment's thread instead of changing code when you disagree with it. A finding
+of the reviewers' the author thinks wrong is answered in its final message, as
+before. The round spends one of auto-fix's five. Cancelling the message (or
+**Skip**) drops all of it, the findings included; Wisp withdrawing a round of
+its own (the author's agent or context changed, the task was archived) plans
+all of it again on the next look. With auto-fix already at its five, the
+findings go alone, as
+`[Wisp auto-review · PR #7 · round 1 · 1 of 3 rejections used · head abc1234]`,
+and only then does auto-fix pause. With auto-fix off, the same message is sent
+when you need it.
+
+If the author's turn ends with no new push, the task needs you ("Still
+rejected after review round 1, with no new push"). The author's final message
+goes to the next round's reviewers, who must address each earlier blocker.
+
+**Three rejections per PR.** Only a rejected round spends the budget: a pass,
+an error, a recipe hold and a round a push ended are free (past the limit
+above, unproductive rounds spend too). Round numbers keep counting every round
+the PR has had, so the status reads "round 4 · 1 of 3 rejections used". After
+three rejections auto-review pauses ("Auto-review did not pass after 3 rounds");
+**Resume** gives it three more. Switching auto-review off and on again also
+gives three more from where it was. A new PR after a merge starts at round 1
+again. Expect up to two reviewer tasks a round. A task from before this rule
+recounts on upgrade: one still running gains back what pushed-over and passed
+rounds had spent, and one already paused stays paused until Resume.
 
 **Ask again without a push.** When a rejection needs you, **Resume** (in the
 Autopilot panel, or `wisp pr <task> resume`) re-runs the reviewers that did not
@@ -385,8 +444,9 @@ author's to fix, and it spends no round:
 
 ## With the other switches
 
-- **Auto-fix acts first.** A red check or a conflict goes back to the author
-  before any reviewer starts.
+- **A red head is fixed first.** A failed check or a conflict auto-fix is
+  about to send goes back to the author before any reviewer starts. Once a
+  round runs, auto-fix holds until it settles (above).
 - **The reviewer's words stay data.** Its summary and findings reach the author
   in `REVIEW-FEEDBACK.md`, and earlier reviewers' words reach the next one,
   quoted and labelled as another agent's: evidence to weigh, never instructions.

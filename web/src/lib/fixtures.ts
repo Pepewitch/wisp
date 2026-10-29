@@ -123,6 +123,7 @@ export const REPOS: RepoInfo[] = [
     archiveScript: "rm -rf node_modules",
     copyFiles: [".env*"],
     baseBranch: "",
+    reviewStart: "ready",
     configured: true,
   },
   {
@@ -133,6 +134,7 @@ export const REPOS: RepoInfo[] = [
     archiveScript: "",
     copyFiles: [],
     baseBranch: "",
+    reviewStart: "ready",
     configured: false,
   },
 ]

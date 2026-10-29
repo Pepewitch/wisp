@@ -289,6 +289,8 @@ export type WispSettingsPatch = Partial<
   Pick<WispPreferences, "autoRenameTasksFromPullRequests" | "hiddenModels" | "modelTaskDefaults">
 >;
 
+export type ProjectReviewStart = "ready" | "checks";
+
 /**
  * GET /api/repos → { repos: RepoInfo[] } — configured projects first, then
  * active-task repos, deduped by resolved path. `name` is the configured
@@ -306,6 +308,12 @@ export interface RepoInfo {
   copyFiles: string[];
   /** ref new worktrees fork from; "" = let Wisp resolve the remote default */
   baseBranch: string;
+  /**
+   * When auto-review starts a round on a PR head: "ready" once it is ready
+   * for review and has settled, alongside CI; "checks" once its checks pass.
+   * Absent from a daemon older than the choice.
+   */
+  reviewStart?: ProjectReviewStart;
   /** false for a repo wisp only knows from task history — it has no config entry to edit */
   configured: boolean;
   /**

@@ -15,7 +15,7 @@ import {
   verificationTitle,
   verificationTone,
 } from "./auto-review-words"
-import { autopilotAction, autopilotArchiveWords, autopilotChoiceLabel, autopilotRail, autopilotSpeaker, autopilotSwitches, reviewRoundsWords } from "./autopilot-words"
+import { autopilotAction, autopilotArchiveWords, autopilotChoiceLabel, autopilotRail, autopilotSpeaker, autopilotSwitches, pendingFixWhen, reviewRoundsWords } from "./autopilot-words"
 
 const OFF: AutopilotStatus = {
   autoMerge: false, autoFix: false, pr: 7, state: "waiting", reason: "Reviewing", about: "pr", by: "auto-merge",
@@ -40,13 +40,30 @@ describe("auto-review in autopilot's words", () => {
     expect(autopilotChoiceLabel({ autoMerge: false, autoFix: false })).toBe("Manual PR")
   })
 
-  it("says a round against the daemon's budget, or threes from an older daemon", () => {
+  it("says the round it is on and the rejections its budget has spent", () => {
+    expect(reviewRoundsWords(0, 0, 3)).toBe("no review rounds yet")
+    expect(reviewRoundsWords(2, 0, 3)).toBe("round 2 · 0 of 3 rejections used")
+    // rounds are numbered on, past a passed or superseded round: only rejections spend the budget
+    expect(reviewRoundsWords(4, 1, 3)).toBe("round 4 · 1 of 3 rejections used")
+  })
+
+  it("says a round against an older daemon's budget, or threes from one older still", () => {
     expect(reviewRoundsWords(0)).toBe("no review rounds yet")
     expect(reviewRoundsWords(2)).toBe("round 2 of 3")
     expect(reviewRoundsWords(4)).toBe("round 4 of 6")
     // switched off and on after two rounds: the next budget ends at 5
-    expect(reviewRoundsWords(2, 5)).toBe("round 2 of 5")
-    expect(reviewRoundsWords(3, 5)).toBe("round 3 of 5")
+    expect(reviewRoundsWords(2, undefined, 5)).toBe("round 2 of 5")
+    expect(reviewRoundsWords(3, undefined, 5)).toBe("round 3 of 5")
+  })
+
+  it("says a waiting fix round counts down, or goes after the review it is held behind", () => {
+    const now = Date.parse("2026-10-12T09:00:00Z")
+    const fix = { summary: "1 review thread", sendsAt: new Date(now + 45_000).toISOString() }
+    expect(pendingFixWhen(fix, now)).toBe("sends in 45s")
+    expect(pendingFixWhen({ ...fix, sendsAt: new Date(now + 150_000).toISOString() }, now)).toBe("sends in 3 min")
+    expect(pendingFixWhen({ ...fix, sendsAt: new Date(now - 1_000).toISOString() }, now)).toBe("sending…")
+    // held, its sendsAt is no promise: it goes once the round settles
+    expect(pendingFixWhen({ ...fix, sendsAt: new Date(now - 1_000).toISOString(), afterReview: true }, now)).toBe("sends after the review")
   })
 })
 

@@ -430,7 +430,8 @@ export function reviewerPasses(pr: PrSnapshot, items: FeedbackItem[], times: { h
 /**
  * A round's evidence key names every item and its fingerprint, so the same
  * feedback is never sent twice and a Skip or a cancel can mark exactly those
- * items handled. Parts are joined with `|`: `ci:…`, `conflict:…`, `fb:…`.
+ * items handled. Parts are joined with `|`: `ci:…`, `conflict:…`, `fb:…`, and
+ * `rv:<round id>` for an auto-review round's findings sent with them.
  */
 export function feedbackKey(items: FeedbackItem[]): string {
   return `fb:${items.map((item) => `${item.id}@${item.fingerprint}`).sort().join(";")}`
@@ -439,11 +440,14 @@ export function feedbackKey(items: FeedbackItem[]): string {
 export interface KeyParts {
   ci: string | null
   delivered: Record<string, string>
+  /** auto-review round ids */
+  reviews: string[]
 }
 
 export function keyParts(key: string): KeyParts {
-  const parts: KeyParts = { ci: null, delivered: {} }
+  const parts: KeyParts = { ci: null, delivered: {}, reviews: [] }
   for (const part of key.split("|")) {
+    if (part.startsWith("rv:")) { parts.reviews.push(part.slice(3)); continue }
     if (!part.startsWith("fb:")) { parts.ci = part; continue }
     for (const entry of part.slice(3).split(";").filter(Boolean)) {
       const at = entry.lastIndexOf("@")

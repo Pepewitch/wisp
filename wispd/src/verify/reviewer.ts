@@ -105,7 +105,7 @@ export async function diffSnapshot(repoPath: string, pr: Pick<PrSnapshot, "numbe
  * when slots allow (launchReview), and the panel never shrinks on its own.
  */
 export async function planRound(start: ReviewerStart, input: {
-  author: Task; workflowId: string; pr: PrSnapshot; round: number; counted: boolean; carried?: ReviewRow[]; early?: boolean
+  author: Task; workflowId: string; pr: PrSnapshot; round: number; counted: boolean; carried?: ReviewRow[]; early?: number
 }): Promise<RoundRow> {
   const { author, pr } = input
   const snapshot = await diffSnapshot(author.repo_path, pr)
@@ -143,7 +143,9 @@ function authorRebuttal(author: Task, since: string | null): string | null {
  * needs a person (a harness that no longer exists, say).
  */
 export async function launchReview(start: ReviewerStart, input: {
-  author: Task; round: RoundRow; review: ReviewRow; pr: PrSnapshot; budget: number
+  author: Task; round: RoundRow; review: ReviewRow; pr: PrSnapshot
+  /** rejections the PR's review budget has spent */
+  spent: number
 }): Promise<{ launched: true } | { wait: string } | { error: string }> {
   const { author, pr, round, review } = input
   const recipe = activeRecipe(author.repo_path)
@@ -160,7 +162,7 @@ export async function launchReview(start: ReviewerStart, input: {
     role: review.role, tier: round.tier ?? "standard", signals: snapshot.signals, projectRules: rules.length > 0 ? rules.join("\n\n") : null,
     rebuttal: authorRebuttal(author, previous[0]?.finished_at ?? null),
     pr: { number: pr.number, title: author.custom_title ? author.title : `the change from task ${author.id}`, url: pr.url, base: pr.baseRefName, head: pr.head },
-    round: round.round, budget: input.budget, counted: round.counted === 1, repoPath: author.repo_path,
+    round: round.round, spent: input.spent, counted: round.counted === 1, repoPath: author.repo_path,
     changed: snapshot.changed, previous: previous.map((earlier) => roundView(earlier)), authorTaskId: author.id,
     capture: captureAvailable(start.cfg.chromePath), required: parsedList(round.required_json),
     recipe: {

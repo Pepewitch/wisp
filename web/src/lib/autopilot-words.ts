@@ -133,11 +133,21 @@ export function fixRoundsWords(rounds: number): string {
 }
 
 /**
- * The review rounds a PR has spent, as the quiet line under Auto-review says
- * it, against the daemon's budget; an older daemon sends none, and its
- * budgets went in threes.
+ * The round a PR's auto-review is on and the rejections its budget has spent,
+ * as the quiet line under Auto-review says it. An older daemon sends no
+ * `reviewSpent`: its budget was the last round number allowed (none at all
+ * from the oldest, whose budgets went in threes).
  */
-export function reviewRoundsWords(rounds: number, budget?: number): string {
+export function reviewRoundsWords(rounds: number, spent?: number, budget?: number): string {
   if (rounds <= 0) return "no review rounds yet"
-  return `round ${rounds} of ${budget ?? Math.ceil(rounds / 3) * 3}`
+  if (spent === undefined) return `round ${rounds} of ${budget ?? Math.ceil(rounds / 3) * 3}`
+  return `round ${rounds} · ${spent} of ${budget ?? 3} rejections used`
+}
+
+/** How a waiting auto-fix round says when it goes: after the auto-review round it is held behind, or in so long. */
+export function pendingFixWhen(fix: NonNullable<AutopilotStatus["pendingFix"]>, now: number): string {
+  if (fix.afterReview) return "sends after the review"
+  const seconds = Math.ceil((Date.parse(fix.sendsAt) - now) / 1000)
+  if (!Number.isFinite(seconds) || seconds <= 0) return "sending…"
+  return seconds < 60 ? `sends in ${seconds}s` : `sends in ${Math.ceil(seconds / 60)} min`
 }

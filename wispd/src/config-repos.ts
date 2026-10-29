@@ -2,7 +2,7 @@
  * `repos` in config.json: the projects Wisp offers, each a path or an object
  * with its settings. Beside config.ts because that file is at its size limit.
  */
-import type { RepoConfig } from "./config";
+import type { RepoConfig, ReviewStart } from "./config";
 import { validateCapturePublic, validateVerifyAgent } from "./config-verify";
 import { isRecord, stringArray, typeName } from "./validate";
 
@@ -43,6 +43,15 @@ export function validateRepos(raw: unknown): (string | RepoConfig)[] {
     const secondFallback = validateVerifyAgent(entry.verifySecondFallback, `${label}.verifySecondFallback`);
     if (secondFallback) out.verifySecondFallback = secondFallback;
     if (validateCapturePublic(entry.capturePublic, label) === false) out.capturePublic = false;
+    const start = validateReviewStart(entry.reviewStart, `${label}.reviewStart`);
+    if (start) out.reviewStart = start;
     return out;
   });
+}
+
+/** `reviewStart`: "ready" or "checks"; absent is undefined (the default, "ready", is never written back). */
+export function validateReviewStart(value: unknown, label: string): ReviewStart | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value === "ready" || value === "checks") return value;
+  throw new Error(`${label} must be "ready" or "checks", got ${typeof value === "string" ? JSON.stringify(value) : typeName(value)}`);
 }

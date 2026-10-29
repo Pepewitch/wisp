@@ -46,7 +46,8 @@ function setup(options: { autoMerge?: boolean; autoFix?: boolean; harness?: stri
   setAutopilot(task.id, { autoMerge: options.autoMerge ?? true, autoFix: options.autoFix ?? false, autoReview: true });
   // as setAutopilot armed it, before seed replaced the checkpoint
   seed(task.id, clock, { reviewArmedAt: new Date(START).toISOString() });
-  const cfg: WispConfig = { ...loadConfig(), repos: [{ path: "/fixture/repo", verifySecond: "off" }] };
+  // Review now is for a project whose rounds wait for the checks; under "ready" they start on their own
+  const cfg: WispConfig = { ...loadConfig(), repos: [{ path: "/fixture/repo", verifySecond: "off", reviewStart: "checks" }] };
   const rt = runtime(github, clock, options.adapters ?? {}, cfg, undefined, { launch });
   return { clock, state, github, launched, task, rt, cfg, during };
 }
@@ -81,7 +82,7 @@ describe("Review now", () => {
     expect(launched).toHaveLength(1);
     expect(launched[0]!.base).toMatchObject({ commit: HEAD });
     expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", by: "auto-review", reviewRounds: 1, reviewNow: null });
-    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 of 3 (started by you, checks still running): A reviewing");
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 · 0 of 3 rejections used (started by you, checks still running): A reviewing");
     expect(latest(task.id)).toMatchObject({ round: 1, counted: 1, head: HEAD, state: "running" });
     expect(autopilotHistory(task.id).some((entry) => entry.detail.startsWith("Round 1 started") && entry.detail.includes("by Review now (started by you, checks still running)"))).toBe(true);
     // the click is spent: later looks drive the round, and no second one starts
@@ -98,10 +99,10 @@ describe("Review now", () => {
     await reviewNow(task.id);
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(1);
-    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 of 3 (started by you, test failed): A reviewing");
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 · 0 of 3 rejections used (started by you, test failed): A reviewing");
   });
 
-  test("starts a round despite an auto-fix countdown, and the countdown still sends on time", async () => {
+  test("starts a round despite an auto-fix countdown, which then waits for the round, and sends once it passes", async () => {
     const { dir, file, adapters } = capture();
     const { clock, launched, task, rt } = setup({ autoFix: true, checks: FAILED, harness: "capture", worktree: dir, adapters: adapters as never });
     await pass(rt, task.id, clock);
@@ -115,10 +116,14 @@ describe("Review now", () => {
     const reviewing = autopilotStatus(task.id);
     expect(reviewing).toMatchObject({ by: "auto-review", reviewRounds: 1, reviewNow: null });
     expect(reviewing.reason).toContain("(started by you, test failed)");
-    // auto-fix keeps its countdown: the look comes back for it, not after the reviewer's long wait
-    expect(reviewing.pendingFix).toEqual(counting.pendingFix);
-    expect(Date.parse(autopilotRow(task.id)!.next_check_at)).toBeLessThanOrEqual(Date.parse(counting.pendingFix!.sendsAt));
+    // a push would end the round: auto-fix holds its round until the review settles
+    expect(reviewing.reason).toContain(" · Auto-fix will send after the review: test failing");
+    expect(reviewing.pendingFix).toMatchObject({ summary: counting.pendingFix!.summary, afterReview: true });
     clock.now = Date.parse(counting.pendingFix!.sendsAt) + 1000;
+    await pass(rt, task.id, clock);
+    expect(messagesFor(task.id).some((message) => message.origin === "workflow")).toBe(false);
+    submitVerdict(primary(task.id).reviewer_task_id!, { token: primary(task.id).token, verdict: "pass", summary: "Checked it" } as never);
+    transition(primary(task.id).reviewer_task_id!, "done");
     await pass(rt, task.id, clock);
     expect(messagesFor(task.id).some((message) => message.origin === "workflow")).toBe(true);
     await until(() => getTask(task.id)!.state === "done" && Bun.file(file).size > 0, "the auto-fix round's turn");
@@ -235,13 +240,14 @@ test("rounds from before an upgraded profile's switch reset do not spend its fre
     expect(checkpointOf(autopilotRow(task.id)!)).not.toHaveProperty("reviewArmedAt");
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(1);
-    expect(latest(task.id)).toMatchObject({ head: HEAD, round: 1, counted: 1, state: "running" });
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reviewRounds: 1 });
-    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 of 3: A reviewing");
-    // the epoch the first look set holds: the next look still counts 1, not the old 3
+    // numbering goes on past every round the PR has had; the budget counts only rounds since the epoch
+    expect(latest(task.id)).toMatchObject({ head: HEAD, round: 4, counted: 1, state: "running" });
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reviewRounds: 4, reviewSpent: 0 });
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 4 · 0 of 3 rejections used: A reviewing");
+    // the epoch the first look set holds: the next look still spends 0, not the old 3
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(1);
-    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reviewRounds: 1 });
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reviewRounds: 4, reviewSpent: 0 });
   });
   test("a switch moved while its reviewers launch does not leave its round behind the checks", async () => {
     const { clock, launched, task, rt, during } = setup();
@@ -299,12 +305,15 @@ test("rounds from before an upgraded profile's switch reset do not spend its fre
     expect(state.merges).toEqual([{ number: 7, method: "SQUASH", head: HEAD }]);
   });
 
-  test("its round counts toward the budget: with the rounds spent, it pauses instead", async () => {
+  test("its round answers to the budget: with the rejections spent, it pauses instead", async () => {
     const { clock, launched, task, rt } = setup();
     await pass(rt, task.id, clock);
     await reviewNow(task.id);
-    const row = autopilotRow(task.id)!;
-    writeAutopilotCheckpoint(row, { ...checkpointOf(row), reviewRounds: 3 }, new Date(clock.now));
+    const workflow = autopilotRow(task.id)!.id;
+    for (const number of [1, 2, 3]) {
+      db.run(`INSERT INTO auto_review_rounds (id, task_id, workflow_id, pr, head, base, round, token, state, created_at)
+        VALUES (?, ?, ?, 7, ?, 'main', ?, ?, 'fail', ?)`, [`rspent${number}`, task.id, workflow, String(number).repeat(40), number, `tok${number}`, new Date(clock.now - 1000 + number).toISOString()]);
+    }
     await pass(rt, task.id, clock);
     expect(launched).toHaveLength(0);
     expect(autopilotStatus(task.id)).toMatchObject({ state: "paused", reason: "Auto-review did not pass after 3 rounds — resume to try again" });

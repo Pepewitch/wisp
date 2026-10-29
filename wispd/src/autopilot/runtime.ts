@@ -16,19 +16,21 @@ import { backgroundPass, homeIsDraining } from "../home-lifetime"
 import { bunProbeSpawn } from "../probes"
 import { taskBranches } from "../pull-request-branches"
 import { startNextQueuedMessage } from "../runner"
-import { getTask } from "../store"
+import { getTask, randomId } from "../store"
 import { hasTaskCapacity, type Workload } from "../task-admission"
-import { autoFixAlone, nothingToSend } from "./fix-plan"
+import { autoFixAlone, autoFixAtCap, ciToSend, nothingToSend } from "./fix-plan"
 import { inheritedRightsLost } from "./subtask-policy"
 import { recordAudit } from "../task-audit"
 import type { Task } from "../types"
-import { announceWorkflow, changeWorkflowState, getWorkflow, recordWorkflow, seenWake, type WorkflowRow } from "../workflows/store"
+import { announceWorkflow, changeWorkflowState, getWorkflow, recordWorkflow, type WorkflowRow } from "../workflows/store"
 import { mergeEvidence, mergeGate, sameReviewState, type PublishedWork } from "./gate"
 import { taskIsIdle } from "./idle"
 import { droppedOnNetwork, networkLook } from "./network"
 import { createGhAutopilot, ghAutopilot, type AutopilotGitHub, type BaseRules, type PrComment, type PrSnapshot } from "./github"
 import { githubBudget, GitHubPausedError, unlessPaused, type GitHubBudget } from "../github-budget"
 import { SnapshotBatches } from "./batch"
+import { PushTrust } from "./trust"
+import { withReviewsSent } from "./pending-fix"
 import { choosePull, originRepository, skippedPull } from "./bind"
 import { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
 import { whileMerging } from "./merging"
@@ -39,7 +41,7 @@ import {
 } from "./feedback"
 import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsChanges, writeJudgeLog, type Judged, type JudgeClient, type JudgeLook } from "./judge"
 import { headFirstSeen, headSince } from "./heads"
-import { planFix } from "./fix"
+import { planFix, type FixPlan } from "./fix"
 import {
   anySwitch, checkAutopilotOnTaskEvent, checkAutopilotSoon, checkpointOf, deferAutopilot, dueAutopilots, endMergeAttempt, finishAutopilot, paramsOf, pauseAutopilot, rebindAfterMerge,
   reserveRound, saveAutopilotCheck, unmarkedTurns, withdrawQueuedRound, writeAutopilotCheckpoint, type AutopilotCheck, type AutopilotCheckpoint,
@@ -47,11 +49,13 @@ import {
 import { CONTEXT_CHANGE_PAUSE } from "./type"
 import { busyReason, forgetIdle, forgetPending, nextPrReason, observe } from "./look"
 import { autoReviewLook, endUnwantedReviews, supersedeStaleRounds, sweepReviews } from "./auto-review"
-import { EarlyAnswers, reviewNowLook } from "./review-now"
+import { EarlyAnswers } from "./review-now"
+import { reviewStartLook, type ReviewStart } from "./review-first"
+import { holdForReview, reserveWith, reviewFiles, reviewKey, reviewRunning, reviewToCarry } from "./review-part"
 import { createAndLaunchTask } from "../domain/task-create"
 import type { ModelProbeCache } from "../model-probes"
 import type { Launch } from "../verify/reviewer"
-import { roundOfReviewer } from "../verify/rounds"
+import { budgetWords, roundOfReviewer } from "../verify/rounds"
 
 export { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
 export { choosePull, skippedPull } from "./bind"
@@ -94,6 +98,8 @@ interface FixContext {
   judged?: Record<string, Judged>
   /** a look that reviews early keeps auto-fix's words to weigh (review-now.ts) instead of saving them */
   speak?: (check: AutopilotCheck) => void
+  /** auto-review is on: a round running on the head holds auto-fix, and a settled rejection goes out with its next round */
+  autoReview?: boolean
 }
 
 export class AutopilotRuntime {
@@ -107,7 +113,8 @@ export class AutopilotRuntime {
   private readonly github: AutopilotGitHub
   private readonly budget: GitHubBudget
   private readonly required = new Map<string, { rules: Promise<BaseRules>; at: number }>()
-  private readonly pushers = new Map<string, { ok: boolean; until: number }>()
+  /** whose words may instruct the agent (trust.ts) */
+  private readonly trust: PushTrust
   /** this pass's shared snapshots, and each repository path's origin */
   private batches: SnapshotBatches | null = null
   private origins = new Map<string, Promise<string | null>>()
@@ -116,6 +123,7 @@ export class AutopilotRuntime {
     this.now = options.now ?? (() => new Date())
     this.budget = options.budget ?? githubBudget
     this.github = options.github ?? (options.budget ? createGhAutopilot({ budget: options.budget }) : ghAutopilot)
+    this.trust = new PushTrust(this.github, this.now)
   }
 
   /** Every look's save: its wait stretched as the GitHub budget runs low. */
@@ -370,29 +378,46 @@ export class AutopilotRuntime {
     const fresh = await this.github.snapshot(repository, pr.number, cwd, signal).catch(unlessPaused(null))
     if (!fresh || !sameReviewState(pr, fresh)) { save("waiting", "The PR changed while it was checked; checking again", RECHECK_MS, "pr"); return }
     await this.merge(row, checkpoint, pr, repository, {
-      turnCount: task.turn_count, evidence: mergeEvidence(pr, new Set(required), judging !== null, ctx.autoReview ? `auto-review passed (round ${checkpoint.reviewRounds ?? 1})` : undefined),
+      turnCount: task.turn_count, evidence: mergeEvidence(pr, new Set(required), judging !== null,
+        ctx.autoReview ? `auto-review passed (${budgetWords(checkpoint.reviewRounds ?? 1, checkpoint.reviewSpent ?? 0)})` : undefined),
     })
   }
 
   /**
    * Auto-fix, then auto-review. Returns the reason there is nothing to fix
    * once both let the head through, or null when either acted or explained
-   * itself. On a head a person asked to review now, auto-review goes first
-   * and the look saves one answer for both (review-now.ts).
+   * itself. While a round on the head runs or is about to start, or its
+   * rejection is still to go out, auto-review goes first and the look saves
+   * one answer for both (review-first.ts, review-now.ts).
    */
   private async fixThenReview(ctx: FixContext & { autoFix: boolean; autoReview: boolean }): Promise<string | null> {
     const { row, task, checkpoint, pr, required } = ctx
-    const early = ctx.autoReview ? reviewNowLook(row, checkpoint, pr, required, this.now().getTime()) : null
-    const answers = early === null ? null : new EarlyAnswers()
-    const reviewed = answers ? await this.autoReview(row, task, checkpoint, pr, required, ctx.autoFix, early, answers.onReview) : null
+    const start = ctx.autoReview ? await reviewStartLook({
+      row, task, checkpoint, pr, required, now: this.now(), cfg: this.cfg, autoFix: ctx.autoFix,
+      // auto-fix's own test for a CI fix it sends now, so the two cannot drift
+      ciReady: async () => ctx.autoFix && !autoFixAtCap(checkpoint) && ciToSend((await this.fixPlan(ctx)).plan, checkpoint, row.id) !== null,
+    }) : null
+    const answers = start?.first ? new EarlyAnswers() : null
+    const reviewed = answers ? await this.autoReview(row, task, checkpoint, pr, required, ctx.autoFix, start!, answers.onReview) : null
     // it sent the author its findings, or paused: nothing else acts on this read
     if (answers && getWorkflow(row.id)?.revision !== row.revision) return null
     // Auto-fix acts first: a red check or a conflict is fixed before anything merges.
     const nothingToFix = ctx.autoFix ? await this.autoFix({ ...ctx, speak: answers?.onFix }) : "Nothing to fix"
-    if (answers) return answers.finish(reviewed === "passed", nothingToFix, (check) => this.saveCheck(row, check)) ? null : nothingToFix
+    if (answers) return answers.finish(reviewed === "passed", nothingToFix, (check) => this.saveCheck(row, check), reviewed === "deferred") ? null : nothingToFix
     if (nothingToFix === null) return null
     // Then the independent reviewer: nothing merges past a head it has not passed.
-    return ctx.autoReview && await this.autoReview(row, task, checkpoint, pr, required, ctx.autoFix) === null ? null : nothingToFix
+    return ctx.autoReview && await this.autoReview(row, task, checkpoint, pr, required, ctx.autoFix) !== "passed" ? null : nothingToFix
+  }
+
+  /** What auto-fix would act on: the unseen review feedback, and CI's plan beside it. */
+  private async fixPlan(ctx: FixContext): Promise<{ plan: FixPlan; items: FeedbackItem[]; relayed: PrComment[]; rerun: number[] }> {
+    const { checkpoint, pr } = ctx
+    const rerun = checkpoint.rerun?.head === pr.head ? checkpoint.rerun.runs : []
+    const { items, relayed } = await this.feedbackFor(ctx)
+    // A bot's verdict check beside the sticky comment being sent is the review flow's.
+    const paired = pairedChecks(pr, items, checkpoint.delivered ?? {})
+    const plan = planFix({ pr: { ...pr, checks: pr.checks.filter((check) => !paired.has(check.name)) }, requiredNames: ctx.required, rerun: new Set(rerun) })
+    return { plan, items, relayed, rerun }
   }
 
   /**
@@ -404,11 +429,7 @@ export class AutopilotRuntime {
     const { row, task, checkpoint, pr } = ctx
     const now = this.now()
     const say = this.fixSay(ctx)
-    const rerun = checkpoint.rerun?.head === pr.head ? checkpoint.rerun.runs : []
-    const { items, relayed } = await this.feedbackFor(ctx)
-    // A bot's verdict check beside the sticky comment being sent is the review flow's.
-    const paired = pairedChecks(pr, items, checkpoint.delivered ?? {})
-    const plan = planFix({ pr: { ...pr, checks: pr.checks.filter((check) => !paired.has(check.name)) }, requiredNames: ctx.required, rerun: new Set(rerun) })
+    const { plan, items, relayed, rerun } = await this.fixPlan(ctx)
     // running, red or rerun: the quiet since it went green starts over at its next green
     if (plan.kind !== "none") { delete checkpoint.greenHead; delete checkpoint.greenAt }
     if (plan.kind === "rerun") {
@@ -430,11 +451,10 @@ export class AutopilotRuntime {
       announceWorkflow(row.task_id)
       return say("waiting", reason, MOVING_MS)
     }
-    // CI's part, unless that evidence already went out (alone, or in a round
-    // with review feedback: the round's key is then a combined one) or was skipped.
-    const sent = (key: string) => seenWake(row.id, key) || (checkpoint.sentCi ?? []).includes(key)
-    const ci = plan.kind === "fix" && !sent(plan.key) && !checkpoint.skipped?.includes(plan.key) ? plan : null
-    const key = [ci?.key, items.length > 0 ? feedbackKey(items) : null].filter(Boolean).join("|")
+    const ci = ciToSend(plan, checkpoint, row.id)
+    // read here, not left to auto-review's part of the look: its findings travel with the rest
+    const review = ctx.autoReview ? reviewToCarry(row.id, checkpoint, pr) : null
+    const key = [ci?.key, items.length > 0 ? feedbackKey(items) : null, review ? reviewKey(review) : null].filter(Boolean).join("|")
     // Only a countdown for this very evidence keeps a pending round, or a Send now.
     if (checkpoint.pending?.key !== key) forgetPending(checkpoint)
     if (checkpoint.logMisses && checkpoint.logMisses.key !== key) delete checkpoint.logMisses
@@ -447,7 +467,10 @@ export class AutopilotRuntime {
       }
       return nothingToSend(plan, checkpoint, say)
     }
-    const summary = [ci?.summary, items.length > 0 ? feedbackSummary(items) : null].filter(Boolean).join(" and ")
+    const summary = [review ? "auto-review's findings" : null, ci?.summary, items.length > 0 ? feedbackSummary(items) : null].filter(Boolean).join(" and ")
+    // A push would end the round running on this head: what auto-fix holds goes once it settles,
+    // unless a person says Send now. Before the cap's pause, which would strand the round.
+    if (ctx.autoReview && checkpoint.sendNow !== key && reviewRunning(row.id, pr)) return holdForReview(checkpoint, key, summary, now, say)
     const rounds = checkpoint.rounds ?? 0
     if (rounds >= MAX_ROUNDS) {
       writeAutopilotCheckpoint(row, { ...checkpoint, by: "auto-fix" }, now)
@@ -467,7 +490,7 @@ export class AutopilotRuntime {
       checkpoint.pending = { key, summary, sendsAt: new Date(sendsAt).toISOString() }
       return say("waiting", `Auto-fix will send: ${summary}`, Math.max(5_000, sendsAt - now.getTime()))
     }
-    return this.sendRound({ ...ctx, content: { ci, items, summary }, key, round: rounds + 1 })
+    return this.sendRound({ ...ctx, content: { ci, items, review, summary }, key, round: rounds + 1 })
   }
 
   /** Auto-fix's words: saved, or kept for a look that reviews early to weigh. */
@@ -480,14 +503,14 @@ export class AutopilotRuntime {
     }
   }
 
-  /** Auto-review's look at this head (auto-review.ts): "passed", or null when it acted or explained itself. */
+  /** Auto-review's look at this head (auto-review.ts): "passed", "deferred" (auto-fix sends its findings), or null when it acted or explained itself. */
   private autoReview(
     row: WorkflowRow, task: Task, checkpoint: AutopilotCheckpoint, pr: PrSnapshot, required: ReadonlySet<string>, autoFix: boolean,
-    early: string | null = null, speak?: (check: AutopilotCheck) => void,
-  ): Promise<"passed" | null> {
+    start: Pick<ReviewStart, "early" | "by"> = { early: null, by: null }, speak?: (check: AutopilotCheck) => void,
+  ): Promise<"passed" | "deferred" | null> {
     const launch: Launch = this.options.launch ?? ((input) => createAndLaunchTask(input, this.cfg, this.adapters, this.options.models ?? null))
     return autoReviewLook({
-      row, task, checkpoint, pr, required, autoFix, early, now: this.now(), start: { cfg: this.cfg, adapters: this.adapters, launch },
+      row, task, checkpoint, pr, required, autoFix, early: start.early, startedBy: start.by, now: this.now(), start: { cfg: this.cfg, adapters: this.adapters, launch },
       hasSlot: (t, workload) => this.hasSlot(t, workload),
       say: (state, reason, delayMs, patient) => {
         const check: AutopilotCheck = { state, reason, checkpoint, delayMs, about: "pr", by: "auto-review", patient }
@@ -501,7 +524,7 @@ export class AutopilotRuntime {
   /** Review feedback the agent has not seen, from people and bots it may take instructions from. */
   private async feedbackFor(ctx: FixContext): Promise<{ items: FeedbackItem[]; relayed: PrComment[] }> {
     const { pr, task, row, checkpoint } = ctx
-    const trusts = await this.trustsFor(pr, ctx.repository, task, ctx.signal)
+    const trusts = await this.trust.trustsFor(pr, ctx.repository, task, ctx.signal)
     // Turns that began before auto-fix was armed were never asked to mark
     // their posts: the owner's-account comments inside them are the agent's.
     const windows = unmarkedTurns(task.id, checkpoint.fixArmedAt ?? row.created_at, checkpoint.unmarkedTurns ?? [])
@@ -527,7 +550,7 @@ export class AutopilotRuntime {
     // only bots' words are ever candidates for the kind question; the agent never posts as one
     const candidates = judgeCandidates({ pr, trusts: ({ author, bot }) => bot && author !== null && author !== "github-actions", self: (comment) => isMarked(comment.body) })
     // an approval's notes can only become an auto-fix round, so they are asked about only then
-    if (ctx.autoFix) candidates.push(...approvalCandidates({ pr, trusts: await this.trustsFor(pr, ctx.repository, task, signal) }))
+    if (ctx.autoFix) candidates.push(...approvalCandidates({ pr, trusts: await this.trust.trustsFor(pr, ctx.repository, task, signal) }))
     const look = await judgeLook({
       candidates, checkpoint, client, pr, signal, now: this.now,
       log: (entry) => {
@@ -546,30 +569,6 @@ export class AutopilotRuntime {
     return look
   }
 
-  /** Whose words may instruct the agent: the owner's account, a bot other than github-actions, or someone who can push. */
-  private async trustsFor(pr: PrSnapshot, repository: string, task: Task, signal: AbortSignal): Promise<(author: { author: string | null; bot: boolean }) => boolean> {
-    const people = new Set<string>()
-    for (const words of [...pr.reviews, ...pr.comments, ...pr.threads.flatMap((thread) => thread.comments)]) {
-      if (words.author && !words.bot && words.author !== pr.viewer) people.add(words.author)
-    }
-    const pushers = new Set<string>()
-    await Promise.all([...people].map(async (login) => {
-      if (await this.canPush(repository, login, task.repo_path, signal)) pushers.add(login)
-    }))
-    return ({ author, bot }) => author !== null && (author === pr.viewer || (bot && author !== "github-actions") || pushers.has(author))
-  }
-
-  /** Whether a login may instruct the agent: cached an hour, and a failed read counts as no for five minutes. */
-  private async canPush(repository: string, login: string, cwd: string, signal: AbortSignal): Promise<boolean> {
-    const key = `${repository}#${login}`
-    const hit = this.pushers.get(key)
-    const now = this.now().getTime()
-    if (hit && now < hit.until) return hit.ok
-    const ok = await this.github.canPush(repository, login, cwd, signal).then((value) => ({ value, known: true }), unlessPaused({ value: false, known: false }))
-    this.pushers.set(key, { ok: ok.value, until: now + (ok.known ? 60 * 60_000 : 5 * 60_000) })
-    return ok.value
-  }
-
   /** Gather one round's evidence and queue it for the agent, unless something moved meanwhile. */
   private async sendRound(ctx: FixContext & { content: RoundContent; key: string; round: number }): Promise<null> {
     const { row, task, checkpoint, pr, content, key, round } = ctx
@@ -585,7 +584,8 @@ export class AutopilotRuntime {
     // Cut short (the look's deadline, shutdown): the evidence is partial. A
     // failed look backs off; shutdown is quiet (evaluate decides which).
     if (ctx.signal.aborted) throw new Error("reading the logs took too long")
-    if (evidence.logsWanted > 0 && evidence.logsRead === 0) {
+    // review findings never wait on CI's logs: that part goes with links only
+    if (evidence.logsWanted > 0 && evidence.logsRead === 0 && !content.review) {
       const misses = (checkpoint.logMisses?.key === key ? checkpoint.logMisses.count : 0) + 1
       // GitHub usually serves a finished job's log within a minute; a round
       // with nothing to read is not worth a turn — until waiting stops paying.
@@ -599,17 +599,21 @@ export class AutopilotRuntime {
       ...checkpoint, rounds: round, lastRoundAt: this.now().toISOString(), done: undefined, greenHead: undefined, greenAt: undefined,
       delivered: withDelivered(checkpoint.delivered, Object.fromEntries(content.items.map((item) => [item.id, item.fingerprint]))),
       sentCi: content.ci ? [...(checkpoint.sentCi ?? []).slice(-20), content.ci.key] : checkpoint.sentCi,
+      reviewsSent: content.review ? withReviewsSent(checkpoint.reviewsSent, [content.review.id]) : checkpoint.reviewsSent,
     }
     forgetIdle(next)
     delete next.logMisses
     // From here to the turn's start nothing awaits, so the slot seen free is
     // the slot the turn takes: another look or task cannot take it between.
     if (!this.hasSlot(task)) return say("waiting", "Waiting for a free task slot", MOVING_MS)
-    const id = reserveRound(row, {
-      key, prompt: roundMessage({ ...content, pr, round, file: evidence.file, autoMerge: ctx.autoMerge, signature }),
-      reason: `Sent ${content.summary} (round ${round} of ${MAX_ROUNDS})`, checkpoint: next, turnCount: task.turn_count,
-      source: { by: "autopilot", kind: "auto-fix", pr: pr.number, round, rounds: MAX_ROUNDS },
-    }, this.now())
+    // after every await: a paused log read or an abort above cannot leave the review's images behind
+    const messageId = randomId("m", 12)
+    const review = content.review ? reviewFiles(this.adapters, { task, row, checkpoint: next, pr }, content.review, messageId) : null
+    const id = reserveWith(review, () => reserveRound(row, {
+      key, prompt: roundMessage({ ...content, pr, round, file: evidence.file, autoMerge: ctx.autoMerge, signature, reviewLines: review?.lines }),
+      reason: `Sent ${content.summary} (round ${round} of ${MAX_ROUNDS}${review ? `; auto-review ${review.words}` : ""})`, checkpoint: next, turnCount: task.turn_count,
+      messageId, attachments: review?.attachments, source: { by: "autopilot", kind: "auto-fix", pr: pr.number, round, rounds: MAX_ROUNDS },
+    }, this.now()))
     // A user message queued first still goes first; this round then waits,
     // and the next look withdraws it and plans again.
     if (id) startNextQueuedMessage(task.id, this.adapters, this.cfg, id)

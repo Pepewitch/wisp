@@ -54,14 +54,25 @@ export interface AutopilotStatus {
    * task's next PR, so this is how a client still says "Merged by Wisp".
    */
   lastMerged: { pr: number; byWisp: boolean } | null
-  /** an auto-fix round waiting out its short delay: Send now or Skip act on it */
-  pendingFix: { summary: string; sendsAt: string } | null
+  /**
+   * an auto-fix round waiting out its short delay: Send now or Skip act on it.
+   * `afterReview`: held while an auto-review round on the head runs; it goes
+   * out once that round settles, not at `sendsAt` (absent from an older daemon)
+   */
+  pendingFix: { summary: string; sendsAt: string; afterReview?: boolean } | null
   /** auto-fix rounds sent to the agent for the bound PR */
   fixRounds: number
-  /** counted auto-review rounds for the bound PR (absent from an older daemon) */
+  /** the highest auto-review round number on the bound PR: rounds are numbered on, whatever became of them (absent from an older daemon) */
   reviewRounds?: number
-  /** the round the current review budget ends at: 3, more after a Resume or a switch-on (absent from an older daemon) */
+  /**
+   * The rejections the current review budget allows: 3. Only a round that
+   * rejected the head (or could not verify the change) spends one; a Resume
+   * starts a fresh budget. An older daemon sent the last round number its
+   * budget allowed instead, and no `reviewSpent`.
+   */
   reviewBudget?: number
+  /** rejections spent from the current review budget (absent from an older daemon) */
+  reviewSpent?: number
   /**
    * Nothing left for it to do right now: with auto-merge on, the current PR
    * has merged; with auto-fix alone, CI is green and no review has come in

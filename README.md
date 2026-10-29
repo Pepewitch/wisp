@@ -25,9 +25,10 @@ and the PR merges when it's ready.</p>
   touched, and passes it or sends its findings back. It follows a verification
   recipe Wisp keeps per project, outside your repository, which a recipe task
   writes and you activate. A reviewer whose agent fails on the network, its
-  provider or setup can hand the round to a fallback agent you name. **Review
-  now** starts a head's review without waiting for CI; merging still waits.
-  [Auto-review](docs/AUTO-REVIEW.md)
+  provider or setup can hand the round to a fallback agent you name. A head's
+  review starts once it is ready, alongside CI, and auto-fix sends its
+  findings, red CI and review comments as one message; merging still waits for
+  green checks. [Auto-review](docs/AUTO-REVIEW.md)
 - **Keep watch while you're away.** A heartbeat wakes a task on a schedule
   until its goal is met: "check staging until the smoke test passes." Each
   wake-up is an agent turn. A scheduled steer sends your next instruction at
