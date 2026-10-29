@@ -138,9 +138,14 @@ export function supersedeStaleRounds(row: WorkflowRow, pr: PrSnapshot, cfg: Revi
  */
 export async function autoReviewLook(look: ReviewLook): Promise<"passed" | null> {
   const { row, checkpoint, pr, now } = look
-  // the rows keep the count: a look that started a round may have lost its checkpoint (a moved revision, a throw)
-  const kept = countedRound(row.id, pr.number)
-  if (kept > (checkpoint.reviewRounds ?? 0)) checkpoint.reviewRounds = kept
+  // the rows keep the count: a look that started a round may have lost its checkpoint (a moved revision, a throw).
+  // Only rows since auto-review was switched on count; a checkpoint from before
+  // reviewArmedAt existed cannot say which rows those are, so its epoch starts now.
+  if (checkpoint.reviewArmedAt === undefined) checkpoint.reviewArmedAt = now.toISOString()
+  else {
+    const kept = countedRound(row.id, pr.number, checkpoint.reviewArmedAt)
+    if (kept > (checkpoint.reviewRounds ?? 0)) checkpoint.reviewRounds = kept
+  }
   supersedeStaleRounds(row, pr, look.start.cfg, now)
   if (pr.isDraft) return look.say("needs-you", "Draft — auto-review starts once it is ready for review", WAITING_ON_YOU_MS)
   const checks = look.early ? null : checksGate({

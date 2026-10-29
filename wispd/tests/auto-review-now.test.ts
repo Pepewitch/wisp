@@ -44,7 +44,8 @@ function setup(options: { autoMerge?: boolean; autoFix?: boolean; harness?: stri
   const task = doneTask(options.harness ? { harness: options.harness } : {});
   if (options.worktree) setTaskFields(task.id, { worktree_path: options.worktree, turn_count: 1 });
   setAutopilot(task.id, { autoMerge: options.autoMerge ?? true, autoFix: options.autoFix ?? false, autoReview: true });
-  seed(task.id, clock);
+  // as setAutopilot armed it, before seed replaced the checkpoint
+  seed(task.id, clock, { reviewArmedAt: new Date(START).toISOString() });
   const cfg: WispConfig = { ...loadConfig(), repos: [{ path: "/fixture/repo", verifySecond: "off" }] };
   const rt = runtime(github, clock, options.adapters ?? {}, cfg, undefined, { launch });
   return { clock, state, github, launched, task, rt, cfg, during };
@@ -209,6 +210,30 @@ describe("Review now", () => {
     expect(latest(task.id)).toMatchObject({ base: "release", head: HEAD, round: 2, early: 1 });
   });
 
+test("rounds from before an upgraded profile's switch reset do not spend its fresh budget", async () => {
+    // a schema-28 checkpoint: auto-review was switched off and on, which deleted the count, and the old rounds stayed
+    const { clock, launched, task, rt } = setup({ checks: GREEN });
+    const old = "e".repeat(40);
+    const row = autopilotRow(task.id)!;
+    const { reviewArmedAt: _armed, ...legacy } = checkpointOf(row);
+    writeAutopilotCheckpoint(row, legacy, new Date(clock.now));
+    const workflow = row.id;
+    for (const number of [1, 2, 3]) {
+      db.run(`INSERT INTO auto_review_rounds (id, task_id, workflow_id, pr, head, base, round, token, state, created_at)
+        VALUES (?, ?, ?, 7, ?, 'main', ?, ?, 'fail', ?)`, [`rold${number}`, task.id, workflow, old, number, `tok${number}`, new Date(START + number * 1000).toISOString()]);
+    }
+    expect(checkpointOf(autopilotRow(task.id)!)).not.toHaveProperty("reviewRounds");
+    expect(checkpointOf(autopilotRow(task.id)!)).not.toHaveProperty("reviewArmedAt");
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(1);
+    expect(latest(task.id)).toMatchObject({ head: HEAD, round: 1, counted: 1, state: "running" });
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reviewRounds: 1 });
+    expect(autopilotStatus(task.id).reason).toBe("Auto-review round 1 of 3: A reviewing");
+    // the epoch the first look set holds: the next look still counts 1, not the old 3
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(1);
+    expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reviewRounds: 1 });
+  });
   test("a switch moved while its reviewers launch does not leave its round behind the checks", async () => {
     const { clock, launched, task, rt, during } = setup();
     await pass(rt, task.id, clock);

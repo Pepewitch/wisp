@@ -763,8 +763,8 @@ export class AutopilotRuntime {
     // What changed about the task while gh ran (a Stop hold, auto-fix armed,
     // an unsigned turn) is kept: only the merge's own fields come from before.
     const fresh = checkpointOf(current)
-    const attempt: AutopilotCheckpoint = { ...started, stopHold: fresh.stopHold, fixArmedAt: fresh.fixArmedAt, unmarkedTurns: fresh.unmarkedTurns }
-    for (const key of ["stopHold", "fixArmedAt", "unmarkedTurns"] as const) if (attempt[key] === undefined) delete attempt[key]
+    const attempt: AutopilotCheckpoint = { ...started, stopHold: fresh.stopHold, fixArmedAt: fresh.fixArmedAt, reviewArmedAt: fresh.reviewArmedAt, unmarkedTurns: fresh.unmarkedTurns }
+    for (const key of ["stopHold", "fixArmedAt", "reviewArmedAt", "unmarkedTurns"] as const) if (attempt[key] === undefined) delete attempt[key]
     if (after && after.state !== "OPEN") { this.settle(current, attempt, after); return }
     if (after?.queued) { this.saveCheck(current, { state: "queued", reason: "Queued to merge", checkpoint: attempt, delayMs: MOVING_MS, about: "pr" }); return }
     if (after?.providerAutoMerge) {
