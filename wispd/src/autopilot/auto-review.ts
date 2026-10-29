@@ -55,6 +55,8 @@ export interface ReviewLook {
   pr: PrSnapshot
   required: ReadonlySet<string>
   autoFix: boolean
+  /** a person pressed Review now for this head (review-now.ts): the words its round's status carries; it waits for no check */
+  early?: string | null
   now: Date
   start: ReviewerStart
   hasSlot(task: Task, workload?: Workload): boolean
@@ -138,7 +140,7 @@ export async function autoReviewLook(look: ReviewLook): Promise<"passed" | null>
   const { row, checkpoint, pr, now } = look
   supersedeStaleRounds(row, pr, look.start.cfg, now)
   if (pr.isDraft) return look.say("needs-you", "Draft — auto-review starts once it is ready for review", WAITING_ON_YOU_MS)
-  const checks = checksGate({
+  const checks = look.early ? null : checksGate({
     pr, requiredNames: look.required, nowMs: now.getTime(),
     headFirstSeenMs: Math.max(Date.parse(checkpoint.heads?.[pr.head] ?? ""), Date.parse(checkpoint.readySince ?? "")),
   })
@@ -155,6 +157,8 @@ export async function autoReviewLook(look: ReviewLook): Promise<"passed" | null>
   if (!round) {
     const spent = checkpoint.reviewRounds ?? 0
     if (spent - (checkpoint.reviewBase ?? 0) >= MAX_REVIEW_ROUNDS) {
+      // a Review now the budget cannot answer is moot: after Resume, the head is reviewed the usual way
+      delete checkpoint.reviewNow
       writeAutopilotCheckpoint(row, { ...checkpoint, by: "auto-review" }, now)
       pauseAutopilot(getWorkflow(row.id) ?? row, `Auto-review did not pass after ${MAX_REVIEW_ROUNDS} rounds — resume to try again`, now)
       return null
@@ -199,8 +203,13 @@ async function startRound(look: ReviewLook, number: number, counted: boolean, ca
   const round = await planRound(look.start, { author: task, workflowId: row.id, pr, round: number, counted, carried })
   if (counted) checkpoint.reviewRounds = number
   delete checkpoint.reviewRetry
+  delete checkpoint.reviewOpen
+  // the click is spent; this head's round goes on without waiting for its checks
+  const byYou = checkpoint.reviewNow === pr.head
+  if (byYou) { delete checkpoint.reviewNow; checkpoint.reviewEarly = pr.head }
   const panel = reviewsOf(round.id).map((review) => `${letter(review)} ${review.harness}${review.model ? ` ${review.model}` : ""}${review.carried_from ? " (kept)" : ""}`).join(", ")
-  recordWorkflow(row.id, "review", `Round ${number}${counted ? "" : " (re-run)"} started (${round.tier ?? "standard"}): ${panel}`, now.toISOString(), null, { pr: pr.number, sha: pr.head })
+  recordWorkflow(row.id, "review", `Round ${number}${counted ? "" : " (re-run)"} started (${round.tier ?? "standard"})${byYou ? `, by Review now (${look.early})` : ""}: ${panel}`,
+    now.toISOString(), null, { pr: pr.number, sha: pr.head })
   const settled = await driveRound(look, round)
   return settled ? actOn(look, settled).then(() => null) : null
 }
@@ -224,7 +233,7 @@ async function driveRound(look: ReviewLook, round: RoundRow): Promise<RoundRow |
     return settled
   }
   const status = notes.length > 0 ? notes.join(" · ") : "reviewing"
-  look.say("waiting", `Auto-review round ${round.round} of ${budgetOf(look.checkpoint)}: ${status}`, BUSY_MS)
+  look.say("waiting", `Auto-review round ${round.round} of ${budgetOf(look.checkpoint)}${look.early ? ` (${look.early})` : ""}: ${status}`, BUSY_MS)
   return null
 }
 

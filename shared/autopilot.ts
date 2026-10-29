@@ -74,6 +74,15 @@ export interface AutopilotStatus {
    * failed and waits for a person. Absent from an older daemon.
    */
   network?: { resumesAt: string; resume: number; of: number } | null
+  /**
+   * Review now (POST …/autopilot/review-now): offered while auto-review is
+   * held on the PR's head `head` — its checks are still running or failed,
+   * or an auto-fix round is counting down ahead of it — and no round has
+   * started on that head. `requested`: a person asked, and the round has not
+   * started yet (it waits for a free task slot, or the next look). Null
+   * otherwise; absent from an older daemon.
+   */
+  reviewNow?: { head: string; requested: boolean } | null
   /** when `reason` last changed, ISO-8601; null when never armed */
   updatedAt: string | null
 }

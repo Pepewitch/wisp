@@ -35,6 +35,7 @@ export const TASK_AUDIT_ACTIONS = [
   "autopilot-resume",
   "autopilot-skip",
   "autopilot-send-now",
+  "autopilot-review-now",
   "workflow-start",
   "workflow-update",
   "workflow-pause",

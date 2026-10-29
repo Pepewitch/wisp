@@ -101,6 +101,12 @@ export interface AutopilotCheckpoint {
   reviewBase?: number
   /** Resume was pressed: a round whose reviewer gave no verdict is asked again */
   reviewRetry?: boolean
+  /** Review now was pressed for this head: its round starts without waiting for checks or auto-fix (review-now.ts) */
+  reviewNow?: string
+  /** the head whose round a person started that way: its round is driven, and acted on, whatever its checks say */
+  reviewEarly?: string
+  /** the last look found no round on this head and auto-review held on it; `checks`: by its checks (what offers Review now) */
+  reviewOpen?: { head: string; checks: boolean }
   /** automatic resumes after turns that ended on the network, in a row, and the last one's message (network.ts) */
   network?: { messageId: string; resumes: number }
   /** the next of those resumes, due at `at` after turn `turn` ended on the network: what the status shows */
@@ -145,7 +151,7 @@ function latestRow(taskId: string): WorkflowRow | null {
 
 const OFF: AutopilotStatus = {
   autoMerge: false, autoFix: false, autoReview: false, reviewRounds: 0, pr: null, state: "off", reason: "", about: "task", by: "auto-merge", mergedByWisp: false,
-  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, network: null, updatedAt: null,
+  lastMerged: null, pendingFix: null, fixRounds: 0, done: false, network: null, reviewNow: null, updatedAt: null,
 }
 
 export function statusOf(row: WorkflowRow | null): AutopilotStatus {
@@ -180,8 +186,17 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   return {
     done: isDone(row, state, checkpoint),
     autoMerge: params.autoMerge, autoFix: params.autoFix, autoReview: params.autoReview, pr, state, reason, about, by, mergedByWisp: false, lastMerged,
-    pendingFix, fixRounds: checkpoint.rounds ?? 0, reviewRounds: checkpoint.reviewRounds ?? 0, network: networkWaitOf(row, checkpoint), updatedAt: row.updated_at,
+    pendingFix, fixRounds: checkpoint.rounds ?? 0, reviewRounds: checkpoint.reviewRounds ?? 0, network: networkWaitOf(row, checkpoint),
+    reviewNow: reviewNowOf(params, state, checkpoint, pendingFix !== null), updatedAt: row.updated_at,
   }
+}
+
+/** Review now, while auto-review is held on the head by its checks or by an auto-fix countdown ahead of it; or asked for and not started. */
+function reviewNowOf(params: AutopilotParams, state: AutopilotState, checkpoint: AutopilotCheckpoint, countdown: boolean): AutopilotStatus["reviewNow"] {
+  if (!params.autoReview || (state !== "waiting" && state !== "needs-you")) return null
+  if (checkpoint.reviewNow) return { head: checkpoint.reviewNow, requested: true }
+  const open = checkpoint.reviewOpen
+  return open && (open.checks || countdown) ? { head: open.head, requested: false } : null
 }
 
 /**

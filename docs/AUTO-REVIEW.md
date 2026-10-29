@@ -10,6 +10,7 @@ enough to merge.
 ```sh
 wisp new . "Add a dark mode toggle, open a PR" --harness claude --auto-merge --auto-fix --auto-review
 wisp pr <task> review on          # or: review off
+wisp pr <task> review now         # review the current head without waiting for its checks
 wisp review show <task>           # the rounds for the task's current PR, newest first (--pr <n> or --all for others)
 wisp review show <task> --round 2 # one round in full: each reviewer's verdict, findings, evidence
 wisp review rubric                # the rubric reviewers judge by, with this project's own rules
@@ -103,6 +104,19 @@ is matched by both its old and its new path. Within one PR a tier only goes up.
 2. **The head goes green.** Auto-review waits for the PR's checks the way the
    merge gate does: no reviewer is spent on a red or running head. With
    auto-fix on, a red check goes back to the author first.
+
+   **Review now** (under the Auto-review switch, or `wisp pr <task> review
+   now`) skips that wait once, for the head you are looking at. It is offered
+   only while auto-review holds a ready head that has no round yet: its checks
+   still running or failed, or an auto-fix countdown ahead of it. The round
+   starts at the next look, and its status says so ("started by you, checks
+   still running"). Auto-fix is not held back by it: a countdown still sends on
+   time, and a fix push makes a new head, which ends the early round like any
+   push. A push between the click and the look cancels the click. Everything
+   else stays: the round counts toward the PR's three, it waits for a free task
+   slot, a draft is refused, a head that already has a round is refused
+   (Resume asks again), and **auto-merge still waits for every required check
+   to pass**, whatever the round says.
 3. **The round is written with its whole panel**, then each reviewer starts
    when a task slot is free: `Auto-review A · PR #7 · round 1 · abc1234`, then
    `Auto-review B …`. A reviewer that cannot start yet waits on the round; the

@@ -86,6 +86,7 @@ wisp pr <task>                 # status and the reason it is waiting
 wisp pr <task> merge on|off    # auto-merge
 wisp pr <task> fix on|off      # auto-fix
 wisp pr <task> review on|off   # auto-review
+wisp pr <task> review now      # review the current head now, without waiting for its checks
 wisp pr <task> send-now        # send a waiting auto-fix round at once
 wisp pr <task> skip            # never send that round
 wisp pr <task> resume          # after a pause, or to release a Stop hold early
@@ -107,7 +108,10 @@ on a standard or deep change, reviewer B reviews the code too. Each submits
 pass, fail or inconclusive; nothing merges past a head every reviewer on its
 panel has not passed. Wisp measures the diff to pick the depth (light, standard,
 deep) and reviewers never ask how deep to go. A rejection goes back to the author (with auto-fix) at
-most three rounds per PR. See [Auto-review](../../../docs/AUTO-REVIEW.md).
+most three rounds per PR. `review now` starts the round on the current head
+without waiting for its checks or an auto-fix countdown (one click, one head:
+a push cancels it); the merge itself still waits for green checks. See
+[Auto-review](../../../docs/AUTO-REVIEW.md).
 
 ```
 wisp review show <task> [--round <n>] [--pr <n> | --all] [--json]   # the current PR's rounds; one in full
@@ -387,7 +391,7 @@ action: when, what, who, and what it was about. The actions are `create`,
 `answer` (an agent's question), `interrupt`, `compact`, `archive`,
 `force-archive`, `cleanup` (resolving an archive cleanup), `fresh-session`,
 `push`, `autopilot` (a switch turned on or off, including by archiving),
-`autopilot-resume`/`-skip`/`-send-now`, `workflow-start`, `-update`, `-pause`,
+`autopilot-resume`/`-skip`/`-send-now`/`-review-now`, `workflow-start`, `-update`, `-pause`,
 `-resume` and `-complete`, a `merge` autopilot made, and `fail`.
 
 The actor is `web`, `desktop` or `cli` for the client that asked. It is

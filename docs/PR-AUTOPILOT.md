@@ -19,6 +19,7 @@ wisp pr <task> fix on        # or: fix off
 wisp pr <task> send-now      # send a waiting auto-fix round at once
 wisp pr <task> skip          # never send that round
 wisp pr <task> resume        # after a pause, or to release a Stop hold early
+wisp pr <task> review now    # with auto-review on: review this head without waiting for its checks (AUTO-REVIEW.md)
 wisp pr <task> history       # what it did: when, what, which PR and commit, and why
 ```
 

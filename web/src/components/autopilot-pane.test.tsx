@@ -304,6 +304,67 @@ describe("auto-review in the Autopilot tab", () => {
   })
 })
 
+describe("Review now in the Autopilot tab", () => {
+  const REVIEW = { ...ALL, autoReview: true }
+  const HEAD = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+  const held: AutopilotStatus = {
+    ...WAITING, autoReview: true, by: "auto-review", reviewRounds: 0, reason: "Waiting for checks (2 running) before auto-review",
+    reviewNow: { head: HEAD, requested: false },
+  }
+  const countdown: AutopilotStatus = {
+    ...WAITING, autoReview: true, by: "auto-fix", reviewRounds: 0, reason: "Auto-fix will send: lint failed",
+    pendingFix: { summary: "lint failed", sendsAt: new Date(Date.now() + 45_000).toISOString() }, reviewNow: { head: HEAD, requested: false },
+  }
+  const reviewRow = async () => (await screen.findByRole("switch", { name: "Auto-review" })).parentElement!
+
+  it("is offered under Auto-review while it holds the head, and the click posts the head it showed", async () => {
+    const calls = stub(REVIEW)
+    mount(<AutopilotPane task={withStatus(held)} />)
+    const row = await reviewRow()
+    expect(row.querySelector("[data-tint]")).toHaveTextContent("Waiting for checks (2 running) before auto-review")
+    expect(within(row).queryByText(/auto-fix may push/)).toBeNull()
+    fireEvent.click(within(row).getByRole("button", { name: "Review now" }))
+    await waitFor(() => expect(calls).toContainEqual({ path: `/api/tasks/${TASK.id}/autopilot/review-now`, method: "POST", body: { head: HEAD } }))
+    expect(within(screen.getByRole("switch", { name: "Auto-merge" }).parentElement!).queryByRole("button", { name: "Review now" })).toBeNull()
+  })
+
+  it("beside an auto-fix countdown it warns that a fix push ends the review; Send now and Skip stay under Auto-fix", async () => {
+    stub(REVIEW)
+    mount(<AutopilotPane task={withStatus(countdown)} />)
+    const row = await reviewRow()
+    expect(within(row).getByRole("button", { name: "Review now" })).toBeInTheDocument()
+    expect(row).toHaveTextContent("auto-fix may push after this; that push ends this review.")
+    const fix = screen.getByRole("switch", { name: "Auto-fix" }).parentElement!
+    expect(within(fix).getByRole("button", { name: "Send now" })).toBeInTheDocument()
+    expect(within(fix).queryByRole("button", { name: "Review now" })).toBeNull()
+  })
+
+  it("once asked for it says so instead of offering it again", async () => {
+    stub(REVIEW)
+    mount(<AutopilotPane task={withStatus({ ...held, reviewNow: { head: HEAD, requested: true } })} />)
+    const row = await reviewRow()
+    expect(row).toHaveTextContent("Review now asked for a1b2c3d")
+    expect(within(row).queryByRole("button", { name: "Review now" })).toBeNull()
+  })
+
+  it("is not drawn when nothing holds auto-review, while it is off, or on a daemon that never offers it", async () => {
+    stub(REVIEW)
+    const { unmount } = mount(<AutopilotPane task={withStatus({ ...held, reviewNow: null })} />)
+    await reviewRow()
+    expect(screen.queryByRole("button", { name: "Review now" })).toBeNull()
+    unmount()
+    const off = mount(<AutopilotPane task={withStatus({ ...held, autoReview: false })} />)
+    await reviewRow()
+    expect(screen.queryByRole("button", { name: "Review now" })).toBeNull()
+    off.unmount()
+    const older: AutopilotStatus = { ...held }
+    delete older.reviewNow
+    mount(<AutopilotPane task={withStatus(older)} />)
+    await reviewRow()
+    expect(screen.queryByRole("button", { name: "Review now" })).toBeNull()
+  })
+})
+
 const review = (id: string, role: AutoReviewReview["role"], state: AutoReviewReview["state"], over: Partial<AutoReviewReview> = {}): AutoReviewReview => ({
   id, role, agent: role === "primary" ? { harness: "claude", model: "opus-5" } : { harness: "codex", model: "gpt-5.6-luna" }, state,
   summary: null, rationale: null, findings: [], reviewed: [], evidence: [], escalated: null, carried: false,
