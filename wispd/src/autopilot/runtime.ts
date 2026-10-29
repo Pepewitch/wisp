@@ -47,7 +47,7 @@ import {
 import { CONTEXT_CHANGE_PAUSE } from "./type"
 import { busyReason, forgetIdle, forgetPending, nextPrReason, observe } from "./look"
 import { autoReviewLook, endUnwantedReviews, supersedeStaleRounds, sweepReviews } from "./auto-review"
-import { EarlyAnswers, reviewNowLook } from "./review-now"
+import { EarlyAnswers, keepEarlyCheckpoint, reviewNowLook } from "./review-now"
 import { createAndLaunchTask } from "../domain/task-create"
 import type { ModelProbeCache } from "../model-probes"
 import type { Launch } from "../verify/reviewer"
@@ -385,8 +385,8 @@ export class AutopilotRuntime {
     const early = ctx.autoReview ? reviewNowLook(row, checkpoint, pr, required, this.now().getTime()) : null
     const answers = early === null ? null : new EarlyAnswers()
     const reviewed = answers ? await this.autoReview(row, task, checkpoint, pr, required, ctx.autoFix, early, answers.onReview) : null
-    // it sent the author its findings, or paused: nothing else acts on this read
-    if (answers && getWorkflow(row.id)?.revision !== row.revision) return null
+    // a moved revision: it sent the author its findings, or paused, and nothing else acts on this read
+    if (answers && !keepEarlyCheckpoint(row, checkpoint)) return null
     // Auto-fix acts first: a red check or a conflict is fixed before anything merges.
     const nothingToFix = ctx.autoFix ? await this.autoFix({ ...ctx, speak: answers?.onFix }) : "Nothing to fix"
     if (answers) return answers.finish(reviewed === "passed", nothingToFix, (check) => this.saveCheck(row, check)) ? null : nothingToFix

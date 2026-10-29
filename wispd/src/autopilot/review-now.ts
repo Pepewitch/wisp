@@ -25,7 +25,7 @@ function roundOnHead(workflowId: string, pr: number, head: string): boolean {
 }
 
 /** POST …/autopilot/review-now: remember the head the person saw (`head`, or the latest one Wisp read); the next look starts its round. */
-export function askReviewNow(taskId: string, head: string | undefined, now = new Date()): AutopilotStatus {
+export function askReviewNow(taskId: string, head: string | undefined, now = new Date()): { status: AutopilotStatus; asked: boolean } {
   const row = autopilotRow(taskId)
   if (!row || !paramsOf(row).autoReview) throw new AutopilotError("Auto-review is not on for this task", 409)
   if (row.state !== "active") throw new AutopilotError("Autopilot is paused — resume it first", 409)
@@ -36,7 +36,8 @@ export function askReviewNow(taskId: string, head: string | undefined, now = new
   if (seen !== current) throw new AutopilotError(`PR #${checkpoint.pr} has a newer head (${short(current)}) — look again before reviewing it`, 409)
   if (!checkpoint.readySince) throw new AutopilotError(`PR #${checkpoint.pr} is a draft — auto-review starts once it is ready for review`, 409)
   if (roundOnHead(row.id, checkpoint.pr, seen)) throw new AutopilotError(`Auto-review already has a round on ${short(seen)} — Resume reviews it again`, 409)
-  if (checkpoint.reviewNow !== seen) {
+  const asked = checkpoint.reviewNow !== seen
+  if (asked) {
     const at = now.toISOString()
     // the revision bump makes a look already in flight discard its answer, as Send now's does
     db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
@@ -44,7 +45,7 @@ export function askReviewNow(taskId: string, head: string | undefined, now = new
     recordWorkflow(row.id, "review", `Review now: you asked for a round on ${short(seen)} without waiting for its checks`, at, null, { pr: checkpoint.pr, sha: seen })
     announceWorkflow(taskId)
   }
-  return autopilotStatus(taskId)
+  return { status: autopilotStatus(taskId), asked }
 }
 
 /**
@@ -65,6 +66,18 @@ export function reviewNowLook(row: WorkflowRow, checkpoint: AutopilotCheckpoint,
   if (checkpoint.reviewNow === undefined && checkpoint.reviewEarly === undefined) return null
   if (!checks) return "started by you"
   return `started by you, ${checks.kind === "needs-you" ? `${checks.reason.charAt(0).toLowerCase()}${checks.reason.slice(1)}` : "checks still running"}`
+}
+
+/**
+ * Write an early look's checkpoint down once auto-review is done with it and
+ * before auto-fix awaits, so a round started here stays counted and early
+ * even if auto-fix then throws (a GitHub pause). No revision bump: this look
+ * is still the writer, and its own answer follows. False when the revision
+ * moved: auto-review sent the author its findings or paused.
+ */
+export function keepEarlyCheckpoint(row: WorkflowRow, checkpoint: AutopilotCheckpoint): boolean {
+  return db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ? AND revision = ? AND state = 'active'",
+    [JSON.stringify(checkpoint), row.id, row.revision]).changes === 1
 }
 
 /**

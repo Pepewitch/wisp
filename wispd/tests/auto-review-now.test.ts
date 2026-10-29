@@ -2,6 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import type { AutopilotStatus } from "../../shared/autopilot";
 import { autopilotHistory, autopilotRow, autopilotStatus, checkpointOf, setAutopilot, writeAutopilotCheckpoint } from "../src/autopilot/store";
 import { prCommand } from "../src/cli-pr";
+import { GitHubPausedError } from "../src/github-budget";
 import { loadConfig, type WispConfig } from "../src/config";
 import type { NewTaskInput } from "../src/domain/task-create";
 import { autopilotRoute } from "../src/routes/autopilot";
@@ -44,7 +45,7 @@ function setup(options: { autoMerge?: boolean; autoFix?: boolean; harness?: stri
   seed(task.id, clock);
   const cfg: WispConfig = { ...loadConfig(), repos: [{ path: "/fixture/repo", verifySecond: "off" }] };
   const rt = runtime(github, clock, options.adapters ?? {}, cfg, undefined, { launch });
-  return { clock, state, launched, task, rt, cfg };
+  return { clock, state, github, launched, task, rt, cfg };
 }
 
 const call = (taskId: string, body?: unknown, method = "POST") => {
@@ -128,6 +129,32 @@ describe("Review now", () => {
     const stale = await call(task.id, { head: HEAD });
     expect(stale.status).toBe(409);
     expect(((await stale.json()) as { error: string }).error).toContain(`newer head (${next.slice(0, 7)})`);
+  });
+
+  test("a GitHub pause in auto-fix after its round launched keeps the round counted and early", async () => {
+    const RERUNNABLE = [{ ...FAILED[0]!, conclusion: "CANCELLED", checkRunId: 11, run: { id: 5, event: "pull_request" }, deployment: false }];
+    const { clock, state, github, launched, task, rt } = setup({ autoFix: true });
+    await pass(rt, task.id, clock);
+    await reviewNow(task.id);
+    state.pr = snapshot({ checks: RERUNNABLE });
+    let reruns = 0;
+    github.rerunRun = async () => { reruns++; throw new GitHubPausedError(clock.now + 60_000, "share"); };
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(1);
+    expect(reruns).toBe(1);
+    expect(autopilotStatus(task.id).reason).toContain("Paused");
+    expect(roundsOf(task.id).filter((round) => round.counted)).toHaveLength(1);
+    expect(checkpointOf(autopilotRow(task.id)!)).toMatchObject({ reviewRounds: 1, reviewEarly: HEAD });
+    expect(checkpointOf(autopilotRow(task.id)!).reviewNow).toBeUndefined();
+    // the next look drives that round past the red check, and a pass is settled, not stuck behind CI
+    github.rerunRun = async () => true;
+    clock.now += 2 * 60_000;
+    submitVerdict(primary(task.id).reviewer_task_id!, { token: primary(task.id).token, verdict: "pass", summary: "Checked it" } as never);
+    transition(primary(task.id).reviewer_task_id!, "done");
+    await pass(rt, task.id, clock);
+    expect(launched).toHaveLength(1);
+    expect(latest(task.id).state).toBe("pass");
+    expect(autopilotStatus(task.id).reviewRounds).toBe(1);
   });
 
   test("with no free slot it waits, then starts on the same head", async () => {
@@ -228,7 +255,7 @@ describe("the review-now route and CLI", () => {
     expect(await reviewNow(task.id, { head: HEAD })).toMatchObject({ reviewNow: { head: HEAD, requested: true } });
     expect(autopilotHistory(task.id).filter((entry) => entry.detail.startsWith("Review now:"))).toHaveLength(1);
     const audit = db.query("SELECT action, detail FROM task_audit WHERE task_id = ? AND action = 'autopilot-review-now'").all(task.id) as { action: string; detail: string }[];
-    expect(audit[0]).toEqual({ action: "autopilot-review-now", detail: short });
+    expect(audit).toEqual([{ action: "autopilot-review-now", detail: short }]);
     db.run("UPDATE workflows SET state = 'paused' WHERE id = ?", [autopilotRow(task.id)!.id]);
     expect(((await (await call(task.id)).json()) as { error: string }).error).toBe("Autopilot is paused — resume it first");
   });

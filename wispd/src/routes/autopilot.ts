@@ -32,8 +32,9 @@ async function reviewNowRoute(req: Request, taskId: string): Promise<Response> {
   if (body instanceof Response) return body
   for (const key of Object.keys(body)) if (key !== "head") return err(`unknown field '${key}'`, 400)
   if (body.head !== undefined && (typeof body.head !== "string" || !/^[0-9a-f]{40,64}$/.test(body.head))) return err("head must be a full commit sha", 400)
-  const status = askReviewNow(taskId, body.head as string | undefined)
-  recordAudit(taskId, "autopilot-review-now", requestActor(req), status.reviewNow?.head.slice(0, 7) ?? null)
+  const { status, asked } = askReviewNow(taskId, body.head as string | undefined)
+  // a repeat click on the same head changes nothing, so it is not audited again
+  if (asked) recordAudit(taskId, "autopilot-review-now", requestActor(req), status.reviewNow?.head.slice(0, 7) ?? null)
   return json(status)
 }
 
