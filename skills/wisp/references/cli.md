@@ -112,8 +112,11 @@ out of draft and has settled for a couple of minutes, while its checks run
 (a project set to `reviewStart: "checks"` waits for them); a check auto-fix is
 about to fix goes back to the author first. While a round runs, auto-fix holds
 what it would send; a rejection then goes back to the author together with it
-as one message, one push. Only rejections spend the budget: three per PR, then
-it pauses ("round 4 · 1 of 3 rejections used"). `review now` starts the round
+as one message, one push. The budget is three rejections per PR, then it
+pauses ("round 4 · 1 of 3 rejections used"); a pass is free, and so are the
+PR's first six rounds that end without a verdict (pushed over after the
+reviewers started, an error, a recipe hold): past six, the PR waits for its
+checks and each further one spends one. `review now` starts the round
 on the current head without waiting for its checks or an auto-fix countdown
 (one click, one head: a push cancels it); the merge itself still waits for
 green checks. See

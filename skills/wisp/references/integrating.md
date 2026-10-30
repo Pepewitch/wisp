@@ -27,9 +27,11 @@ anything merges. `wisp pr <id>` names what any of them is waiting for.
 How the three work together on a PR:
 
 - A review round starts once a head is out of draft, has settled for a couple
-  of minutes and the author is idle, while CI runs. A project set to
-  `reviewStart: "checks"` waits for green checks instead ([setup.md](setup.md)).
-  `wisp pr <id> review now` starts the round on the current head at once.
+  of minutes and the author is idle, while CI runs; when auto-fix is about to
+  send a CI fix, that goes first and the round starts on the fixed head. A
+  project set to `reviewStart: "checks"` waits for green checks instead
+  ([setup.md](setup.md)). `wisp pr <id> review now` starts the round on the
+  current head at once.
 - While a round runs, auto-fix holds what it would send (red CI, bot and
   human comments, conflicts), so a push cannot cut the review short. The
   status says "Auto-fix will send after the review"; `wisp pr <id> send-now`
@@ -37,10 +39,13 @@ How the three work together on a PR:
 - A rejection goes back to the author together with the held items as one
   message, for one push. A pass or a review that broke releases the held
   items as usual. Read findings with `wisp review show <id>`.
-- Only rejections spend the budget: three per PR, then autopilot pauses.
-  `wisp pr <id> resume` grants three more, or step in yourself. Rounds cut
-  short by a push are free, but a PR that keeps losing rounds without a
-  verdict falls back to waiting for its checks.
+- The budget is three rejections per PR, then autopilot pauses;
+  `wisp pr <id> resume` grants three more, or step in yourself. A pass costs
+  nothing. Rounds that end without a verdict (cut short by a push or a
+  retarget after the reviewers started, an error, a recipe hold) are free for
+  the PR's first six; after that the PR waits for its checks before each
+  round, and every further such round spends one, so a PR can pause without
+  any rejection.
 - Merging always waits for green required checks, however early the review
   ran.
 

@@ -56,10 +56,11 @@ read `wisp result <child>`. Turns autopilot starts (auto-fix rounds) don't
 report either; their PR events do.
 
 A report that a child's PR "needs a decision" names why; `wisp pr <child>`
-shows it. After three rejections (`round-cap`), read the findings, then either
-`wisp pr <child> resume` for three more rounds, steer the child with what the
-fix should be, or bring it to the person when the findings need a judgment
-call. Starting a child
+shows it. `round-cap` means auto-review spent its three rejections or auto-fix
+its five rounds. Read the findings (`wisp review show <child>`) or the red
+checks, then either `wisp pr <child> resume` (three more rejections, or five
+more fix rounds), steer the child with what the fix should be, or bring it to
+the person when the findings need a judgment call. Starting a child
 with `--harness`, `--model` and `--effort` picks its agent; add `--auto-fix
 --auto-review` so its PR is reviewed and its fixes are sent without you.
 
