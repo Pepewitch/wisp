@@ -61,8 +61,8 @@ cask "wisp-desktop" do
 
   auto_updates true
   depends_on arch: :arm64
-  depends_on macos: :monterey
   depends_on formula: "pepewitch/tap/wisp"
+  depends_on macos: :monterey
 
   app "Wisp.app"
 

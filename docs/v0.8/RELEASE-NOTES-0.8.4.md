@@ -38,6 +38,9 @@ bot, and makes the Claude usage gauge reliable again.
   skipped, on a session that never sees a prompt, so it costs no model
   tokens. It answers in about a second, and the popover shows Claude's plan
   type. An older claude falls back to `/usage`.
+- **Homebrew Cask style** (#480). The Desktop Cask lists its `depends_on`
+  stanzas in the order current Homebrew's `brew style` requires; the old
+  order failed the publication audit.
 - **Skill and docs** (#478). The bundled `wisp` skill now covers auto-review,
   the PR autopilot flow, and following up with subtasks.
 
