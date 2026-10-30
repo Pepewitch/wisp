@@ -21,14 +21,14 @@ Cheaper views, each answering one question:
 
 `wisp send`, `wisp interrupt`, and `wisp fresh` steer from the CLI;
 [cli.md](cli.md#tasks) says how a message reaches a running turn and what
-each command leaves running. Switching an existing task's harness, model, or
-effort happens in the browser or Desktop composer, or through the API
-([cli.md](cli.md#tasks)). From the CLI alone, ask the user to switch it, or
-start a new task from the old task's branch with
-`wisp new <repo> "<prompt>" --harness <h> --base <branch>`; only committed
-work carries over. After a harness switch the new agent starts without the
-old context, so restate the goal in the next message as you would in a new
-prompt.
+each command leaves running. Switch an existing task's model or effort with
+the message that continues it: `wisp send <id> "continue" --model <m>
+[--effort <level>]`. The task keeps its id, its session and its PR, and the
+next turn runs on the new model. Add `--when next-turn` to queue the switch
+without disturbing a running turn. `--harness <h> --model <m>
+--fresh-context` changes the harness; the new agent starts without the old
+context, so restate the goal in that message as you would in a new prompt.
+Don't relaunch a task as a new one just to change its model.
 
 ## Subtasks
 

@@ -15,6 +15,8 @@ for (const flag of ["viewport", "selector", "wait-for", "wait", "script"]) VALUE
 // subtasks: wisp new --parent <id> --kind <kind>, wisp archive --subtasks <archive|force>
 for (const flag of ["parent", "kind", "subtasks"]) VALUE_FLAGS.add(flag);
 REPEAT_FLAGS.add("allow-port");
+// wisp send --when now|next-turn
+VALUE_FLAGS.add("when");
 
 export function parseArgs(args: string[]): Parsed {
   const positional: string[] = [];

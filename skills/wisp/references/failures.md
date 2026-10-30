@@ -25,7 +25,11 @@ still in progress, the task reads `running` with a detail that starts
 
 - `limit: ` is a usage or rate limit. `wisp limits` shows each harness's plan
   windows: wait for the window to reset and then `wisp send <id> "continue"`,
-  or [move the work](supervise.md#steering) to another harness or model.
+  or move the work to another model with `wisp send <id> "continue" --model
+  <m>` ([steering](supervise.md#steering)).
+- A provider that says the model is at capacity, or unavailable, ends the
+  turn `failed` too; the same `wisp send <id> "continue" --model <m>` retries
+  it on another model of the harness, keeping the task and its session.
 - `network: ` means the turn lost its connection to the provider (DNS,
   connection refused or reset, a timeout). The session and worktree are intact.
   With auto-merge, auto-fix or auto-review on, Wisp resumes the task itself
