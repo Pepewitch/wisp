@@ -348,8 +348,8 @@ wisp attach <task>
 keeping the branch, conversation and attachment bytes; it refuses (exit
 nonzero, named reason) while a turn is running, the tree is dirty, the
 branch holds commits nothing else holds — a merged or pushed branch archives
-clean — or auto-merge / auto-fix is still watching its PR (archiving switches
-them off). `-f` overrides: kills the turn, commits leftovers onto the branch as
+clean — or auto-merge / auto-fix / auto-review is still watching its PR (archiving
+switches them off). `-f` overrides: kills the turn, commits leftovers onto the branch as
 `wisp: uncommitted work at archive`. When Git cannot read the worktree's status
 (a corrupt index, a bad object), archive refuses even with `-f`, because it cannot
 tell what would be lost: repair the repository, or move the worktree directory
