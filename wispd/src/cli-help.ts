@@ -50,7 +50,7 @@ const COMMAND_USAGE = {
                                                     (-a includes archived tasks)`,
   wait: `  ${COMMAND} wait <task> [--timeout <sec>]           block until done / needs-input / failed (waits through stuck);
                                                exit 0 done, 2 needs-input, 1 failed, 3 timeout`,
-  send: `  ${COMMAND} send <task> "message" [--attach <path>]… send safely; active tasks steer or queue without stopping`,
+  send: `  ${COMMAND} send <task> "message" [--model <m>] [--effort <level>] [--harness <h> --fresh-context] [--when now|next-turn] [--attach <path>]… send safely; active tasks steer or queue without stopping; --model/--effort switch the task from its next turn (same harness keeps the session)`,
   interrupt: `  ${COMMAND} interrupt <task>                        stop the running turn (session survives)`,
   workflow: `  ${COMMAND} workflow <command>                      task automations: types, start, list, show, set, pause, resume, complete
                                                     (${COMMAND} workflow --help lists their parameters)`,

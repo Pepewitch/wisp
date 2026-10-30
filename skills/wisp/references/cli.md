@@ -281,7 +281,7 @@ Exit 1 also reports a CLI error: a bad `--timeout`, an unknown task, or a poll
 that cannot reach the daemon, so run the wait again after a daemon restart.
 
 ```
-wisp send <task> "message" [--attach <path>]…
+wisp send <task> "message" [--model <m>] [--effort <level>] [--harness <h> --fresh-context] [--when now|next-turn] [--attach <path>]…
 wisp interrupt <task>
 wisp fresh <task>
 ```
@@ -327,12 +327,18 @@ confirmed durably, Wisp leaves the message queued and reports uncertain
 delivery rather than risking loss. Recovery can replay that stable-ID
 message at least once.
 
-There is no CLI verb for changing an existing task's harness, model, or
-effort. That is a composer control in the browser and Desktop app, and a
-`POST /api/tasks/<id>/send` field set (`harness`, `model`, `effort`,
-`startFreshContext`) on the API. Changing harness requires both an explicit
-`model` (`400` without it) and `startFreshContext: true` (`409` without it,
-because the new harness cannot inherit the previous provider session). The
+`wisp send <task> "message" --model <m> [--effort <level>]` changes an
+existing task's model or effort with the message; `--harness <h> --model <m>
+--fresh-context` changes its harness. `--when next-turn` queues the switch
+without touching a running turn, and `--when now` stops the running turn to
+start it; with neither, a switch waits for the running turn to end (a new agent
+is never steered into it). The browser and Desktop composers do the same, and
+so does the API's `POST /api/tasks/<id>/send` field set (`harness`, `model`,
+`effort`, `startFreshContext`, `when`). The CLI refuses a model or effort the
+target harness does not offer (from `GET /api/harnesses`; a harness whose list
+is not known yet is not checked). Changing harness requires both an explicit
+model (`400` without it) and `--fresh-context` (`409` without it, because the
+new harness cannot inherit the previous provider session). The
 earlier conversation stays visible behind a divider in the timeline, and each
 turn keeps the harness and model that ran it: `wisp log` renders a turn in its
 own harness's format, and `wisp show` lists each turn's own model. A
