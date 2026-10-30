@@ -148,6 +148,63 @@ export function parseClaudeUsage(text: string, now: Date): HarnessLimits {
   return { plan: null, windows };
 }
 
+/**
+ * claude's `get_usage` control request (live-verified 2.1.311), the
+ * structured data behind `/usage`. `limits` lists every window the plan
+ * enforces: `session` (the 5-hour one), `weekly_all`, and a `weekly_scoped`
+ * week per model. An older claude sends only the `five_hour`/`seven_day`
+ * pair. An account with no plan limits (an API key, a third-party provider)
+ * has no `subscription_type`: that is `unavailable`. A subscriber whose
+ * limits did not come back is a failed read, never "nothing used".
+ */
+export function normalizeClaudeUsage(raw: unknown): HarnessLimits {
+  if (!isRecord(raw)) {
+    throw new LimitsError("claude's usage report is not a JSON object — the protocol shape may have changed");
+  }
+  const plan = str(raw.subscription_type);
+  const rates = raw.rate_limits;
+  if (!isRecord(rates)) {
+    if (plan === null) throw new LimitsError("claude reports no plan limits: it is not using a Claude subscription", "unavailable");
+    throw new LimitsError(`claude could not read the ${plan} plan's limits`);
+  }
+  const windows: LimitWindow[] = [];
+  for (const limit of Array.isArray(rates.limits) ? rates.limits.filter(isRecord) : []) {
+    const usedPercent = num(limit.percent);
+    const kind = str(limit.kind);
+    if (usedPercent === null || kind === null) continue;
+    const resetsAt = isoOf(limit.resets_at);
+    const scope = isRecord(limit.scope) && isRecord(limit.scope.model) ? str(limit.scope.model.display_name) : null;
+    if (kind === "session") {
+      windows.push({ id: "session", label: "5h", pool: null, model: null, usedPercent, resetsAt, windowMins: 300 });
+    } else if (str(limit.group) === "weekly") {
+      windows.push(scope
+        ? { id: `week:${scope.toLowerCase()}`, label: scope, pool: null, model: scope, usedPercent, resetsAt, windowMins: 10_080 }
+        : { id: "week", label: "7d", pool: null, model: null, usedPercent, resetsAt, windowMins: 10_080 });
+    } else {
+      windows.push({ id: kind, label: kind, pool: null, model: scope, usedPercent, resetsAt, windowMins: null });
+    }
+  }
+  if (windows.length === 0) {
+    for (const [key, id, label, windowMins] of [["five_hour", "session", "5h", 300], ["seven_day", "week", "7d", 10_080]] as const) {
+      const w = rates[key];
+      const usedPercent = isRecord(w) ? num(w.utilization) : null;
+      if (isRecord(w) && usedPercent !== null) {
+        windows.push({ id, label, pool: null, model: null, usedPercent, resetsAt: isoOf(w.resets_at), windowMins });
+      }
+    }
+  }
+  if (windows.length === 0) throw new LimitsError(`claude reported no windows for the ${plan ?? "current"} plan`);
+  return { plan, windows };
+}
+
+/** An ISO timestamp, re-stated in UTC; anything unparseable is null rather than a guess. */
+function isoOf(v: unknown): string | null {
+  const s = str(v);
+  if (s === null) return null;
+  const at = Date.parse(s);
+  return Number.isNaN(at) ? null : new Date(at).toISOString();
+}
+
 /* ---------------- codex ---------------- */
 
 /** One of codex's `primary`/`secondary` rate-limit windows; shared with the `/usage` probe so both agree. */
@@ -310,36 +367,71 @@ function checkAccount(whoami: unknown, login: { userId: string; orgId: string } 
   return "verified";
 }
 
+/** claude's structured usage read: one control request on a session that never sees a prompt. */
+async function claudeControlUsage(def: AdapterDef, ctx: LimitsCtx, io: LimitsIo): Promise<HarnessLimits> {
+  const rpc = io.openRpc(
+    [def.bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+      "--no-session-persistence", "--setting-sources", "user"],
+    { cwd: io.scratchDir, envelope: "claude-control", signal: ctx.signal },
+  );
+  try {
+    await rpc.call("initialize", {});
+    return normalizeClaudeUsage(await rpc.call("get_usage", { skip_behaviors: true }));
+  } finally {
+    rpc.close();
+  }
+}
+
+/**
+ * The `/usage` report in print mode (live-verified 2.1.282): a local command,
+ * so no model tokens, but on 2.1.3xx it also scans local transcripts. `TZ=UTC`
+ * makes claude state every reset in UTC, the only zone the parser reads.
+ */
+async function claudeReportUsage(def: AdapterDef, ctx: LimitsCtx, io: LimitsIo): Promise<HarnessLimits> {
+  const res = await io.spawnOnce(
+    [def.bin, "-p", "/usage", "--output-format", "json", "--no-session-persistence", "--setting-sources", "user"],
+    { cwd: io.scratchDir, env: { TZ: "UTC" }, signal: ctx.signal },
+  );
+  const line = res.stdout.split("\n").reverse().find((l) => l.trim().startsWith("{"));
+  let parsed: unknown;
+  try {
+    parsed = line ? JSON.parse(line) : null;
+  } catch {
+    parsed = null;
+  }
+  const result = isRecord(parsed) ? str(parsed.result) : null;
+  if (!isRecord(parsed) || result === null) {
+    const stderr = res.stderr.trim().split("\n")[0];
+    throw new LimitsError(`claude answered /usage with no report (exit ${res.exitCode})${stderr ? `: ${stderr}` : ""}`);
+  }
+  if (parsed.is_error === true) throw new LimitsError(`claude refused /usage: ${result.split("\n")[0]}`);
+  return parseClaudeUsage(result, ctx.now);
+}
+
 export const LIMIT_STRATEGIES: Record<string, LimitsStrategy> = {
   /**
-   * claude (live-verified 2.1.282): `/usage` is a local command, so print
-   * mode answers it with zero model tokens in ~0.5s. `--no-session-persistence`
-   * keeps the read out of the user's session history, and `TZ=UTC` makes
-   * claude state every reset in UTC, which is the only zone the parser reads.
-   * `--setting-sources user` keeps project and local settings (hooks,
-   * `apiKeyHelper`, `env`) out of the read even if the private scratch cwd
-   * were ever to hold some: print mode skips the workspace trust dialog.
+   * claude: the `get_usage` control request with `skip_behaviors` (live-
+   * verified 2.1.311), over a stream-json print session that is opened, asked
+   * and killed with no user message, so no model tokens. It answers in about
+   * a second. `/usage` in print mode now also scans every local transcript of
+   * the past week for its "what's contributing" section, which took 8–16s on
+   * a busy machine and tripped the read's time limit; `skip_behaviors` is
+   * claude's own switch for a usage meter that needs only the plan limits.
+   * A claude too old for `get_usage` (an error answer, not a timeout) falls
+   * back to the `/usage` report. `--no-session-persistence` keeps the read
+   * out of the user's session history; `--setting-sources user` keeps project
+   * and local settings (hooks, `apiKeyHelper`, `env`) out of it even if the
+   * private scratch cwd were ever to hold some.
    */
   "claude-usage": {
     async run(def, ctx, io) {
-      const res = await io.spawnOnce(
-        [def.bin, "-p", "/usage", "--output-format", "json", "--no-session-persistence", "--setting-sources", "user"],
-        { cwd: io.scratchDir, env: { TZ: "UTC" }, signal: ctx.signal },
-      );
-      const line = res.stdout.split("\n").reverse().find((l) => l.trim().startsWith("{"));
-      let parsed: unknown;
       try {
-        parsed = line ? JSON.parse(line) : null;
-      } catch {
-        parsed = null;
+        return await claudeControlUsage(def, ctx, io);
+      } catch (error) {
+        // claude's own answer, or the caller gave up: a second read helps neither
+        if ((error instanceof LimitsError && error.status === "unavailable") || ctx.signal?.aborted) throw error;
+        return claudeReportUsage(def, ctx, io);
       }
-      const result = isRecord(parsed) ? str(parsed.result) : null;
-      if (!isRecord(parsed) || result === null) {
-        const stderr = res.stderr.trim().split("\n")[0];
-        throw new LimitsError(`claude answered /usage with no report (exit ${res.exitCode})${stderr ? `: ${stderr}` : ""}`);
-      }
-      if (parsed.is_error === true) throw new LimitsError(`claude refused /usage: ${result.split("\n")[0]}`);
-      return parseClaudeUsage(result, ctx.now);
     },
   },
 
