@@ -64,6 +64,9 @@ describe("Homebrew Cask rendering", () => {
     expect(cask).toContain("Reset desktop data before uninstalling");
     expect(cask).toStartWith("# frozen_string_literal: true\n\n");
     expect(cask.indexOf("auto_updates true")).toBeLessThan(cask.indexOf("depends_on arch:"));
+    // brew style's Cask/StanzaOrder wants depends_on keys alphabetical (Homebrew 7.0.11)
+    expect(cask.indexOf("depends_on arch:")).toBeLessThan(cask.indexOf("depends_on formula:"));
+    expect(cask.indexOf("depends_on formula:")).toBeLessThan(cask.indexOf("depends_on macos:"));
     expect(cask).not.toMatch(/API_KEY|PASSWORD|access.token|bearer/i);
   });
 
