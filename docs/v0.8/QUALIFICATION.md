@@ -2,20 +2,72 @@
 
 This ledger separates release evidence from the version label. The 0.8 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.8.3 is the current release; earlier 0.8 records are retained
+coverage. 0.8.4 is the current release; earlier 0.8 records are retained
 below. The 0.7 records remain in
 [the 0.7 ledger](../v0.7/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
 recorded for 0.5 under
 [Still unqualified or outside scope](../v0.5/QUALIFICATION.md#still-unqualified-or-outside-scope)
-still apply to 0.8.3.
+still apply to 0.8.4.
+
+## 0.8.4 publication
+
+**Published and promoted on 2026-10-30.**
+[Wisp 0.8.4](https://github.com/Pepewitch/wisp/releases/tag/v0.8.4) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 09:25:46 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`478ee117b4229b5b59b76d60a07bb45ece16446c`](https://github.com/Pepewitch/wisp/commit/478ee117b4229b5b59b76d60a07bb45ece16446c),
+landed through [PR #483](https://github.com/Pepewitch/wisp/pull/483). It carries
+auto-review that starts on ready, holds auto-fix while it runs and sends one
+combined round ([#475](https://github.com/Pepewitch/wisp/pull/475)); Claude
+usage limits read with `get_usage`
+([#479](https://github.com/Pepewitch/wisp/pull/479)); `wisp send` switching a
+task's model, effort or harness
+([#482](https://github.com/Pepewitch/wisp/pull/482)); and the other changes
+listed in the release notes since 0.8.3.
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/41032370204)
+completed every job successfully on its first run:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, supply-chain, and update-verifier checks passed; the exact-main [release candidate](https://github.com/Pepewitch/wisp/actions/runs/41032074699) also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |
+| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit `478ee11` were verified |
+| Homebrew installability | The Formula and Cask were audited offline before publication, and the published Formula was installed the way a user does before the tap advanced |
+
+Promotion completed at 09:28:21 UTC with Homebrew tap commit
+[`13d50fee619dcff7ca3b619d632234b18d5d3407`](https://github.com/Pepewitch/homebrew-tap/commit/13d50fee619dcff7ca3b619d632234b18d5d3407).
+The Formula, Cask, daemon update channel, and Desktop update channel all serve
+0.8.4.
+
+0.8.4 adds no database migration. No PNG asset or brand-generator input changed
+since 0.8.3, so the PNG assets were not re-rendered. This is a fully automated
+publication: no maintainer qualification — fresh-install or upgrade receipts, a
+Desktop updater journey across this version, the token-spending harness probes,
+or the paid evaluator panel — was performed, and this record does not claim
+them. The published assets and release body remain immutable; this ledger
+records the completed outcome separately.
+
+The local `release:check` gate was not passed for this release: it failed
+twice on machine load alone (load average 60 to 110, timeouts in test files
+the release did not change), and the owner authorized publishing without it.
+GitHub's required checks (`test`, `browser-security`, `supply-chain`) and the
+macOS `native-core` job passed on release PR #483, and every release workflow
+job passed. Nobody ran the new review-on-ready flow, or a `wisp send --model`
+switch, against the published daemon. The Desktop Cask's `depends_on` order
+changed for Homebrew 7.0.11's `brew style`; the promotion audit accepted it.
 
 ## 0.8.3 publication
 
 **Published and promoted on 2026-10-29.**
-[Wisp 0.8.3](https://github.com/Pepewitch/wisp/releases/tag/v0.8.3) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.8.3](https://github.com/Pepewitch/wisp/releases/tag/v0.8.3) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 07:35:52 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`d522b317b7df1cc2a3da95368eabb1cc1e29e09f`](https://github.com/Pepewitch/wisp/commit/d522b317b7df1cc2a3da95368eabb1cc1e29e09f),
@@ -43,8 +95,8 @@ completed every job successfully on its first run:
 
 Promotion completed at 07:38:14 UTC with Homebrew tap commit
 [`689d2f4b7dddf8ea10e6be39b1f74e90dae34175`](https://github.com/Pepewitch/homebrew-tap/commit/689d2f4b7dddf8ea10e6be39b1f74e90dae34175).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.8.3.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.8.3 until 0.8.4 was promoted.
 
 0.8.3 adds database migration 29, so a 0.8.2 daemon cannot reopen a profile that
 0.8.3 has opened. No PNG asset or brand-generator input changed since 0.8.2, so
