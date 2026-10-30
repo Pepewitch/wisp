@@ -511,8 +511,9 @@ On SIGTERM or SIGINT (a service restart, an update, Ctrl-C) the daemon stops
 gracefully for up to 5 seconds, then stops its terminal shells and exits. It
 does not wait for running turns; the next boot recovers them.
 
-`wisp limits` reads each harness's own plan windows: claude-code through
-`claude -p /usage`, codex through its app-server's rate-limit read, droid
+`wisp limits` reads each harness's own plan windows: claude-code through its
+`get_usage` control request with no prompt (an older claude: `claude -p /usage`),
+codex through its app-server's rate-limit read, droid
 through Factory's billing API with the key from Settings → Usage limits (or
 `FACTORY_API_KEY` / `DROID_API_KEY` in the daemon's environment). A key that
 belongs to a different account than droid's login is refused rather than

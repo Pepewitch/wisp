@@ -129,6 +129,23 @@ export const bunRpcFactory: RpcFactory = (cmd, opts): RpcSession => {
     })();
   };
 
+  // claude's control protocol: only a control_response answers, by its request_id;
+  // the stream's other events (system init, keep-alives) are not ours
+  const settleControl = (msg: unknown): void => {
+    if (typeof msg !== "object" || msg === null) return;
+    const { type, response } = msg as { type?: unknown; response?: unknown };
+    if (type !== "control_response" || typeof response !== "object" || response === null) return;
+    const answer = response as { subtype?: unknown; request_id?: unknown; response?: unknown; error?: unknown };
+    const p = typeof answer.request_id === "string" ? pending.get(answer.request_id) : undefined;
+    if (!p) return;
+    pending.delete(answer.request_id as string);
+    if (answer.subtype === "error") {
+      p.reject(new ProbeError(`the harness rejected the probe${typeof answer.error === "string" ? `: ${answer.error}` : ""}`));
+    } else {
+      p.resolve(answer.response);
+    }
+  };
+
   const signal = opts.signal;
   const abort = (): void => close(signal?.reason instanceof ProbeError ? signal.reason : "the probe channel is closed");
   if (signal?.aborted) abort();
@@ -161,6 +178,10 @@ export const bunRpcFactory: RpcFactory = (cmd, opts): RpcSession => {
             msg = JSON.parse(line) as typeof msg;
           } catch {
             continue; // a non-JSON line on a protocol channel is noise, not an answer
+          }
+          if (opts.envelope === "claude-control") {
+            settleControl(msg);
+            continue;
           }
           const key = msg?.id === undefined || msg.id === null ? null : String(msg.id);
           if (key === null) {
@@ -210,7 +231,9 @@ export const bunRpcFactory: RpcFactory = (cmd, opts): RpcSession => {
       if (closed) return Promise.reject(closedError);
       const id = ++nextId;
       const frame =
-        opts.envelope === "factory"
+        opts.envelope === "claude-control"
+          ? { type: "control_request", request_id: String(id), request: { ...params, subtype: method } }
+          : opts.envelope === "factory"
           ? {
               jsonrpc: "2.0",
               type: "request",

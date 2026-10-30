@@ -76,6 +76,7 @@ export {
   normalizeFactoryLimits,
   parseClaudeReset,
   parseClaudeUsage,
+  normalizeClaudeUsage,
   runLimits,
   windowLabel,
   type HarnessLimits,

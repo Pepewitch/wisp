@@ -405,6 +405,23 @@ describe("production probe process bounds", () => {
     expect(error).toMatchObject({ message: "probe timed out", status: 504 });
   });
 
+  test("the claude-control envelope frames a control_request and answers by request_id, skipping other events", async () => {
+    // a peer that echoes each request's subtype and params back, after an unrelated event and an error answer
+    const peer = [
+      "while IFS= read -r line; do",
+      `  id=$(printf '%s' "$line" | sed -E 's/.*"request_id":"([^"]*)".*/\\1/')`,
+      `  printf '{"type":"system","subtype":"init"}\\n'`,
+      `  case "$line" in *'"subtype":"boom"'*) printf '{"type":"control_response","response":{"subtype":"error","request_id":"%s","error":"no such subtype"}}\\n' "$id";;`,
+      `  *) printf '{"type":"control_response","response":{"subtype":"success","request_id":"%s","response":%s}}\\n' "$id" "$line";; esac`,
+      "done",
+    ].join("\n");
+    const rpc = bunRpcFactory(["bash", "-c", peer], { envelope: "claude-control" });
+    const echoed = (await rpc.call("get_usage", { skip_behaviors: true })) as Record<string, unknown>;
+    expect(echoed).toEqual({ type: "control_request", request_id: "1", request: { skip_behaviors: true, subtype: "get_usage" } });
+    expect(await rpc.call("boom", {}).catch(message)).toBe("the harness rejected the probe: no such subtype");
+    rpc.close();
+  });
+
   test("RPC EOF closes the session instead of leaving later calls pending", async () => {
     const rpc = bunRpcFactory(["bash", "-c", "exit 0"], { envelope: "plain" });
     await Bun.sleep(50);

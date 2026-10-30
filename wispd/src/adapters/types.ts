@@ -423,11 +423,14 @@ export interface RpcSession {
  * Opens a line-delimited JSON-RPC peer. `envelope` names the framing quirk:
  * "plain" is standard `{"id":n,"method":…}` (codex app-server); "factory" adds
  * droid's `type:"request"` + `factoryProtocolVersion` fields, without which
- * droid rejects the line outright (SP1: bare JSON-RPC gets -32700).
+ * droid rejects the line outright (SP1: bare JSON-RPC gets -32700);
+ * "claude-control" is claude's stream-json control protocol: the method is a
+ * `control_request`'s `subtype`, the params ride beside it, and the answer is
+ * the `control_response` with the same `request_id`.
  */
 export type RpcFactory = (
   cmd: string[],
-  opts: { cwd?: string; envelope: "plain" | "factory"; signal?: AbortSignal },
+  opts: { cwd?: string; envelope: "plain" | "factory" | "claude-control"; signal?: AbortSignal },
 ) => RpcSession;
 
 /** What a compaction needs: which session, which cwd, the caller's timeout. */

@@ -9,6 +9,7 @@ import {
   normalizeFactoryLimits,
   parseClaudeReset,
   parseClaudeUsage,
+  normalizeClaudeUsage,
   runLimits,
   validateAdapters,
   windowLabel,
@@ -164,7 +165,7 @@ describe("claude /usage", () => {
     expect(error).toMatchObject({ status: "unavailable", message: "claude reports no plan limits: You are using an API key." });
   });
 
-  test("runs claude in print mode, in UTC, off the user's session history, with user settings only", async () => {
+  test("a claude without get_usage falls back to /usage in print mode, in UTC, off the user's session history, with user settings only", async () => {
     const calls: { cmd: string[]; opts: unknown }[] = [];
     const io = ioOf({
       spawnOnce: (cmd, opts) => {
@@ -192,6 +193,115 @@ describe("claude /usage", () => {
     await expect(runLimits(claude, { now: NOW, credential: null }, io)).rejects.toThrow(
       "claude answered /usage with no report (exit 1): not logged in",
     );
+  });
+});
+
+/** claude's get_usage answer as 2.1.311 sends it, trimmed to what the read uses. */
+const CLAUDE_GET_USAGE = {
+  subscription_type: "team",
+  rate_limits_available: true,
+  rate_limits: {
+    five_hour: { utilization: 20, resets_at: "2026-09-25T05:49:00.255997+00:00" },
+    seven_day: { utilization: 41, resets_at: "2026-09-30T03:59:00.256054+00:00" },
+    limits: [
+      { kind: "session", group: "session", percent: 20, resets_at: "2026-09-25T05:49:00.255997+00:00", scope: null },
+      { kind: "weekly_all", group: "weekly", percent: 41, resets_at: "2026-09-30T03:59:00.256054+00:00", scope: null },
+      { kind: "weekly_scoped", group: "weekly", percent: 0, resets_at: "2026-09-30T04:00:00+00:00", scope: { model: { display_name: "Fable", id: null }, surface: null } },
+    ],
+  },
+};
+
+/** An RPC peer that records how it was opened and what it was asked. */
+function recordingRpc(answers: Record<string, unknown | Error>) {
+  const opened: { cmd: string[]; opts: unknown }[] = [];
+  const calls: { method: string; params: Record<string, unknown> }[] = [];
+  const state = { closed: false };
+  const openRpc: RpcFactory = (cmd, opts) => {
+    opened.push({ cmd, opts });
+    return {
+      call(method, params) {
+        calls.push({ method, params });
+        const answer = answers[method];
+        if (answer instanceof Error) return Promise.reject(answer);
+        return method in answers ? Promise.resolve(answer) : Promise.reject(new Error(`unknown method ${method}`));
+      },
+      close() {
+        state.closed = true;
+      },
+    };
+  };
+  return { openRpc, opened, calls, state };
+}
+
+describe("claude get_usage", () => {
+  test("maps the session, the week and each per-model week, with the plan", () => {
+    expect(normalizeClaudeUsage(CLAUDE_GET_USAGE)).toEqual({
+      plan: "team",
+      windows: [
+        { id: "session", label: "5h", pool: null, model: null, usedPercent: 20, resetsAt: "2026-09-25T05:49:00.255Z", windowMins: 300 },
+        { id: "week", label: "7d", pool: null, model: null, usedPercent: 41, resetsAt: "2026-09-30T03:59:00.256Z", windowMins: 10_080 },
+        { id: "week:fable", label: "Fable", pool: null, model: "Fable", usedPercent: 0, resetsAt: "2026-09-30T04:00:00.000Z", windowMins: 10_080 },
+      ],
+    });
+  });
+
+  test("an answer without the limits list reads the five-hour and seven-day pair", () => {
+    const { limits: _, ...older } = CLAUDE_GET_USAGE.rate_limits;
+    expect(normalizeClaudeUsage({ ...CLAUDE_GET_USAGE, rate_limits: older }).windows.map((w) => [w.id, w.usedPercent])).toEqual([
+      ["session", 20],
+      ["week", 41],
+    ]);
+  });
+
+  test("no subscription is unavailable; a subscriber whose limits did not come back is a failed read", () => {
+    const thrown = (raw: unknown) => {
+      try {
+        normalizeClaudeUsage(raw);
+      } catch (e) {
+        return e;
+      }
+    };
+    expect(thrown({ subscription_type: null, rate_limits_available: false, rate_limits: null })).toMatchObject({ status: "unavailable" });
+    expect(thrown({ subscription_type: "max", rate_limits_available: false, rate_limits: null })).toMatchObject({
+      status: "error",
+      message: "claude could not read the max plan's limits",
+    });
+    expect(thrown("nope")).toMatchObject({ status: "error" });
+  });
+
+  test("asks get_usage without the transcript scan, on a print session that never sees a prompt", async () => {
+    const rpc = recordingRpc({ initialize: {}, get_usage: CLAUDE_GET_USAGE });
+    let spawned = false;
+    const io = ioOf({ openRpc: rpc.openRpc, spawnOnce: () => ((spawned = true), { exitCode: 0, stdout: "", stderr: "" }) });
+    const limits = await runLimits(claude, { now: NOW, credential: null }, io);
+    expect(limits.windows.map((w) => w.label)).toEqual(["5h", "7d", "Fable"]);
+    expect(rpc.opened[0]!.cmd).toEqual([
+      claude.bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+      "--no-session-persistence", "--setting-sources", "user",
+    ]);
+    expect(rpc.opened[0]!.opts).toMatchObject({ cwd: "/tmp/scratch", envelope: "claude-control" });
+    expect(rpc.calls).toEqual([{ method: "initialize", params: {} }, { method: "get_usage", params: { skip_behaviors: true } }]);
+    expect(rpc.state.closed).toBe(true);
+    expect(spawned).toBe(false);
+  });
+
+  test("a claude that refuses get_usage falls back to the /usage report", async () => {
+    const rpc = recordingRpc({ initialize: {}, get_usage: new Error("the harness rejected the probe: unsupported control request subtype") });
+    const io = ioOf({
+      openRpc: rpc.openRpc,
+      spawnOnce: () => ({ exitCode: 0, stdout: JSON.stringify({ result: CLAUDE_REPORT }), stderr: "" }),
+    });
+    const limits = await runLimits(claude, { now: NOW, credential: null }, io);
+    expect(limits).toEqual(parseClaudeUsage(CLAUDE_REPORT, NOW));
+    expect(rpc.state.closed).toBe(true);
+  });
+
+  test("claude's own 'no plan limits' answer is not read a second way", async () => {
+    const rpc = recordingRpc({ initialize: {}, get_usage: { subscription_type: null, rate_limits: null } });
+    let spawned = false;
+    const io = ioOf({ openRpc: rpc.openRpc, spawnOnce: () => ((spawned = true), { exitCode: 0, stdout: "", stderr: "" }) });
+    await expect(runLimits(claude, { now: NOW, credential: null }, io)).rejects.toMatchObject({ status: "unavailable" });
+    expect(spawned).toBe(false);
   });
 });
 
@@ -397,9 +507,10 @@ describe("HarnessLimitsCache", () => {
       "account/rateLimits/read": { rateLimits: { primary: { usedPercent: 1, windowDurationMins: 300 } } },
     });
     let codexReads = 0;
-    const openRpc: RpcFactory = (...args) => {
-      codexReads++;
-      return rpc.openRpc(...args);
+    // claude opens a control session too: only codex's app-server is a codex read
+    const openRpc: RpcFactory = (cmd, opts) => {
+      if (cmd.includes("app-server")) codexReads++;
+      return rpc.openRpc(cmd, opts);
     };
     const cache = new HarnessLimitsCache({ spawnOnce: c.spawnOnce, openRpc, which: (bin) => bin, env: {} });
     await cache.read({}, { claude, codex });
