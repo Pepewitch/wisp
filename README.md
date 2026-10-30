@@ -67,7 +67,7 @@ third-party tap. More in the [macOS guide](docs/INSTALL-MACOS.md).
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
-  https://raw.githubusercontent.com/Pepewitch/wisp/v0.8.3/scripts/install.sh | sh
+  https://raw.githubusercontent.com/Pepewitch/wisp/v0.8.4/scripts/install.sh | sh
 ```
 
 The installer verifies the download, installs under your home directory
