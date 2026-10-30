@@ -14,13 +14,42 @@ and branch.
 4. `wisp archive <id>` once the work has landed. It removes the worktree and
    keeps the branch and the conversation.
 
-## Auto-merge and auto-fix
+## Auto-merge, auto-fix and auto-review
 
 Arm `--auto-merge` (on `wisp new`, or `wisp pr <id> merge on` later) only for
 work you would merge yourself on green, because Wisp then merges the PR
 without asking. `--auto-fix` (`wisp pr <id> fix on`) hands red CI, merge
-conflicts, and review feedback back to the agent. `wisp pr <id>` names what
-either is waiting for; what each does and when:
+conflicts, and review feedback back to the agent. `--auto-review`
+(`wisp pr <id> review on`) has independent reviewer tasks check each ready
+head against the project's verification recipe and Wisp's rubric before
+anything merges. `wisp pr <id>` names what any of them is waiting for.
+
+How the three work together on a PR:
+
+- A review round starts once a head is out of draft, has settled for a couple
+  of minutes and the author is idle, while CI runs; when auto-fix is about to
+  send a CI fix, that goes first and the round starts on the fixed head. A
+  project set to `reviewStart: "checks"` waits for green checks instead
+  ([setup.md](setup.md)). `wisp pr <id> review now` starts the round on the
+  current head at once.
+- While a round runs, auto-fix holds what it would send (red CI, bot and
+  human comments, conflicts), so a push cannot cut the review short. The
+  status says "Auto-fix will send after the review"; `wisp pr <id> send-now`
+  overrides the hold.
+- A rejection goes back to the author together with the held items as one
+  message, for one push. A pass or a review that broke releases the held
+  items as usual. Read findings with `wisp review show <id>`.
+- The budget is three rejections per PR, then autopilot pauses;
+  `wisp pr <id> resume` grants three more, or step in yourself. A pass costs
+  nothing. Rounds that end without a verdict (cut short by a push or a
+  retarget after the reviewers started, an error, a recipe hold) are free for
+  the PR's first six; after that the PR waits for its checks before each
+  round, and every further such round spends one, so a PR can pause without
+  any rejection.
+- Merging always waits for green required checks, however early the review
+  ran.
+
+Exact rules and every subcommand:
 [cli.md](cli.md#auto-merge-auto-fix-and-auto-review).
 
 ## When archive refuses
@@ -33,9 +62,9 @@ Resolve it and retry:
   override this one.
 - Unsaved work (a dirty tree, or commits only the task branch holds): have the
   agent commit, then merge or push the branch.
-- Auto-merge or auto-fix bound to a PR that is still open: wait until it
-  merges or closes, or switch them off with `wisp pr <id> merge off` and
-  `wisp pr <id> fix off`.
+- Auto-merge, auto-fix or auto-review bound to a PR that is still open: wait
+  until it merges or closes, or switch them off with `wisp pr <id> merge off`,
+  `fix off` and `review off`.
 - Git cannot read the worktree's status: repair the repository first;
   `-f` does not override this one either.
 
