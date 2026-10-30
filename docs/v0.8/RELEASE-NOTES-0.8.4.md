@@ -1,7 +1,8 @@
 # Wisp 0.8.4
 
 Wisp 0.8.4 makes auto-review usable on repositories with slow CI and a review
-bot, and makes the Claude usage gauge reliable again.
+bot, lets the CLI switch a task's model, and makes the Claude usage gauge
+reliable again.
 
 - **Review on ready (new default).** Auto-review now starts a round once a
   head is ready and settled, alongside CI, instead of after green checks.
@@ -11,6 +12,8 @@ bot, and makes the Claude usage gauge reliable again.
 - **No more cancelled reviews.** While a round runs, auto-fix holds red CI and
   review comments. A rejection reaches the author in one combined message for
   one push.
+- **Switch a task's model from the CLI.** `wisp send <id> "continue" --model
+  <m>` moves a task to another model and keeps its id, session and PR.
 - **Claude limits in about a second.** The usage popover reads Claude's plan
   limits with a lighter request and no longer times out on a busy machine.
 
@@ -38,6 +41,13 @@ bot, and makes the Claude usage gauge reliable again.
   skipped, on a session that never sees a prompt, so it costs no model
   tokens. It answers in about a second, and the popover shows Claude's plan
   type. An older claude falls back to `/usage`.
+- **`wisp send` switches the model, effort or harness** (#482, closes #481).
+  `--model <m>` and `--effort <level>` change a task's agent with the message
+  that continues it, keeping its session; `--harness <h> --model <m>
+  --fresh-context` changes the harness. `--when next-turn` queues the switch
+  without touching a running turn, and `--when now` stops it. A model or
+  effort the harness does not offer is refused with the offered list. Useful
+  when a provider reports a model at capacity.
 - **Homebrew Cask style** (#480). The Desktop Cask lists its `depends_on`
   stanzas in the order current Homebrew's `brew style` requires; the old
   order failed the publication audit.
