@@ -38,7 +38,7 @@ const namedPids = new Map<number, string>();
 /**
  * Settled turn id → what the harness process still holding its group says it
  * is running. Set only while Wisp deliberately keeps that process alive past
- * the turn's answer (live-input's lingering Claude process). Memory only, like
+ * the turn's answer (live-input's lingering Claude or Droid process). Memory only, like
  * `liveNames`: a restarted daemon no longer owns the process's input, and
  * boot recovery stops the process (turn-process stopOrphanedHarnesses).
  */
@@ -148,7 +148,7 @@ export function clearHarnessBackground(turnId: number): void {
 
 /**
  * Hand a live group to the next turn its process serves. One harness process
- * can span several turn rows (a lingering Claude process takes the next
+ * can span several turn rows (a lingering Claude or Droid process takes the next
  * message as a new turn), and the group must follow it: left on the settled
  * turn, it would read as background work beside the turn that is running.
  * Call inside the transaction that creates `toTurnId`.
@@ -188,7 +188,7 @@ export function backgroundWork(taskId: string, settleMs = 0): BackgroundWork {
 /**
  * Live recorded groups led by their SETTLED turn's own harness process. Only a
  * harness kept alive for its background work past the turn's answer (the
- * lingering Claude process) leaves one: every other turn settles when its
+ * lingering Claude or Droid process) leaves one: every other turn settles when its
  * harness exits. Found at boot, it outlived the daemon that owned its input.
  */
 export function settledGroupLeaders(): { turnId: number; taskId: string; pgid: number }[] {

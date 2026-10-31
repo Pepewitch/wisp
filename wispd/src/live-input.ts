@@ -2,10 +2,11 @@ import { readFileSync, writeSync } from "node:fs";
 import type { AdapterDef, ImageInputStrategy } from "./adapters";
 import { CodexLiveDriver, type CodexLiveInput } from "./adapters/live/codex";
 import { liveCommand } from "./adapters/live/command";
-import { DroidLiveDriver, type DroidLiveImage, type QuestionAnswer } from "./adapters/live/droid";
+import type { QuestionAnswer } from "./adapters/live/droid";
 import type { QuestionPrompt } from "./adapters/types";
 import { JsonLineBuffer } from "./adapters/live/json-lines";
 import { createBackgroundFollowUp, isSystem, noticeText, startsModelCall, type TurnKind } from "./adapters/live/claude-background";
+import { configureDroid } from "./live-droid";
 import { pipeReader } from "./pipe-drain";
 import {
   formatAttachNote,
@@ -14,7 +15,7 @@ import {
   type StoredAttachment,
 } from "./attachments";
 import { emit } from "./events";
-import { getTask, runningTurn, transition, turnForTask } from "./store";
+import { getTask, runningTurn, turnForTask } from "./store";
 import { clearHarnessBackground, setHarnessBackground } from "./task-processes";
 import { deliveredMessage, nativeImageAttachments } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
@@ -37,19 +38,19 @@ export interface LiveTurn {
 }
 
 /**
- * The runner's side of a Claude process that can outlive its turn: the answer
- * arrived, but work the agent started in the background is still running, and
- * closing stdin would make the CLI kill it. Every hook but `settle` runs
- * synchronously on the line that needs it.
+ * The runner's side of a live process that can outlive its turn (Claude's or
+ * Droid's): the answer arrived, but work the agent started in the background
+ * is still running, and closing stdin would make the harness kill it. Every
+ * hook but `settle` runs synchronously on the line that needs it.
  */
-export interface ClaudeLingerHooks {
+export interface LingerHooks {
   /** May this turn settle now and leave its process running? False while a Stop, archive or shutdown owns it. */
   canLinger(turnId: number): boolean;
   /** Settle the turn from what it recorded. The process stays alive, stdin open. */
   settle(turnId: number): Promise<void>;
   /** Where the process's output goes while no turn is open: the settled turn's transcript. */
   between(turnId: number): LiveOutputSink;
-  /** A model call began with no turn open. Open the turn that records it, or null to keep it with the settled turn. */
+  /** A model call (an agent turn) began with no turn open. Open the turn that records it, or null to keep it with the settled turn. */
   wake(reason: string): LiveTurn | null;
   /** The settle finished and nothing woke the process, so the next queued message may start. */
   idle(): void;
@@ -70,7 +71,7 @@ export interface ActiveLiveInput {
   close: () => Promise<void>;
 }
 
-interface ConfigureLiveTurnOptions {
+export interface ConfigureLiveTurnOptions {
   child: ReturnType<typeof Bun.spawn>;
   task: Task;
   def: AdapterDef;
@@ -81,8 +82,11 @@ interface ConfigureLiveTurnOptions {
   attachments: StoredAttachment[];
   initialMessageId: string;
   claudeStrategy?: ImageInputStrategy;
-  /** Lets a Claude turn settle while its process keeps background work alive. Absent: the turn stays open instead. */
-  linger?: ClaudeLingerHooks;
+  /**
+   * Lets a turn settle while its process keeps background work alive. Absent:
+   * a Claude turn stays open instead, and a Droid turn closes as it always did.
+   */
+  linger?: LingerHooks;
 }
 
 /** Verified active-turn inputs by task. Absence means durable next-turn fallback. */
@@ -121,6 +125,18 @@ export function turnInput(taskId: string): TurnInput | null {
 
 export function forgetLiveTurn(taskId: string, turnId: number): void {
   if (liveTurns.get(taskId) === turnId) liveTurns.delete(taskId);
+}
+
+/** A live process opened `input`'s turn: it is the task's steer channel, and the turn is live until its process exits. */
+export function openLiveInput(taskId: string, input: ActiveLiveInput): void {
+  liveTurns.set(taskId, input.turnId);
+  liveInputs.set(taskId, input);
+}
+
+/** The turn is over while its process stays: drop its steer channel and its live mark, without closing anything. */
+export function releaseLiveTurn(taskId: string, turnId: number): void {
+  if (liveInputs.get(taskId)?.turnId === turnId) liveInputs.delete(taskId);
+  forgetLiveTurn(taskId, turnId);
 }
 
 export function pendingDelivery(taskId: string): Promise<void> | undefined {
@@ -178,7 +194,7 @@ export class LiveTransportError extends Error {
   }
 }
 
-function staged<T>(stage: LiveStage, work: Promise<T>): Promise<T> {
+export function staged<T>(stage: LiveStage, work: Promise<T>): Promise<T> {
   return work.catch((error) => {
     throw error instanceof LiveTransportError ? error : new LiveTransportError(stage, error);
   });
@@ -250,7 +266,7 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
   const sink = options.child.stdin;
   if (!sink || typeof sink === "number") throw new Error("live input process did not expose stdin");
   const claude = new ClaudeLiveProcess(options, strategy, sink);
-  claudeProcesses.set(options.task.id, claude);
+  lingeringProcesses.set(options.task.id, claude);
   return claude;
 }
 
@@ -258,16 +274,48 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
  * `followOnMs`: how long an answer waits for a model call input written during
  * it may still start. `quietMs`: how long a lingering process with nothing left
  * in the background waits for a call that end may wake before its input closes.
- * A test seam; production never changes them.
+ * `recheckMs`: how often a lingering Droid checks that the commands it waits
+ * for still run. A test seam; production never changes them.
  */
-export const lingerTiming = { followOnMs: 1_500, quietMs: 10_000 };
+export const lingerTiming = { followOnMs: 1_500, quietMs: 10_000, recheckMs: 5_000 };
 
-/** Live Claude processes by task, from spawn until the runner sees them exit. */
-const claudeProcesses = new Map<string, ClaudeLiveProcess>();
+/**
+ * A live harness process that can serve several turn rows: its answer settles
+ * the turn while background work it started keeps running, and it LINGERS for
+ * that work (ClaudeLiveProcess, DroidLiveProcess). turn-process.ts drives it
+ * through this.
+ */
+export interface LingeringLiveProcess {
+  /** `lingering` once the settled turn is recorded and the process may take the next one; `closing` once it may not. */
+  readonly phase: "turn" | "settling" | "lingering" | "closing";
+  /** The turn this process is serving, or the settled one it last served. */
+  readonly turnId: number;
+  /** Resolves once no settle is in flight. */
+  settled(): Promise<void>;
+  /** Take the next turn while lingering: its prompt goes to the live process. */
+  adopt(turn: LiveTurn, prompt: string, attachments: StoredAttachment[], messageId?: string): Promise<void>;
+  /** The process is going away on purpose: nothing it prints from now on opens a turn. */
+  retire(): void;
+  /** The process exited: stop every timer and forget it. */
+  ended(): void;
+  /** Where output goes now: the open turn, or between turns the settled one's transcript. */
+  output(): LiveOutputSink;
+}
 
-/** The task's live Claude process, if one is running. */
-export function liveClaudeProcess(taskId: string): ClaudeLiveProcess | undefined {
-  return claudeProcesses.get(taskId);
+/** Live processes that can linger, by task, from spawn until the runner sees them exit. */
+const lingeringProcesses = new Map<string, LingeringLiveProcess>();
+
+/** The task's live Claude or Droid process, if one is running. */
+export function liveProcess(taskId: string): LingeringLiveProcess | undefined {
+  return lingeringProcesses.get(taskId);
+}
+
+export function registerLiveProcess(taskId: string, process: LingeringLiveProcess): void {
+  lingeringProcesses.set(taskId, process);
+}
+
+export function forgetLiveProcess(taskId: string, process: LingeringLiveProcess): void {
+  if (lingeringProcesses.get(taskId) === process) lingeringProcesses.delete(taskId);
 }
 
 /**
@@ -294,7 +342,7 @@ export function liveClaudeProcess(taskId: string): ClaudeLiveProcess | undefined
  *  - When nothing is left in the background and no call follows, stdin closes
  *    and the process exits; the runner then clears the marker.
  */
-export class ClaudeLiveProcess {
+export class ClaudeLiveProcess implements LingeringLiveProcess {
   private readonly taskId: string;
   private readonly followUp = createBackgroundFollowUp();
   private current: LiveTurn;
@@ -361,7 +409,7 @@ export class ClaudeLiveProcess {
   }
 
   /** Take the next turn while lingering: its prompt goes to the live process. */
-  adopt(turn: LiveTurn, prompt: string, attachments: StoredAttachment[]): Promise<void> {
+  adopt(turn: LiveTurn, prompt: string, attachments: StoredAttachment[], _messageId?: string): Promise<void> {
     if (this.phase !== "lingering") throw new Error("the live Claude process is not waiting for a turn");
     const settled = this.current;
     const between = this.between;
@@ -392,7 +440,7 @@ export class ClaudeLiveProcess {
   /** The process exited: stop every timer and forget it. */
   ended(): void {
     this.retire();
-    if (claudeProcesses.get(this.taskId) === this) claudeProcesses.delete(this.taskId);
+    if (lingeringProcesses.get(this.taskId) === this) lingeringProcesses.delete(this.taskId);
     clearHarnessBackground(this.current.turnId);
   }
 
@@ -614,11 +662,11 @@ function frameDropNote(recorder: LiveOutputSink): (chars: number) => void {
  * ride it, and everything delivered by path is named in the text — otherwise a
  * csv attached mid-turn would reach a live harness as bytes nobody mentioned.
  */
-function steerText(def: AdapterDef, message: TaskMessage, files: StoredAttachment[]): string {
+export function steerText(def: AdapterDef, message: TaskMessage, files: StoredAttachment[]): string {
   return deliveredMessage(def, files, message.text, message.origin);
 }
 
-function messageAttachments(taskId: string, message: TaskMessage): StoredAttachment[] {
+export function messageAttachments(taskId: string, message: TaskMessage): StoredAttachment[] {
   return readMessageAttachments(taskId, message.id, parseAttachmentManifest(message.attachments_json));
 }
 
@@ -628,64 +676,9 @@ function messageAttachments(taskId: string, message: TaskMessage): StoredAttachm
  * the conversation replays, so the message lands between what the harness had
  * already said and whatever it does next — never beside the turn's prompt.
  */
-function noteDelivery(recorder: LiveOutputSink, message: TaskMessage, files: StoredAttachment[]): void {
+export function noteDelivery(recorder: LiveOutputSink, message: TaskMessage, files: StoredAttachment[]): void {
   recorder.recordNote(formatSteerNote(message.id, message.text));
   if (files.length > 0) recorder.recordNote(formatAttachNote(files));
-}
-
-function droidImages(def: AdapterDef, attachments: StoredAttachment[]): DroidLiveImage[] {
-  return nativeImageAttachments(def, attachments).map((attachment) => ({
-    type: "base64",
-    data: readFileSync(attachment.path).toString("base64"),
-    mediaType: attachment.mediaType,
-  }));
-}
-
-function configureDroid(options: ConfigureLiveTurnOptions): Promise<void> {
-  const sink = options.child.stdin;
-  if (!sink || typeof sink === "number") throw new Error("Droid live process did not expose stdin");
-  const emit = (event: Record<string, unknown>): void => {
-    options.recorder.recordEvent(event);
-  };
-  const driver = new DroidLiveDriver({
-    sink,
-    def: options.def,
-    cwd: options.task.worktree_path!,
-    sessionId: options.task.session_id,
-    model: options.task.model,
-    effort: options.task.effort,
-    initialMessageId: options.initialMessageId,
-    initialText: options.prompt,
-    initialImages: droidImages(options.def, options.attachments),
-    emit,
-    onTerminal: () => void closeLiveInput(options.task.id, options.turnId),
-    // A suspended turn is still a running turn, so only the task STATE moves.
-    // It also takes the task out of stuck-detection's reach, which skips
-    // anything that is not running or already stuck — a turn idling on a
-    // question is neither quiet nor broken, it is waiting on purpose.
-    onWaiting: (waiting) =>
-      transition(
-        options.task.id,
-        waiting ? "needs-input" : "running",
-        waiting ? `turn ${options.turn} is asking you` : `turn ${options.turn}`,
-      ),
-  });
-  liveInputs.set(options.task.id, {
-    turnId: options.turnId,
-    turn: options.turn,
-    async send(message) {
-      const files = messageAttachments(options.task.id, message);
-      await driver.send(message.id, steerText(options.def, message, files), droidImages(options.def, files));
-      noteDelivery(options.recorder, message, files);
-    },
-    answer: (questionId, answers) => driver.answer(questionId, answers),
-    question: (questionId) => driver.pendingQuestion(questionId),
-    close: () => driver.close(),
-  });
-  return Promise.all([
-    staged("live input setup", driver.ready),
-    staged("live output pump", pumpJsonLines(options.child, options.recorder, driver, "Droid closed the JSON-RPC channel")),
-  ]).then(() => {});
 }
 
 function codexInput(def: AdapterDef, text: string, attachments: StoredAttachment[]): CodexLiveInput[] {
@@ -746,7 +739,7 @@ interface JsonLineDriver {
   failPending(message: string): void;
 }
 
-async function pumpJsonLines(
+export async function pumpJsonLines(
   child: ReturnType<typeof Bun.spawn>,
   recorder: LiveOutputSink,
   driver: JsonLineDriver,

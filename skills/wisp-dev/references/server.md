@@ -72,20 +72,23 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
 - Each turn is one short-lived headless harness process, spawned as its own
   process-GROUP leader. Output is written directly to persisted log files so
   daemon restart recovery can re-adopt or finalize the turn.
-- One exception: a live Claude turn whose answer arrives while work the agent
-  started in the background is still running (a `run_in_background` command, a
-  Monitor) settles at that answer, and its process LINGERS with stdin open,
-  because closing stdin makes the CLI kill that work. The lingering process is
+- One exception: a live Claude or Droid turn whose answer arrives while work
+  the agent started in the background is still running (Claude: a
+  `run_in_background` command, a Monitor; Droid: an `Execute` with
+  `fireAndForget`, a background `Task`) settles at that answer, and its process
+  LINGERS with stdin open, because closing stdin makes the CLI kill that work. The lingering process is
   the settled turn's background work (its group stays recorded, so Stop,
   archive and the badge treat it as such), it takes the next message as a new
   turn row, and a model call the work wakes becomes a follow-up turn
   (`turns.origin = 'background'`, which raises no finish notification and
-  never opens over a task that needs the person); a turn never reopens. A
+  never opens over a task that needs the person); a turn never reopens. Droid
+  wakes itself with an `execute-completion:` or `task-completion:` message and
+  answers it in an agent turn of its own, which is the follow-up turn. A
   message for another agent stops it first, and so does a closing input: the
   next turn then waits for the exit and resumes. Only the daemon that spawned
   it owns its stdin, so boot recovery stops any it finds rather than resume
-  the session beside it. See `ClaudeLiveProcess` in `live-input.ts` and
-  `turn-process.ts`.
+  the session beside it. See `ClaudeLiveProcess` and `DroidLiveProcess` in
+  `live-input.ts`, `adapters/live/droid-background.ts`, and `turn-process.ts`.
 - Stopping a turn signals that group, not just the leader: a harness is a
   supervisor, and killing only it left builds, servers, and sub-agents running
   (ENG-03). A descendant that calls `setsid` itself leaves the group by design

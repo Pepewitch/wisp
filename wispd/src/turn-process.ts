@@ -10,8 +10,8 @@ import {
   forgetLiveTurn,
   LiveTransportError,
   pendingDelivery,
-  type ClaudeLingerHooks,
-  type ClaudeLiveProcess,
+  type LingerHooks,
+  type LingeringLiveProcess,
   type LiveOutputSink,
   type LiveTurn,
 } from "./live-input";
@@ -42,10 +42,10 @@ import type { Task, TurnOrigin } from "./types";
 /**
  * A spawned harness process and the turn rows it serves.
  *
- * Every process serves one turn, except a live Claude process whose answer
- * arrived while work it started in the background is still running: that turn
- * settles, and the process lingers for the work (see live-input's
- * ClaudeLiveProcess). The next message becomes a turn ON it (`adoptTurn`), a
+ * Every process serves one turn, except a live Claude or Droid process whose
+ * answer arrived while work it started in the background is still running:
+ * that turn settles, and the process lingers for the work (see live-input's
+ * ClaudeLiveProcess and DroidLiveProcess). The next message becomes a turn ON it (`adoptTurn`), a
  * model call the work wakes becomes a follow-up turn (`openFollowUpTurn`), and
  * a message for another agent ends it (`endLingeringProcess`). The runner
  * spawns and owns the message queue; this module owns the process from then
@@ -66,8 +66,8 @@ export interface TurnAgent {
 
 /**
  * One turn a process is serving: its row, its transcript files, its capture.
- * A live Claude process can serve several turn rows one after another (see
- * live-input's ClaudeLiveProcess); every other process serves exactly one.
+ * A live Claude or Droid process can serve several turn rows one after another
+ * (see live-input's LingeringLiveProcess); every other process serves exactly one.
  */
 export interface TurnSlot {
   turnId: number;
@@ -90,8 +90,8 @@ export interface TurnProcess {
   startQueue: () => void;
   pidStartTime: string | null;
   slot: TurnSlot;
-  /** Its Claude protocol side, when the process can outlive a turn. */
-  claude?: ClaudeLiveProcess;
+  /** Its protocol side, when the process can outlive a turn (Claude, Droid). */
+  live?: LingeringLiveProcess;
   /** `slot` has settled, and the process lingers for background work it started. */
   settled: boolean;
   /** Being stopped so a turn for another agent can start. */
@@ -104,7 +104,7 @@ export interface TurnProcess {
   adopting?: Promise<void>;
 }
 
-/** Live Claude processes that may linger past a turn and take the next one, by task. */
+/** Live processes that may linger past a turn and take the next one, by task. */
 export const turnProcesses = new Map<string, TurnProcess>();
 /** Room for what a lingering process prints between turns, in the settled turn's transcript. */
 const BETWEEN_TURNS_MAX_BYTES = 256 * 1024;
@@ -148,7 +148,7 @@ export function sameAgent(a: TurnAgent, b: TurnAgent): boolean {
 }
 
 /**
- * The task's lingering Claude process, when it can take a turn for `task`'s
+ * The task's lingering process, when it can take a turn for `task`'s
  * agent. Anything else that is still alive refuses: callers go through
  * startNextQueuedMessage, which ends or waits for such a process first.
  */
@@ -164,7 +164,7 @@ export function lingeringProcess(task: Task): TurnProcess | null {
  * until the watcher is done with it, and the watcher starts the queue then.
  */
 export function adoptable(proc: TurnProcess): boolean {
-  return proc.settled && !proc.ending && childRunning(proc.child) && proc.claude?.phase === "lingering";
+  return proc.settled && !proc.ending && childRunning(proc.child) && proc.live?.phase === "lingering";
 }
 
 /**
@@ -238,7 +238,7 @@ export function adoptTurn(
   // In the same tick as the row: the next line the process prints is this turn's.
   let write: Promise<void>;
   try {
-    write = proc.claude!.adopt(turn, prompt, attachments);
+    write = proc.live!.adopt(turn, prompt, attachments, messageId);
   } catch (error) {
     write = Promise.reject(error);
   }
@@ -283,7 +283,7 @@ function undoAdoption(proc: TurnProcess, settled: TurnSlot, slot: TurnSlot, mess
   return true;
 }
 
-export function lingerHooks(proc: TurnProcess): ClaudeLingerHooks {
+export function lingerHooks(proc: TurnProcess): LingerHooks {
   return {
     canLinger: (turnId) => lingerAllowed(proc, turnId),
     settle: (turnId) => settleLingeringTurn(proc, turnId),
@@ -387,8 +387,8 @@ function betweenTurnsSink(slot: TurnSlot): LiveOutputSink {
 export function endLingeringProcess(proc: TurnProcess, why: string): void {
   if (proc.ending) return;
   proc.ending = true;
-  proc.claude?.output().recordNote(`· Wisp stopped the background work this turn left running: ${why}`);
-  proc.claude?.retire();
+  proc.live?.output().recordNote(`· Wisp stopped the background work this turn left running: ${why}`);
+  proc.live?.retire();
   killChildTree(proc.child, "SIGTERM");
   const timer = setTimeout(() => childRunning(proc.child) && killChildTree(proc.child, "SIGKILL"), KILL_GRACE_MS);
   timer.unref?.();
@@ -519,7 +519,7 @@ export async function watchTurn(
   // A settle in flight records its turn (and may open the follow-up a held
   // call belongs to), and a turn being handed over is taken or undone, before
   // anything below reads which turn this was.
-  await proc.claude?.settled();
+  await proc.live?.settled();
   await proc.adopting;
   const slot = proc.slot;
   await refreshProcessGroups(taskId, slot.turnId);
@@ -534,7 +534,7 @@ export async function watchTurn(
     console.error(`[wisp] task ${taskId}: turn ${slot.turnId} settled without waiting for a process that still holds its output open`);
     if (!proc.settled) slot.recorder?.recordNote("· the harness exited while a process it started still held its output open; the turn settled without waiting for it");
   }
-  proc.claude?.ended();
+  proc.live?.ended();
   if (turnProcesses.get(taskId) === proc) turnProcesses.delete(taskId);
   if (proc.settled) {
     // It outlived its last turn's answer, and that turn is already settled:

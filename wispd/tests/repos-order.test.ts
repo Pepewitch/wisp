@@ -1,8 +1,8 @@
 // PUT /api/repos/order through the real dispatcher: a permutation of the
 // configured projects is saved in that order, entry objects untouched; any
 // other list is a 409 that changes nothing; and the daemon advertises it.
-import { afterEach, describe, expect, test } from "bun:test";
-import { readFileSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { BUILTIN_ADAPTERS } from "../src/adapters";
 import { CONFIG_PATH, type WispConfig } from "../src/config";
 import { route } from "../src/daemon";
@@ -37,6 +37,14 @@ let unsubscribe: (() => void) | null = null;
 afterEach(() => {
   unsubscribe?.();
   unsubscribe = null;
+});
+
+// Its configs (port 0, made-up repos) would fail every later file in the
+// same test process that loads the config from disk, so put back what was there.
+const configBefore = existsSync(CONFIG_PATH) ? readFileSync(CONFIG_PATH, "utf8") : null;
+afterAll(() => {
+  if (configBefore === null) rmSync(CONFIG_PATH, { force: true });
+  else writeFileSync(CONFIG_PATH, configBefore);
 });
 
 describe("PUT /api/repos/order", () => {

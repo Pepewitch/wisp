@@ -25,7 +25,7 @@ import {
   closeLiveInput,
   configureLiveTurn,
   legacyLiveOutput,
-  liveClaudeProcess,
+  liveProcess,
   liveCommand,
   LiveTransportError,
   writeImageEnvelope,
@@ -200,7 +200,7 @@ export function startTurn(
   // Never in front of a later turn's slash command — a harness only treats the
   // prompt as a command when it STARTS with `/` — so it waits for a plain turn.
   const command = n > 1 && message.trimStart().startsWith("/");
-  // A Claude process still alive for background work it started takes this
+  // A Claude or Droid process still alive for background work it started takes this
   // turn itself: a second process would split its session, and ending it
   // would kill the work it was kept for.
   const lingering = lingeringProcess(task);
@@ -363,9 +363,9 @@ export function startTurn(
 
 /**
  * Capture a freshly spawned process's output and, for a live harness, start
- * its protocol. Only a recorder-captured Claude turn can outlive its answer:
- * its process stays for the background work it started and takes the next
- * turn, so its stderr follows it from turn to turn.
+ * its protocol. Only a recorder-captured Claude or Droid turn can outlive its
+ * answer: its process stays for the background work it started and takes the
+ * next turn, so its stderr follows it from turn to turn.
  */
 function attachCapture(
   proc: TurnProcess,
@@ -380,8 +380,9 @@ function attachCapture(
 ): { outputPump: Promise<void>; stderrPump: Promise<void> } {
   const { child, def, cfg, slot } = proc;
   const isLive = Boolean(def.liveInput);
-  const lingers = def.liveInput === "claude-stream-json" && input.recorderEligible;
-  const stderrTo = lingers ? () => proc.claude?.output() ?? proc.slot.sink : undefined;
+  const canLinger = def.liveInput === "claude-stream-json" || def.liveInput === "droid-jsonrpc";
+  const lingers = canLinger && input.recorderEligible;
+  const stderrTo = lingers ? () => proc.live?.output() ?? proc.slot.sink : undefined;
   const capture = startCapture(input.recorderEligible, slot.turnId, def, cfg, child, slot.fds[0]!, slot.fds[1]!, input.attachments, stderrTo);
   const { recorder, sink, stderrPump } = capture;
   slot.recorder = recorder;
@@ -409,9 +410,9 @@ function attachCapture(
       claudeStrategy: input.claudeStrategy,
       linger: lingers ? lingerHooks(proc) : undefined,
     });
-    // Every Claude process has its protocol side, which the exit watcher
-    // forgets; only one with the hooks can outlive a turn and take the next.
-    if (def.liveInput === "claude-stream-json") proc.claude = liveClaudeProcess(task.id);
+    // Every Claude or Droid process has its protocol side, which the exit
+    // watcher forgets; only one with the hooks can outlive a turn and take the next.
+    if (canLinger) proc.live = liveProcess(task.id);
     if (lingers) turnProcesses.set(task.id, proc);
   } catch (error) {
     failLiveTurn(child, slot.turnId, sink, error);
