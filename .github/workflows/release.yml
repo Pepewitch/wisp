@@ -613,6 +613,13 @@ jobs:
           actual="$(git -C "$tap" status --porcelain=v1 --untracked-files=all | cut -c4- | LC_ALL=C sort)"
           test "$actual" = "$expected"
           brew tap-new --no-git Pepewitch/tap
+          # Homebrew 7 refuses to load a third-party tap's formula until the
+          # tap is trusted, and `brew audit` loads it by name. This tap is the
+          # one just created from the rendered files, so trust it outright, as
+          # promotion trusts its own audit tap.
+          if brew help trust >/dev/null 2>&1; then
+            brew trust --tap Pepewitch/tap
+          fi
           audit_tap="$(brew --repository Pepewitch/tap)"
           mkdir -p "$audit_tap/Casks"
           cp "$tap/Formula/wisp.rb" "$audit_tap/Formula/wisp.rb"
