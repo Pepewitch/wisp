@@ -545,6 +545,8 @@ export class DroidLiveDriver {
         // Droid go quiet instead, `foreignEnd` ends the turn after all.
         if (typeof notification.turnId === "string" && !this.owned.has(notification.turnId)) {
           this.foreignEnd = end;
+          // Droid may have reported idle before this end; then no idle follows.
+          if (!this.workingValue) this.armForeignEnd();
           return;
         }
         this.endTurn(end);
@@ -558,20 +560,25 @@ export class DroidLiveDriver {
         }
         // Fallback: completion already closed stdin; a late idle is idempotent.
         if (this.terminal) this.options.onTerminal();
-        else if (this.foreignEnd && !this.foreignEndTimer) {
-          this.foreignEndTimer = setTimeout(() => {
-            this.foreignEndTimer = null;
-            if (this.foreignEnd && !this.workingValue) this.endTurn(this.foreignEnd);
-          }, this.options.foreignEndGraceMs ?? FOREIGN_END_GRACE_MS);
-          this.foreignEndTimer.unref?.();
-        }
+        else if (this.foreignEnd) this.armForeignEnd();
         this.options.onIdle?.();
         return;
     }
   }
 
+  private armForeignEnd(): void {
+    if (this.foreignEndTimer) return;
+    this.foreignEndTimer = setTimeout(() => {
+      this.foreignEndTimer = null;
+      // Not while a questionnaire is open: Droid is waiting on the operator.
+      if (this.foreignEnd && !this.workingValue && this.questions.size === 0) this.endTurn(this.foreignEnd);
+    }, this.options.foreignEndGraceMs ?? FOREIGN_END_GRACE_MS);
+    this.foreignEndTimer.unref?.();
+  }
+
   private endTurn(end: { usage: Record<string, number> | null; reason: string }): void {
     this.clearForeignEnd();
+    if (this.terminal) return;
     const isError = end.reason !== "completed";
     if (isError) this.options.emit({ type: "error", source: "agent_loop", message: `Droid turn ${end.reason}` });
     this.emitCompletion({ usage: end.usage, isError });
@@ -608,6 +615,7 @@ export class DroidLiveDriver {
   }): void {
     if (this.terminal) return;
     this.clearAskUserGrace();
+    this.clearForeignEnd();
     this.options.emit({
       type: "completion",
       finalText: this.finalText,
@@ -624,6 +632,8 @@ export class DroidLiveDriver {
   private handleMessage(message: Record<string, any>): void {
     const content = Array.isArray(message.content) ? message.content.map(record) : [];
     if (message.role === "user") {
+      // The turn's own agent turn has started: an earlier foreign end is moot.
+      if (typeof message.id === "string" && this.owned.has(message.id)) this.clearForeignEnd();
       const text = content
         .filter((block) => block.type === "text" && typeof block.text === "string")
         .map((block) => block.text as string)

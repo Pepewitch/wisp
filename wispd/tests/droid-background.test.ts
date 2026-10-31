@@ -298,6 +298,39 @@ describe("a Droid turn reopened on the same process", () => {
     expect(events.filter((event) => event.type === "completion").at(-1)!.finalText).toBe("ANSWER_TO_NEXT");
   });
 
+  test("the fallback also starts when Droid reported idle before that end", async () => {
+    const { driver, respond, note, said, terminals } = await bootedDriver(100);
+    driver.reopen(2, "m2");
+    const sent = driver.send("m2", "next", []);
+    await respond({});
+    await sent;
+    note({ type: "droid_working_state_changed", newState: "streaming_assistant_message" });
+    said("a2", "assistant", "ANSWER_TO_NEXT");
+    note({ type: "droid_working_state_changed", newState: "idle" });
+    note({ type: "agent_turn_completed", reason: "completed", turnId: "droid-internal-id" });
+    await until(() => terminals() === 2, 2000);
+  });
+
+  test("an earlier foreign end never cuts short the turn's own agent turn", async () => {
+    const { driver, events, respond, note, said, terminals } = await bootedDriver(100);
+    driver.reopen(2, "m2");
+    const sent = driver.send("m2", "next", []);
+    await respond({});
+    await sent;
+    note({ type: "agent_turn_completed", reason: "error", turnId: "steer-1" });
+    note({ type: "droid_working_state_changed", newState: "streaming_assistant_message" });
+    said("m2", "user", "next");
+    said("a2", "assistant", "PARTIAL");
+    note({ type: "droid_working_state_changed", newState: "idle" });
+    await Bun.sleep(300);
+    expect(terminals()).toBe(1);
+    said("a3", "assistant", "WHOLE_ANSWER");
+    note({ type: "agent_turn_completed", reason: "completed", turnId: "m2" });
+    expect(terminals()).toBe(2);
+    expect(events.filter((event) => event.type === "completion").at(-1)!.finalText).toBe("WHOLE_ANSWER");
+    expect(events.some((event) => event.type === "error")).toBe(false);
+  });
+
   test("an agent turn Droid runs while no Wisp turn is open records no completion", async () => {
     const { driver, events, note, said, terminals } = await bootedDriver();
     said("execute-completion:y", "user", "Background Execute command finished.\ntool_use_id: y\nsummary: s\nexit_status: code 0");
