@@ -200,7 +200,7 @@ export function startTurn(
   // Never in front of a later turn's slash command — a harness only treats the
   // prompt as a command when it STARTS with `/` — so it waits for a plain turn.
   const command = n > 1 && message.trimStart().startsWith("/");
-  // A Claude process still alive for background work it started takes this
+  // A Claude or Droid process still alive for background work it started takes this
   // turn itself: a second process would split its session, and ending it
   // would kill the work it was kept for.
   const lingering = lingeringProcess(task);

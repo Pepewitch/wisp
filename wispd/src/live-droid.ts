@@ -104,7 +104,7 @@ export class DroidLiveProcess implements LingeringLiveProcess {
       turn: options.turn,
       emit: (event) => this.event(event),
       onTerminal: () => this.decide(),
-      onBackgroundCompletion: (notice) => this.completion(notice),
+      onBackgroundCompletion: (notice, messageId) => this.completion(notice, messageId),
       onIdle: () => this.checkQuiet(),
       // A suspended turn is still a running turn, so only the task STATE moves.
       // It also takes the task out of stuck-detection's reach, which skips
@@ -140,10 +140,12 @@ export class DroidLiveProcess implements LingeringLiveProcess {
     if (this.phase !== "lingering") throw new Error("the live Droid process is not waiting for a turn");
     const settled = this.current;
     const between = this.between;
+    const images = droidImages(this.options.def, attachments);
+    const id = messageId ?? `wisp-turn-${turn.turnId}`;
     this.open(turn);
-    this.driver.reopen(turn.turn);
+    this.driver.reopen(turn.turn, id);
     return this.driver
-      .send(messageId ?? `wisp-turn-${turn.turnId}`, prompt, droidImages(this.options.def, attachments))
+      .send(id, prompt, images)
       .catch((error) => {
         // It never took the prompt. Back to the settled turn, input closing,
         // so the exit watcher starts the next turn on a resumed process.
@@ -251,7 +253,7 @@ export class DroidLiveProcess implements LingeringLiveProcess {
   }
 
   /** Background work finished, and Droid is starting the agent turn that answers it. */
-  private completion(notice: string): void {
+  private completion(notice: string, messageId: string): void {
     const reason = `Background update: ${notice}`;
     if (this.phaseValue === "settling" && this.options.linger) {
       if (this.pendingWake !== null) return;
@@ -259,18 +261,18 @@ export class DroidLiveProcess implements LingeringLiveProcess {
       // hold all of it for the follow-up turn the settle opens.
       this.pendingWake = reason;
       this.held = [];
-      this.driver.reopen(this.current.turn);
+      this.driver.reopen(this.current.turn, messageId);
     } else if (this.phaseValue === "lingering") {
-      this.wake(reason);
+      this.wake(reason, messageId);
     }
     // During a turn the completion is that turn's.
   }
 
-  private wake(reason: string): void {
+  private wake(reason: string, messageId: string): void {
     const turn = this.options.linger?.wake(reason);
     if (!turn) return;
     this.open(turn);
-    this.driver.reopen(turn.turn);
+    this.driver.reopen(turn.turn, messageId);
   }
 
   /**

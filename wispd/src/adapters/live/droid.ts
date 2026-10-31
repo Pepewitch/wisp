@@ -2,7 +2,7 @@ import { hostname } from "node:os";
 import { FACTORY_PROTOCOL_VERSION } from "../../probes";
 import type { AdapterDef } from "../types";
 import { boundedOutput } from "./bounded-output";
-import { createDroidBackground, isCompletionTurn } from "./droid-background";
+import { createDroidBackground } from "./droid-background";
 import { DroidSubagentStream } from "./droid-subagents";
 import { JsonRpcPeer, type RpcFrame, type WritableRpcSink } from "./json-rpc";
 
@@ -49,10 +49,10 @@ interface DroidLiveOptions {
   turn?: number;
   /**
    * Background work reported that it finished, and Droid is about to answer
-   * that report in an agent turn of its own. Called before anything that turn
-   * prints, so the caller can open a turn for it.
+   * that report (message `messageId`) in an agent turn of its own. Called
+   * before anything that turn prints, so the caller can open a turn for it.
    */
-  onBackgroundCompletion?: (notice: string) => void;
+  onBackgroundCompletion?: (notice: string, messageId: string) => void;
   /** Droid went idle: no agent turn is running. */
   onIdle?: () => void;
   /**
@@ -64,6 +64,8 @@ interface DroidLiveOptions {
   onWaiting?: (waiting: boolean) => void;
   /** Test seam for ASK_USER_GRACE_MS; production never sets it. */
   askUserGraceMs?: number;
+  /** Test seam for FOREIGN_END_GRACE_MS; production never sets it. */
+  foreignEndGraceMs?: number;
 }
 
 function record(value: unknown): Record<string, any> {
@@ -160,6 +162,14 @@ function messageParams(
 const ASK_USER_GRACE_MS = 10_000;
 
 /**
+ * How long Droid may stay idle after an agent turn the open Wisp turn did not
+ * start ended, before that end counts as the Wisp turn's own. The turn the
+ * Wisp turn did start normally follows at once; this only catches a message
+ * Droid answered without echoing its id.
+ */
+const FOREIGN_END_GRACE_MS = 2_000;
+
+/**
  * Tools whose calls only keep Droid's own books. Droid often acknowledges one
  * after its answer ("Plan is up-to-date."), and that line must not become the
  * turn's result.
@@ -185,8 +195,11 @@ const DEFERRED_ANSWER = "(no selection — see the message that follows)";
  * turn/completed, unless background work the turn started is still running:
  * then the process stays for it, and the agent turn Droid starts when that
  * work finishes is recorded as a turn of its own (`reopen`; see
- * droid-background.ts and DroidLiveProcess in live-input.ts). Idle is only a
- * fallback if that close raced. A correction
+ * droid-background.ts and DroidLiveProcess in live-droid.ts). A Wisp turn
+ * ends only with an agent turn it started (`owned`): an agent turn Droid runs
+ * for something else, such as a completion or a steer that arrived as the
+ * last turn ended, does not end it. Idle is only a fallback if that close
+ * raced. A correction
  * admitted while a tool was sleeping completed in the original turn and
  * replaced its requested final answer.
  *
@@ -212,8 +225,15 @@ export class DroidLiveDriver {
   private askUserGrace: ReturnType<typeof setTimeout> | null = null;
   /** What Droid still runs in the background: commands and subagents that outlive the turn that started them. */
   readonly background = createDroidBackground();
-  /** Messages written that Droid has not yet put in the conversation: each is still queued for an agent turn. */
-  private readonly unconsumed = new Set<string>();
+  /**
+   * The agent turn ids (Droid names an agent turn after the message that
+   * started it) whose end is the open Wisp turn's end: its prompt, its steers,
+   * or the completion it was opened for.
+   */
+  private owned = new Set<string>();
+  /** An agent turn the open Wisp turn did not start ended: the end to use if nothing follows. */
+  private foreignEnd: { usage: Record<string, number> | null; reason: string } | null = null;
+  private foreignEndTimer: ReturnType<typeof setTimeout> | null = null;
   private turn: number;
   private effort: string | null = null;
   private workingValue = false;
@@ -284,7 +304,7 @@ export class DroidLiveDriver {
       parentSessionId: this.sessionId,
       emit: this.options.emit,
     });
-    this.unconsumed.add(this.options.initialMessageId);
+    this.owned.add(this.options.initialMessageId);
     await this.call(
       "droid.add_user_message",
       messageParams(
@@ -306,22 +326,19 @@ export class DroidLiveDriver {
     await this.ready;
     if (this.terminal) throw new Error("Droid turn already completed");
     await this.deferQuestionsToMessage();
-    this.unconsumed.add(messageId);
-    try {
-      await this.call("droid.add_user_message", messageParams(messageId, text, images));
-    } catch (error) {
-      this.unconsumed.delete(messageId);
-      throw error;
-    }
+    this.owned.add(messageId);
+    await this.call("droid.add_user_message", messageParams(messageId, text, images));
   }
 
   /**
    * Record the next agent turn as a new Wisp turn on this same process: a
    * message written to it after its last turn ended, or a turn Droid started
    * for a background completion. Each turn's log gets its own init and its own
-   * completion.
+   * completion. `startedBy`: the message whose agent turn it records.
    */
-  reopen(turn: number): void {
+  reopen(turn: number, startedBy: string): void {
+    this.clearForeignEnd();
+    this.owned = new Set([startedBy]);
     this.terminal = false;
     this.finalText = "";
     this.toolsSinceText = [];
@@ -519,28 +536,52 @@ export class DroidLiveDriver {
         // An agent turn Droid ran while no Wisp turn was open (one nobody may
         // start now) stays with the settled turn's transcript, unannounced.
         if (this.terminal) return;
-        // A background completion's turn ran first; the message this turn
-        // wrote is still queued and gets an agent turn of its own next.
-        if (isCompletionTurn(notification.turnId) && this.unconsumed.size > 0) return;
-        const reason = typeof notification.reason === "string" ? notification.reason : "unknown";
-        const isError = reason !== "completed";
-        if (isError) {
-          this.options.emit({ type: "error", source: "agent_loop", message: `Droid turn ${reason}` });
-        }
-        this.emitCompletion({
+        const end = {
           usage: droidUsage(notification.tokenUsage),
-          isError,
-        });
+          reason: typeof notification.reason === "string" ? notification.reason : "unknown",
+        };
+        // Someone else's agent turn (a completion, a steer the last turn left
+        // queued) ran first; the one this turn started comes next. Should
+        // Droid go quiet instead, `foreignEnd` ends the turn after all.
+        if (typeof notification.turnId === "string" && !this.owned.has(notification.turnId)) {
+          this.foreignEnd = end;
+          return;
+        }
+        this.endTurn(end);
         return;
       }
       case "droid_working_state_changed":
         this.workingValue = notification.newState !== "idle";
-        if (this.workingValue) return;
+        if (this.workingValue) {
+          this.clearForeignEnd(false);
+          return;
+        }
         // Fallback: completion already closed stdin; a late idle is idempotent.
         if (this.terminal) this.options.onTerminal();
+        else if (this.foreignEnd && !this.foreignEndTimer) {
+          this.foreignEndTimer = setTimeout(() => {
+            this.foreignEndTimer = null;
+            if (this.foreignEnd && !this.workingValue) this.endTurn(this.foreignEnd);
+          }, this.options.foreignEndGraceMs ?? FOREIGN_END_GRACE_MS);
+          this.foreignEndTimer.unref?.();
+        }
         this.options.onIdle?.();
         return;
     }
+  }
+
+  private endTurn(end: { usage: Record<string, number> | null; reason: string }): void {
+    this.clearForeignEnd();
+    const isError = end.reason !== "completed";
+    if (isError) this.options.emit({ type: "error", source: "agent_loop", message: `Droid turn ${end.reason}` });
+    this.emitCompletion({ usage: end.usage, isError });
+  }
+
+  /** `all`: forget the foreign end too, not just its idle wait. */
+  private clearForeignEnd(all = true): void {
+    if (this.foreignEndTimer) clearTimeout(this.foreignEndTimer);
+    this.foreignEndTimer = null;
+    if (all) this.foreignEnd = null;
   }
 
   private emitToolResult(result: Record<string, any>, timestamp?: unknown): void {
@@ -583,13 +624,12 @@ export class DroidLiveDriver {
   private handleMessage(message: Record<string, any>): void {
     const content = Array.isArray(message.content) ? message.content.map(record) : [];
     if (message.role === "user") {
-      if (typeof message.id === "string") this.unconsumed.delete(message.id);
       const text = content
         .filter((block) => block.type === "text" && typeof block.text === "string")
         .map((block) => block.text as string)
         .join("\n");
       const notice = this.background.completion({ id: message.id, role: message.role, text });
-      if (notice) this.options.onBackgroundCompletion?.(notice);
+      if (notice) this.options.onBackgroundCompletion?.(notice, String(message.id));
     }
     if (message.role === "assistant") {
       const texts = content
@@ -675,6 +715,7 @@ export class DroidLiveDriver {
 
   async close(): Promise<void> {
     this.clearAskUserGrace();
+    this.clearForeignEnd();
     await this.cancelQuestions();
     if (this.subagents) await this.subagents.close();
     await this.peer.close();

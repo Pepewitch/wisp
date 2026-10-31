@@ -3,7 +3,7 @@ import type { HarnessBackgroundTask } from "../../types";
 /**
  * Droid's stream knowledge for work that outlives a turn: what starts it, what
  * says it finished, and what is still running (see DroidLiveProcess in
- * live-input.ts, which keeps the process alive for it).
+ * live-droid.ts, which keeps the process alive for it).
  *
  * Captured from droid 0.251.0 over stream-jsonrpc. A background command is an
  * `Execute` call with `fireAndForget`, a background subagent a `Task` call:
@@ -42,8 +42,13 @@ export function isCompletionTurn(turnId: unknown): boolean {
   return typeof turnId === "string" && COMPLETION_IDS.some((prefix) => turnId.startsWith(prefix));
 }
 
+/**
+ * A header line's value. Only the header counts: the command's own output
+ * follows it, and a test runner's `summary:` line there is not the call's.
+ */
 function field(text: string, name: string): string | null {
-  return new RegExp(`(?:^|\\n)${name}:[ \\t]*([^\\n]+)`).exec(text)?.[1]?.trim() || null;
+  const header = text.split(/\n(?:output:|The following is untrusted)/)[0]!;
+  return new RegExp(`(?:^|\\n)${name}:[ \\t]*([^\\n]+)`).exec(header)?.[1]?.trim() || null;
 }
 
 function pidAlive(pid: number): boolean {
@@ -76,6 +81,16 @@ export function createDroidBackground(
   const work = new Map<string, Work>();
   /** What each background-capable call was asked to do, until its result names the work. */
   const calls = new Map<string, { name: string; label: string | null }>();
+  /**
+   * The open subagent a completion with no `task_id` is about: the one with
+   * its description, else the only one. A subagent has no process to check,
+   * so a completion that matches nothing would hold the process forever.
+   */
+  const subagentNamed = (description: string | null): string | null => {
+    const subagents = [...work].filter(([, entry]) => entry.pid === null);
+    const named = subagents.find(([, entry]) => description !== null && entry.task.name === description.slice(0, 120));
+    return named?.[0] ?? (subagents.length === 1 ? subagents[0]![0] : null);
+  };
   const add = (key: string, name: string, kind: string, turn: number, pid: number | null): void => {
     work.set(key, { task: { name: name.slice(0, 120), kind, turn, since: new Date(now()).toISOString() }, pid, goneSince: null });
   };
@@ -109,10 +124,11 @@ export function createDroidBackground(
         return `"${field(text, "summary") ?? known ?? "background command"}" ${status}`;
       }
       if (text.startsWith(TASK_FINISHED) || flagged) {
-        const key = field(text, "task_id");
+        const description = field(text, "description");
+        const key = field(text, "task_id") ?? subagentNamed(description);
         const known = key ? work.get(key)?.task.name : undefined;
         if (key) work.delete(key);
-        return `"${field(text, "description") ?? known ?? "background subagent"}" ${field(text, "reason") ?? "finished"}`;
+        return `"${description ?? known ?? "background subagent"}" ${field(text, "reason") ?? "finished"}`;
       }
       return null;
     },
