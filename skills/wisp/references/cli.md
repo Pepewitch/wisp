@@ -294,10 +294,11 @@ naming each tracked group — its turn, pgid, live process count, program names
 and age — which is what to read before deciding whether Stop is safe. A group
 appears only once it has outlived its turn by a few seconds, so a straggler
 that exits with the turn is not reported. Normal sending leaves that work running.
-A Claude agent that starts a long-running background process (a dev server,
-a Monitor) finishes its turn when it answers: the task reads `done` with that
-process as background work, which `show` names in the harness's own words
-under its group. The Claude process stays alive for it, so the next `send`
+A Claude or Droid agent that starts a long-running background process (a dev
+server, a Monitor, a Droid `fireAndForget` command or background subagent)
+finishes its turn when it answers: the task reads `done` with that process as
+background work, which `show` names in the harness's own words under its
+group. The harness process stays alive for it, so the next `send`
 becomes a new turn in that same process, and a model call the background work
 wakes on its own (a monitor event, the process finishing) is recorded as a
 turn of its own, which sends no finish notification or webhook. A message for

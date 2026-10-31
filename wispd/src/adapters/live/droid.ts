@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 import { FACTORY_PROTOCOL_VERSION } from "../../probes";
 import type { AdapterDef } from "../types";
 import { boundedOutput } from "./bounded-output";
+import { createDroidBackground, isCompletionTurn } from "./droid-background";
 import { DroidSubagentStream } from "./droid-subagents";
 import { JsonRpcPeer, type RpcFrame, type WritableRpcSink } from "./json-rpc";
 
@@ -44,6 +45,16 @@ interface DroidLiveOptions {
   initialImages: DroidLiveImage[];
   emit: (event: Record<string, unknown>) => void;
   onTerminal: () => void;
+  /** The turn number the first message opens, for naming background work. */
+  turn?: number;
+  /**
+   * Background work reported that it finished, and Droid is about to answer
+   * that report in an agent turn of its own. Called before anything that turn
+   * prints, so the caller can open a turn for it.
+   */
+  onBackgroundCompletion?: (notice: string) => void;
+  /** Droid went idle: no agent turn is running. */
+  onIdle?: () => void;
   /**
    * The turn is now waiting on a person, or has stopped waiting. Distinct from
    * onTerminal: the turn is still open either way, so only the task's STATE
@@ -171,7 +182,11 @@ const DEFERRED_ANSWER = "(no selection — see the message that follows)";
  * Steering was last live-probed on 0.205.0. Admission is the
  * response to droid.add_user_message. Completion is agent_turn_completed
  * (any reason), which closes stdin immediately, the same way Codex closes on
- * turn/completed. Idle is only a fallback if that close raced. A correction
+ * turn/completed, unless background work the turn started is still running:
+ * then the process stays for it, and the agent turn Droid starts when that
+ * work finishes is recorded as a turn of its own (`reopen`; see
+ * droid-background.ts and DroidLiveProcess in live-input.ts). Idle is only a
+ * fallback if that close raced. A correction
  * admitted while a tool was sleeping completed in the original turn and
  * replaced its requested final answer.
  *
@@ -195,10 +210,18 @@ export class DroidLiveDriver {
   private subagents: DroidSubagentStream | null = null;
   private readonly questions = new Map<string, PendingQuestion>();
   private askUserGrace: ReturnType<typeof setTimeout> | null = null;
+  /** What Droid still runs in the background: commands and subagents that outlive the turn that started them. */
+  readonly background = createDroidBackground();
+  /** Messages written that Droid has not yet put in the conversation: each is still queued for an agent turn. */
+  private readonly unconsumed = new Set<string>();
+  private turn: number;
+  private effort: string | null = null;
+  private workingValue = false;
 
   constructor(private readonly options: DroidLiveOptions) {
     this.sessionId = options.sessionId;
     this.model = options.model;
+    this.turn = options.turn ?? 1;
     this.peer = new JsonRpcPeer({
       sink: options.sink,
       label: "Droid JSON-RPC",
@@ -255,18 +278,13 @@ export class DroidLiveDriver {
     }
     const settings = record(opened.settings);
     if (!this.model && typeof settings.modelId === "string") this.model = settings.modelId;
-    this.options.emit({
-      type: "system",
-      subtype: "init",
-      cwd: this.options.cwd,
-      session_id: this.sessionId,
-      model: this.model,
-      reasoning_effort: this.options.effort ?? settings.reasoningEffort ?? null,
-    });
+    this.effort = this.options.effort ?? (typeof settings.reasoningEffort === "string" ? settings.reasoningEffort : null);
+    this.emitInit();
     this.subagents = new DroidSubagentStream({
       parentSessionId: this.sessionId,
       emit: this.options.emit,
     });
+    this.unconsumed.add(this.options.initialMessageId);
     await this.call(
       "droid.add_user_message",
       messageParams(
@@ -288,7 +306,48 @@ export class DroidLiveDriver {
     await this.ready;
     if (this.terminal) throw new Error("Droid turn already completed");
     await this.deferQuestionsToMessage();
-    await this.call("droid.add_user_message", messageParams(messageId, text, images));
+    this.unconsumed.add(messageId);
+    try {
+      await this.call("droid.add_user_message", messageParams(messageId, text, images));
+    } catch (error) {
+      this.unconsumed.delete(messageId);
+      throw error;
+    }
+  }
+
+  /**
+   * Record the next agent turn as a new Wisp turn on this same process: a
+   * message written to it after its last turn ended, or a turn Droid started
+   * for a background completion. Each turn's log gets its own init and its own
+   * completion.
+   */
+  reopen(turn: number): void {
+    this.terminal = false;
+    this.finalText = "";
+    this.toolsSinceText = [];
+    this.turn = turn;
+    this.emitInit();
+  }
+
+  /** The reopened turn turned out to be Wisp turn `turn`. */
+  renumber(turn: number): void {
+    this.turn = turn;
+  }
+
+  /** An agent turn is running, whether or not Wisp has a turn open for it. */
+  get working(): boolean {
+    return this.workingValue;
+  }
+
+  private emitInit(): void {
+    this.options.emit({
+      type: "system",
+      subtype: "init",
+      cwd: this.options.cwd,
+      session_id: this.sessionId,
+      model: this.model,
+      reasoning_effort: this.effort,
+    });
   }
 
   private call(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -457,7 +516,12 @@ export class DroidLiveDriver {
         this.emitToolResult(notification, receivedAt);
         return;
       case "agent_turn_completed": {
+        // An agent turn Droid ran while no Wisp turn was open (one nobody may
+        // start now) stays with the settled turn's transcript, unannounced.
         if (this.terminal) return;
+        // A background completion's turn ran first; the message this turn
+        // wrote is still queued and gets an agent turn of its own next.
+        if (isCompletionTurn(notification.turnId) && this.unconsumed.size > 0) return;
         const reason = typeof notification.reason === "string" ? notification.reason : "unknown";
         const isError = reason !== "completed";
         if (isError) {
@@ -470,13 +534,17 @@ export class DroidLiveDriver {
         return;
       }
       case "droid_working_state_changed":
+        this.workingValue = notification.newState !== "idle";
+        if (this.workingValue) return;
         // Fallback: completion already closed stdin; a late idle is idempotent.
-        if (notification.newState === "idle" && this.terminal) this.options.onTerminal();
+        if (this.terminal) this.options.onTerminal();
+        this.options.onIdle?.();
         return;
     }
   }
 
   private emitToolResult(result: Record<string, any>, timestamp?: unknown): void {
+    if (typeof result.toolUseId === "string") this.background.noteToolResult(result.toolUseId, result.content, this.turn);
     this.options.emit({
       type: "tool_result",
       id: result.toolUseId,
@@ -514,6 +582,15 @@ export class DroidLiveDriver {
 
   private handleMessage(message: Record<string, any>): void {
     const content = Array.isArray(message.content) ? message.content.map(record) : [];
+    if (message.role === "user") {
+      if (typeof message.id === "string") this.unconsumed.delete(message.id);
+      const text = content
+        .filter((block) => block.type === "text" && typeof block.text === "string")
+        .map((block) => block.text as string)
+        .join("\n");
+      const notice = this.background.completion({ id: message.id, role: message.role, text });
+      if (notice) this.options.onBackgroundCompletion?.(notice);
+    }
     if (message.role === "assistant") {
       const texts = content
         .filter((block) => block.type === "text" && typeof block.text === "string")
@@ -536,6 +613,7 @@ export class DroidLiveDriver {
     for (const block of content) {
       if (block.type === "tool_use") {
         this.toolsSinceText.push(String(block.name));
+        if (typeof block.id === "string") this.background.noteToolUse(block.id, String(block.name), record(block.input));
         this.options.emit({
           type: "tool_call",
           id: block.id,
