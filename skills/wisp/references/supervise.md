@@ -37,7 +37,10 @@ each needs its own worktree: `wisp new "<prompt>" --subtask`. Name in each
 prompt the files the others will change. The kind picks the base (`explore`:
 the project's usual base, the default; `review`: the parent's PR head;
 `continue`: the parent's committed tip; see [cli.md](cli.md#tasks)). At most 10
-live children per parent and 3 running at once.
+live children per parent and 3 running at once (`maxRunningSubtasks`). To keep
+a fixed number running, create every child with `--queue`: past the cap each
+one waits as `queued` and starts by itself when a sibling finishes, so you
+need no counting loop of your own; `wisp wait --any` returns as each settles.
 
 A child made with `--subtask` reports to you. You do not poll or heartbeat for
 it. A report arrives as a message of its own when a turn of the child ends

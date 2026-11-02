@@ -171,6 +171,7 @@ export function taskMode(task: Pick<Task, "mode">): TaskMode {
  */
 export const STATE_ICON: Record<TaskState, string> = {
   creating: "◌",
+  queued: "…",
   running: "●",
   done: "✓",
   "needs-input": "?",

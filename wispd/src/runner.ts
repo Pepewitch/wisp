@@ -1,6 +1,6 @@
-import { assertTaskCapacity, SubtaskCapError, TaskCapacityError } from "./task-admission";
+import { assertTaskCapacity, capacityWait, TaskCapacityError } from "./task-admission";
 import { recordSetupFailure, reportFraming } from "./subtask-reports";
-import { liveNonReviewerChildren } from "./subtasks";
+import { liveNonReviewerChildren, parentsWithWaitingChildren } from "./subtasks";
 import { updateTaskAndEmit } from "./task-update";
 import { pauseTaskWorkflows } from "./workflows/store";
 import { backgroundPass, homeIsDraining } from "./home-lifetime";
@@ -616,10 +616,8 @@ export function startNextQueuedMessage(
     // and starts when one of them settles (drainSubtaskQueues), never failing.
     // a subtask report waits for a free slot; its delivery starts it again by id
     if (error instanceof TaskCapacityError && message.origin === "subtask") return null;
-    if (error instanceof SubtaskCapError) {
-      updateTaskAndEmit(taskId, { state_detail: `waiting for a subtask slot under ${error.parentId}` });
-      return null;
-    }
+    const waiting = capacityWait(error, current.state);
+    if (waiting) { updateTaskAndEmit(taskId, { state_detail: waiting }); return null; }
     const detail = error instanceof Error ? error.message : String(error);
     console.error(`[wisp] task ${taskId}: queued message could not start: ${detail}`);
     if (!getTask(taskId)?.archived) {
@@ -696,8 +694,11 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
   // Messages survive a daemon restart independently of turn rows. Start any
   // FIFO head that was waiting while the daemon was unavailable.
   for (const task of listTasks()) {
+    // a queued subtask starts in its parent's order, through the drain below
+    if (task.state === "queued") continue;
     if (!hasRunningTurn(task.id)) startNextQueuedMessage(task.id, adapters, cfg);
   }
+  for (const parent of parentsWithWaitingChildren()) drainSubtaskQueues(parent, adapters, cfg);
 }
 
 /**

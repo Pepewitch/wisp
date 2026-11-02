@@ -14,12 +14,16 @@ export interface SubtaskBody {
   parentTaskId?: unknown;
   subtaskKind?: unknown;
   report?: unknown;
+  /** wait for the parent's running cap instead of being refused (task-launch.ts) */
+  queue?: unknown;
 }
 
 /** The create request's subtask fields, checked for shape; a combination the domain cannot judge is refused here. */
 export function subtaskBodyError(body: SubtaskBody & { repoPath?: unknown }): Response | null {
+  if (body.queue !== undefined && typeof body.queue !== "boolean") return err(`queue must be a boolean, got ${typeName(body.queue)}`, 400);
   if (body.parentTaskId === undefined) {
     if (body.subtaskKind !== undefined || body.report !== undefined) return err("subtaskKind and report need parentTaskId", 400);
+    if (body.queue === true) return err("queue needs parentTaskId: a subtask waits for its parent's running cap", 400);
     return null;
   }
   if (typeof body.parentTaskId !== "string" || body.parentTaskId === "") {

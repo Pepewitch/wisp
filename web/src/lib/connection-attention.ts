@@ -8,6 +8,7 @@ const ATTENTION_PRIORITY: readonly Exclude<TaskState, "done">[] = [
   "failed",
   "running",
   "creating",
+  "queued",
 ]
 
 /** The highest-priority live task state worth showing on an inactive connection. */

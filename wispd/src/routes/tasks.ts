@@ -123,6 +123,9 @@ function createTaskBodyError(body: CreateTaskBody): Response | null {
   // be silently discarded as "no override" by resolveBase — a base the user
   // asked for and did not get, which is the failure mode being removed.
   if (typeof body.base === "string" && body.base.trim() === "") return err("base must not be empty", 400);
+  if (body.queue === true && Array.isArray(body.attachments) && body.attachments.length > 0) {
+    return err("a queued subtask's first prompt cannot carry attachments; send them once it starts", 400);
+  }
   return autopilotBodyError(body);
 }
 
@@ -189,6 +192,7 @@ export function createTaskRoute(
           : undefined,
         subtask: subtaskRequest(body),
         actor: requestActor(req),
+        queue: body.queue === true,
       },
       cfg,
       adapters,

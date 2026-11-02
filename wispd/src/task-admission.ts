@@ -6,6 +6,8 @@ import { cappedParent, liveNonReviewerChildren } from "./subtasks";
 // Setup reservations bridge the async worktree/hook phase into the persisted turn.
 // Startup resolves abandoned creation rows before accepting requests.
 const preparing = new Set<string>();
+/** Setups that hold only a global slot (a queued subtask's): never counted against their parent's cap. */
+const globalOnly = new Set<string>();
 export class TaskCapacityError extends Error {}
 /** A parent's running-subtask cap, not the global limit: a queued start waits for it instead of failing. */
 export class SubtaskCapError extends TaskCapacityError {
@@ -36,7 +38,7 @@ export function assertTaskCapacity(cfg: WispConfig, taskId?: string, scope: Capa
   const parentId = scope.parentId !== undefined ? scope.parentId : cappedParent(taskId ? getTask(taskId) : null);
   if (!parentId) return;
   const cap = runningSubtaskCap(cfg);
-  const running = liveNonReviewerChildren(parentId).filter((child) => active.has(child.id)).length;
+  const running = liveNonReviewerChildren(parentId).filter((child) => active.has(child.id) && !globalOnly.has(child.id)).length;
   if (running >= cap) {
     throw new SubtaskCapError(parentId, `Task ${parentId} already has ${running} subtasks starting or running, its limit. Try again when one finishes, or raise maxRunningSubtasks in config.json.`);
   }
@@ -54,5 +56,22 @@ export function hasTaskCapacity(cfg: WispConfig, taskId?: string, scope: Capacit
 export function reserveTaskCapacity(id: string, cfg: WispConfig, scope: CapacityScope = {}): () => void {
   assertTaskCapacity(cfg, id, scope);
   preparing.add(id);
-  return () => { preparing.delete(id); };
+  // an explicit null parent: this setup is not its parent's running child
+  if (scope.parentId === null) globalOnly.add(id);
+  return () => {
+    preparing.delete(id);
+    globalOnly.delete(id);
+  };
+}
+
+/**
+ * Why a queued start that capacity refused waits rather than fails, or null
+ * when it fails: a parent's running cap always waits (drainSubtaskQueues
+ * starts it as a sibling settles), and the global limit waits for a queued
+ * subtask's first prompt (the backstop drain retries it).
+ */
+export function capacityWait(error: unknown, state: string): string | null {
+  if (error instanceof SubtaskCapError) return `waiting for a subtask slot under ${error.parentId}`;
+  if (error instanceof TaskCapacityError && state === "queued") return "waiting for a free task slot";
+  return null;
 }

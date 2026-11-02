@@ -78,7 +78,7 @@ function printTasks(tasks: ApiTaskListItem[]): void {
     const icon = paused ? STATE_ICON.stuck : STATE_ICON[t.state] ?? "·";
     // the honest word (Theme B): "exited 1" when the work landed but the
     // harness CLI exited nonzero; "failed" is reserved for no-result failures
-    const word = (paused ? "paused" : displayStateWord(t.state, t.latest_turn_exit_code, t.latest_turn_has_result)) + backgroundSummary(t);
+    const word = (paused ? "paused" : displayStateWord(t.state, t.latest_turn_exit_code, t.latest_turn_has_result)) + (t.queue_position ? ` #${t.queue_position}` : "") + backgroundSummary(t);
     const detail = t.state_detail ? `  — ${t.state_detail.slice(0, 60)}` : "";
     // the model the LATEST turn actually ran on; "(requested)" when the
     // harness never reported one — the distinction P5b exists for

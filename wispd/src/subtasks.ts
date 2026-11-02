@@ -26,6 +26,13 @@ export function liveNonReviewerChildren(parentId: string): Task[] {
     .all(parentId) as Task[];
 }
 
+/** Where a queued child stands among its parent's queued children, in the order they start (1 = next). */
+export function queuePosition(task: Pick<Task, "id" | "parent_task_id">): number {
+  if (!task.parent_task_id) return 1;
+  const queued = liveNonReviewerChildren(task.parent_task_id).filter((child) => child.state === "queued");
+  return Math.max(1, queued.findIndex((child) => child.id === task.id) + 1);
+}
+
 /**
  * A task and its descendants, at most two levels (a root, its children, and
  * the reviewers of a child's PR), parents before children.

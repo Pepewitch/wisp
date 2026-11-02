@@ -187,7 +187,7 @@ omitted when the harness will choose its own default.
 
 ```
 wisp new [repo] "prompt" … --subtask | --parent <id> [--report]
-         [--kind review|explore|continue] [--base <ref>]
+         [--kind review|explore|continue] [--base <ref>] [--queue]
 ```
 
 Subtasks, on by default (`subtasks: false` in `config.json` turns them off, and
@@ -200,6 +200,15 @@ fails; see [supervise.md](supervise.md#subtasks). `repo` defaults to the
 parent's, and must be the parent's if given. The CLI checks `features.subtasks` before it uploads any
 attachment and refuses on a daemon without it, so it never makes a root task by
 mistake. An agent that names a parent that is not its own task gets a warning.
+
+A parent runs at most `maxRunningSubtasks` children at once (3 unless
+`config.json` says otherwise). A new subtask past that cap is refused, unless
+it asks to `--queue`: it is then created and set up anyway, reads `queued`
+(`state_detail` names the parent; `wisp ls` shows its place, `#2`, and
+`--json` carries `queue_position`), and starts by itself when a sibling
+finishes, oldest first. Its first turn reports back like any other. A queued
+subtask takes no attachments on its first prompt; `wisp wait` keeps waiting
+through `queued`.
 
 `--kind` picks the base: `review` pins the head of the parent's open PR (no PR,
 a fork PR or an unreachable GitHub is refused with "pass --base"), `continue`
@@ -222,7 +231,7 @@ wisp ls [-a|--all] [--json]
 
 One line per task (`-a` includes archived; `--json` prints the daemon's list
 for scripts; a subtask's line is indented under its parent when both are listed): id, state icon
-(◌ creating · ● running · ✓ done · ? needs-input · ⏸ stuck · ✗ failed), the
+(◌ creating · … queued · ● running · ✓ done · ? needs-input · ⏸ stuck · ✗ failed), the
 honest word (`exited N` when the turn delivered its result but the harness CLI
 exited nonzero), harness, the latest turn's actual model (`(requested)` when
 the harness never reported one), turn count, age, title, and `state_detail`.
