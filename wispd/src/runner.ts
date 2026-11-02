@@ -89,17 +89,9 @@ import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
 import { reviewTurnEnv } from "./verify/reviews";
+import { startLoggedImageCapture } from "./logged-images";
 import {
-  AGENT_TURN_ENV,
-  attachmentLines,
-  envForCwd,
-  framedMessage,
-  inputStrategyFor,
-  nativeImageAttachments,
-  taskEnv,
-  taskPreambleLines,
-  outputReminder,
-  withWispSection,
+  AGENT_TURN_ENV, attachmentLines, envForCwd, framedMessage, inputStrategyFor, nativeImageAttachments, taskEnv, taskPreambleLines, outputReminder, withWispSection,
 } from "./turn-input";
 import type { SendResult, Task, TaskMessage, Turn, TurnOrigin } from "./types";
 
@@ -672,6 +664,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
           ? `[wisp] re-adopted task ${task.id} turn ${turn.n} (pid ${turn.pid} still running)`
           : `[wisp] re-adopted task ${task.id} turn ${turn.n} (pid ${turn.pid} is running but its identity could not be verified — waiting for it, never signaling it)`,
       );
+      const images = turn.capture_mode === "recorder-v1" ? null : startLoggedImageCapture(def, turn.id, turn.log_file, "resumed");
       startReAdoptionPoll({
         pid: turn.pid!,
         pidStartTime: turn.pid_start_time,
@@ -681,6 +674,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
         killGraceMs: KILL_GRACE_MS,
         onKillReason: (reason) => recordKillReason(turn.id, reason),
         onEnded: async () => {
+          await images?.finish();
           await waitForInterrupt(turn.id);
           await finalizeTurn(task.id, turn.id, def, null, turn.log_file, errPath);
           await processStop(task.id)?.catch(() => {});
@@ -693,6 +687,7 @@ export async function recoverOrphanedTurns(adapters: Record<string, AdapterDef>,
           ? `pid ${turn.pid} was reused by another process — never signaling it`
           : "ended while daemon was down";
       console.error(`[wisp] finalizing task ${task.id} turn ${turn.n} (${why})`);
+      if (turn.capture_mode !== "recorder-v1") await startLoggedImageCapture(def, turn.id, turn.log_file, "ended")?.finish();
       await waitForInterrupt(turn.id);
       await finalizeTurn(task.id, turn.id, def, null, turn.log_file, errPath);
       if (!killedForArchive(turn.id)) startNextQueuedMessage(task.id, adapters, cfg);

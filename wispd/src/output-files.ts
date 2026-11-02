@@ -1,6 +1,6 @@
-import { closeSync, constants, fstatSync, openSync, readSync, realpathSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, sep } from "node:path";
+import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { TASKS_DIR, WISP_HOME } from "./config";
 import { MAX_OUTPUT_IMAGE_BYTES, OutputError } from "./outputs";
 import { getTask, getTurn } from "./store";
@@ -57,4 +57,36 @@ export function readViewedImage(turnId: number, path: string): Uint8Array {
     }
     return bytes.subarray(0, offset);
   } finally { closeSync(fd); }
+}
+
+/**
+ * Refuse a file copied after the fact (a followed log, logged-images.ts) when
+ * what `path` names may not be what the step read at `at`: the file written
+ * or renamed over since, or any folder on the way to it, up to the place it
+ * is allowed to be in, replaced since. A path through a link is refused
+ * outright: a link, or one its target passes through, can be retargeted
+ * without a trace on the path itself. Conservative: a folder that merely
+ * gained a file since then counts too, and the image is then not captured.
+ */
+export function assertViewedPathUnchanged(turnId: number, path: string, at: number): void {
+  const changed = () => new OutputError("the image file changed after the step read it");
+  const turn = getTurn(turnId);
+  const task = turn ? getTask(turn.task_id) : null;
+  const roots = new Set<string>();
+  for (const root of [task?.worktree_path, task ? join(TASKS_DIR, task.id) : null, tmpdir(), "/tmp"]) {
+    if (!root) continue;
+    roots.add(resolve(root));
+    const real = realOrNull(root);
+    if (real) roots.add(real);
+  }
+  const file = resolve(path);
+  for (let current = file; ; current = dirname(current)) {
+    let info;
+    try { info = lstatSync(current); } catch { throw new OutputError("the image file was not found"); }
+    if (info.isSymbolicLink()) throw new OutputError("the image path goes through a link, which can change after the step read it");
+    // the file itself written to, or anything on the way renamed over or replaced
+    if (Math.max(info.ctimeMs, current === file ? info.mtimeMs : 0) > at) throw changed();
+    const parent = dirname(current);
+    if (parent === current || roots.has(parent)) return;
+  }
 }

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { closeSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { outputImageNote, outputImageNoteId, type OutputImage } from "../../shared/api/outputs";
 import { samplePng } from "../scripts/harness/image-output-probe";
@@ -10,7 +10,7 @@ import { MAX_OUTPUT_IMAGE_BYTES, outputImagePath, parseOutputManifest, publishin
 import { outputRoute } from "../src/routes/outputs";
 import { TurnRecorder } from "../src/recording/turn-recorder";
 import { createTask, createTurn, freeSlot, getTurn, newTaskId, setTaskFields } from "../src/store";
-import { finalizeTurn } from "../src/turn-finalize";
+import { LOG_POLL_MS, startLoggedImageCapture } from "../src/logged-images";
 
 /** A task whose worktree lives under the Wisp home, as real worktrees do. */
 function fixture() {
@@ -103,24 +103,202 @@ test("a codex image_generation result far over the transcript's 16 KB bound is c
   } finally { closeSync(outFd); closeSync(errFd); }
 });
 
-test("cursor and opencode turns capture no images: a file read once the turn ends cannot show what a step saw", async () => {
+test("cursor copies an image its read completed, and leaves a text file's read alone", () => {
   const f = fixture();
   const path = join(f.worktree, "shot.png");
   writeFileSync(path, samplePng());
-  const read = { type: "tool_call", subtype: "completed", call_id: "call-log-1", tool_call: { readToolCall: { args: { path }, result: { success: { path, fileSize: 1 } } }, completedAtMs: String(Date.now()) } };
-  const log = [JSON.stringify(read), JSON.stringify({ type: "result", subtype: "success", result: "Seen.", is_error: false })].join("\n") + "\n";
-  writeFileSync(f.log, log);
-  writeFileSync(`${f.log}.err`, "");
-  await finalizeTurn(f.task.id, f.turnId, BUILTIN_ADAPTERS.cursor!, 0, f.log, `${f.log}.err`);
+  const text = join(f.worktree, "notes.md");
+  writeFileSync(text, "hello");
+  const { run, notes } = capture("cursor", f.turnId);
+  const read = (call: string, target: string) => ({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path: target }, result: { success: { path: target, fileSize: 1 } } } } });
+  expect(run(read("call-log-1", text))).toEqual(read("call-log-1", text));
+  expect(notes).toEqual([]);
+  run(read("call-log-2", path));
+  expect(outputs(f.turnId)).toEqual([expect.objectContaining({ name: "shot.png", source: "native", step: { id: "call-log-2", label: `Read ${path}` } })]);
+  expect(notes[0]).toContain("Image output: shot.png");
+});
+
+test("opencode keeps the bytes a tool showed the model, anchored to the tool call", () => {
+  const f = fixture();
+  const { run } = capture("opencode", f.turnId);
+  const path = "/work/repo/red.png";
+  run({ type: "tool_use", part: { type: "tool", tool: "read", callID: "call_01", state: { status: "completed", input: { filePath: path }, attachments: [{ type: "file", mime: "image/png", url: `data:image/png;base64,${base64()}` }] } } });
+  expect(outputs(f.turnId)).toEqual([expect.objectContaining({ name: "red.png", source: "native", step: { id: "call_01", label: `read ${path}` } })]);
+});
+
+test("a running cursor turn's log is followed: an image overwritten after the read keeps what the read saw", async () => {
+  const f = fixture();
+  const path = join(f.worktree, "frame.png");
+  const original = samplePng();
+  writeFileSync(path, original);
+  writeFileSync(f.log, "");
+  const logged = startLoggedImageCapture(BUILTIN_ADAPTERS.cursor!, f.turnId, f.log)!;
+  const read = { type: "tool_call", subtype: "completed", call_id: "call-live-1", tool_call: { readToolCall: { args: { path }, result: { success: { path, fileSize: original.length } } } } };
+  // the harness writes the read, then replaces the file before its turn ends
+  appendFileSync(f.log, `${JSON.stringify(read)}\n`);
+  await Bun.sleep(LOG_POLL_MS * 3);
+  writeFileSync(path, Buffer.concat([original, Buffer.from("changed later")]));
+  appendFileSync(f.log, `${JSON.stringify({ type: "result", subtype: "success", result: "Seen.", is_error: false })}\n`);
+  await logged.finish();
+  const [image] = outputs(f.turnId);
+  expect(readFileSync(outputImagePath(f.task.id, 1, image!.id))).toEqual(original);
+  // its note lands in the log once the harness has exited
+  expect(readFileSync(f.log, "utf8")).toContain("Image output: frame.png");
+});
+
+test("a followed cursor log refuses a file written after its read, and survives a split character, a missing newline and a rotation", async () => {
+  const f = fixture();
+  const changed = join(f.worktree, "late.png");
+  writeFileSync(changed, samplePng());
+  const read = (call: string, path: string, completedAtMs: number) => JSON.stringify({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path }, result: { success: { path } } }, completedAtMs: String(completedAtMs) } });
+  // read before the file's last write: not what the step saw
+  writeFileSync(f.log, `${read("call-early", changed, Date.now() - 60_000)}\n`);
+  let logged = startLoggedImageCapture(BUILTIN_ADAPTERS.cursor!, f.turnId, f.log)!;
+  await logged.finish();
   expect(outputs(f.turnId)).toEqual([]);
-  expect(readFileSync(f.log, "utf8")).toBe(log);
-  const attachment = { type: "tool_use", part: { type: "tool", tool: "read", callID: "call_01", state: { status: "completed", input: { filePath: path }, attachments: [{ type: "file", mime: "image/png", url: `data:image/png;base64,${base64()}` }] } } };
-  for (const harness of ["cursor", "opencode"]) {
-    const { run, notes } = capture(harness, f.turnId);
-    for (const event of [read, attachment]) expect(run(event)).toBe(event);
-    expect(notes).toEqual([]);
+  expect(readFileSync(f.log, "utf8")).toContain("the image file changed after the step read it");
+
+  // a multi-byte path character across the read boundary, and a last line without its newline
+  const dir = join(f.worktree, "é");
+  mkdirSync(dir, { recursive: true });
+  const image = join(dir, "shot.png");
+  writeFileSync(image, samplePng());
+  const event = read("call-split", image, Date.now() + 60_000);
+  const filler = 256 * 1024 - 1 - event.indexOf("é") - 1;
+  const result = JSON.stringify({ type: "result", subtype: "success", result: "Seen.", is_error: false });
+  writeFileSync(f.log, `${"x".repeat(filler)}\n${event}\n${result}`);
+  logged = startLoggedImageCapture(BUILTIN_ADAPTERS.cursor!, f.turnId, f.log)!;
+  await logged.finish();
+  expect(outputs(f.turnId)).toEqual([expect.objectContaining({ name: "shot.png", step: expect.objectContaining({ id: "call-split" }) })]);
+  // the result line keeps its own line: the note starts a new one
+  expect(readFileSync(f.log, "utf8")).toContain(`${result}\n· Image output: shot.png`);
+
+  // a log replaced while followed is read again from its start
+  const other = join(f.worktree, "after-rotation.png");
+  writeFileSync(other, Buffer.concat([samplePng(), Buffer.from("x")]));
+  writeFileSync(f.log, "y".repeat(4097) + "\n");
+  logged = startLoggedImageCapture(BUILTIN_ADAPTERS.cursor!, f.turnId, f.log)!;
+  await Bun.sleep(LOG_POLL_MS * 2);
+  rmSync(f.log);
+  writeFileSync(f.log, `${read("call-rotated", other, Date.now() + 60_000)}\n`);
+  await logged.finish();
+  expect(outputs(f.turnId).map((image) => image.name)).toContain("after-rotation.png");
+});
+
+test("a huge newline-free log is read in bounded slices, letting the event loop run, and captures nothing", async () => {
+  const f = fixture();
+  writeFileSync(f.log, "z".repeat(20 * 1024 * 1024));
+  let ran = false;
+  const finishing = startLoggedImageCapture(BUILTIN_ADAPTERS.opencode!, f.turnId, f.log, "ended")!.finish();
+  setTimeout(() => { ran = true; }, 0);
+  await finishing;
+  // an unbounded read would finish before any timer could run
+  expect(ran).toBe(true);
+  expect(outputs(f.turnId)).toEqual([]);
+});
+
+test("finish reads the log as it stood, not what a process left behind keeps appending", async () => {
+  const f = fixture();
+  writeFileSync(f.log, "x".repeat(1024 * 1024));
+  const chunk = "y".repeat(2 * 1024 * 1024);
+  const writer = setInterval(() => appendFileSync(f.log, chunk), 1);
+  try {
+    const done = startLoggedImageCapture(BUILTIN_ADAPTERS.opencode!, f.turnId, f.log, "ended")!.finish().then(() => "finished");
+    expect(await Promise.race([done, Bun.sleep(5_000).then(() => "still reading")])).toBe("finished");
+  } finally {
+    clearInterval(writer);
+  }
+});
+
+test("a cursor image renamed over, or relinked, after its read is refused", () => {
+  const f = fixture();
+  const original = join(f.worktree, "a.png");
+  const older = join(f.worktree, "older.png");
+  const target = join(f.worktree, "t.png");
+  const link = join(f.worktree, "link.png");
+  for (const file of [original, older, target]) writeFileSync(file, samplePng());
+  symlinkSync(target, link);
+  const past = new Date(Date.now() - 3_600_000);
+  utimesSync(older, past, past);
+  const readAt = Date.now() + 1;
+  Bun.sleepSync(20);
+  // an older file renamed over the path, and the link pointed at another file
+  renameSync(older, original);
+  rmSync(link);
+  symlinkSync(original, link);
+  const { run, notes } = capture("cursor", f.turnId);
+  for (const [call, path] of [["call-renamed", original], ["call-relinked", link]] as const) {
+    run({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path }, result: { success: { path } } }, completedAtMs: String(readAt) } });
   }
   expect(outputs(f.turnId)).toEqual([]);
+  expect(notes).toEqual([
+    "· Image output unavailable: the image file changed after the step read it",
+    "· Image output unavailable: the image path goes through a link, which can change after the step read it",
+  ]);
+});
+
+test("a cursor image whose folder was swapped, or whose parent link was retargeted, after its read is refused", () => {
+  const f = fixture();
+  const make = (dir: string) => {
+    mkdirSync(join(f.worktree, dir), { recursive: true });
+    writeFileSync(join(f.worktree, dir, "frame.png"), samplePng());
+  };
+  for (const dir of ["active", "spare", "a", "b"]) make(dir);
+  symlinkSync(join(f.worktree, "a"), join(f.worktree, "current"));
+  const past = new Date(Date.now() - 3_600_000);
+  for (const dir of ["spare", "b"]) utimesSync(join(f.worktree, dir, "frame.png"), past, past);
+  const readAt = Date.now() + 1;
+  Bun.sleepSync(20);
+  // the folder replaced by another holding an older frame, and the parent link pointed elsewhere
+  renameSync(join(f.worktree, "active"), join(f.worktree, "old-active"));
+  renameSync(join(f.worktree, "spare"), join(f.worktree, "active"));
+  rmSync(join(f.worktree, "current"));
+  symlinkSync(join(f.worktree, "b"), join(f.worktree, "current"));
+  const { run, notes } = capture("cursor", f.turnId);
+  for (const [call, path] of [["call-dir", join(f.worktree, "active", "frame.png")], ["call-parent-link", join(f.worktree, "current", "frame.png")]] as const) {
+    run({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path }, result: { success: { path } } }, completedAtMs: String(readAt) } });
+  }
+  expect(outputs(f.turnId)).toEqual([]);
+  expect(notes).toEqual([
+    "· Image output unavailable: the image file changed after the step read it",
+    "· Image output unavailable: the image path goes through a link, which can change after the step read it",
+  ]);
+});
+
+test("a cursor image read through a link is refused, even when only the link's target folder was replaced", () => {
+  const f = fixture();
+  for (const dir of ["active", "spare", "chain-active", "chain-spare"]) {
+    mkdirSync(join(f.worktree, dir), { recursive: true });
+    writeFileSync(join(f.worktree, dir, "frame.png"), samplePng());
+  }
+  symlinkSync(join(f.worktree, "active"), join(f.worktree, "alias"));
+  symlinkSync(join(f.worktree, "chain-active"), join(f.worktree, "middle"));
+  symlinkSync(join(f.worktree, "middle"), join(f.worktree, "outer"));
+  const past = new Date(Date.now() - 3_600_000);
+  for (const dir of ["spare", "chain-spare"]) utimesSync(join(f.worktree, dir, "frame.png"), past, past);
+  const readAt = Date.now() + 1;
+  Bun.sleepSync(20);
+  // the folder an unchanged link names replaced, and the second link of a chain retargeted
+  renameSync(join(f.worktree, "active"), join(f.worktree, "old-active"));
+  renameSync(join(f.worktree, "spare"), join(f.worktree, "active"));
+  rmSync(join(f.worktree, "middle"));
+  symlinkSync(join(f.worktree, "chain-spare"), join(f.worktree, "middle"));
+  const { run, notes } = capture("cursor", f.turnId);
+  for (const [call, path] of [["call-alias", join(f.worktree, "alias", "frame.png")], ["call-chain", join(f.worktree, "outer", "frame.png")]] as const) {
+    run({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path }, result: { success: { path } } }, completedAtMs: String(readAt) } });
+  }
+  expect(outputs(f.turnId)).toEqual([]);
+  expect(notes).toEqual(Array(2).fill("· Image output unavailable: the image path goes through a link, which can change after the step read it"));
+});
+
+test("an opencode turn's images are read from its log when it ends; a cursor turn that ended unseen gets none", async () => {
+  const f = fixture();
+  const attachment = { type: "tool_use", part: { type: "tool", tool: "read", callID: "call_02", state: { status: "completed", input: { filePath: "/work/repo/b.png" }, attachments: [{ type: "file", mime: "image/png", url: `data:image/png;base64,${base64()}` }] } } };
+  writeFileSync(f.log, `${JSON.stringify(attachment)}\n`);
+  await startLoggedImageCapture(BUILTIN_ADAPTERS.opencode!, f.turnId, f.log, "ended")!.finish();
+  expect(outputs(f.turnId)).toEqual([expect.objectContaining({ name: "b.png" })]);
+  expect(startLoggedImageCapture(BUILTIN_ADAPTERS.cursor!, f.turnId, f.log, "ended")).toBeNull();
+  expect(startLoggedImageCapture(BUILTIN_ADAPTERS.claude!, f.turnId, f.log)).toBeNull();
 });
 
 test("unsafe paths are refused and the transcript says why", () => {

@@ -36,6 +36,7 @@ import {
 import { processStop, processStopPending, refreshProcessGroups, settledGroupLeaders, transferProcessGroup } from "./task-processes";
 import { finalizeTurn } from "./turn-finalize";
 import { isTaskStopping, waitForInterrupt } from "./turn-interrupt";
+import { startLoggedImageCapture } from "./logged-images";
 import type { TurnNotes } from "./autopilot/store";
 import type { Task, TurnOrigin } from "./types";
 
@@ -484,6 +485,8 @@ export async function watchTurn(
   // A process that can span turns is recorder-captured, and only a capture
   // without a recorder needs the cap check, so this is always the one turn.
   const first = proc.slot;
+  // a harness that writes straight to its log has its images read from there (logged-images.ts)
+  const images = first.recorder ? null : startLoggedImageCapture(def, first.turnId, first.outPath);
   let capTermAt: number | null = null;
   let capChecking = false;
   const capTick = async (): Promise<void> => {
@@ -545,6 +548,7 @@ export async function watchTurn(
     return;
   }
   const recorderOutcome = slot.recorder?.finish();
+  await images?.finish();
   closeDescriptors(slot.fds);
   await waitForInterrupt(slot.turnId);
   await finalizeTurn(taskId, slot.turnId, def, exitCode, slot.outPath, slot.errPath, recorderOutcome);
