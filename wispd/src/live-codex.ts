@@ -80,13 +80,13 @@ export class CodexLiveProcess implements LingeringLiveProcess {
   private closing = false;
   private between: LiveOutputSink | null = null;
   private decided = false;
-  /** A continuation that began while the answer was settling: the turn it opens once the settle is done. */
-  private pendingWake = false;
-  /** Its events and usage, held for that turn. */
-  private held: Record<string, unknown>[] | null = null;
-  private heldUsage: Record<string, unknown> | null = null;
-  /** That continuation's answer arrived while the settle was still running: decide once its turn is open. */
-  private decideAfterWake = false;
+  /**
+   * Continuations the app-server started that no turn records yet (a settle
+   * was still running, or an earlier one is still waiting for its turn), in
+   * order. The driver streams the newest, so what it says goes to the last;
+   * each opens its turn when the settle before it is done.
+   */
+  private unrecorded: { held: Record<string, unknown>[]; usage: Record<string, unknown> | null; ended: boolean }[] = [];
   private quiet: ReturnType<typeof setTimeout> | null = null;
   private settling: Promise<void> = Promise.resolve();
   private lingeringSince = new Date().toISOString();
@@ -105,12 +105,17 @@ export class CodexLiveProcess implements LingeringLiveProcess {
       initialMessageId: options.initialMessageId,
       initialInput: codexInput(options.def, options.prompt, options.attachments),
       emit: (event) => this.event(event),
-      onTerminal: () => this.decide(),
+      onTerminal: () => {
+        const streaming = this.unrecorded.at(-1);
+        if (streaming) streaming.ended = true;
+        else this.decide();
+      },
       // The driver reads its resume's starting point from the previous turn's usage...
       previousUsage: options.task.session_id ? turnForTask(options.task.id, options.turn - 1)?.usage_json : null,
       // ...so the turn stores its own as it grows: one that never completes still leaves a starting point
       onUsage: (usage) => {
-        if (this.pendingWake) this.heldUsage = usage;
+        const streaming = this.unrecorded.at(-1);
+        if (streaming) streaming.usage = usage;
         else setTurnUsage(this.current.turnId, JSON.stringify(usage));
       },
       onContinuation: (turnId) => this.continuation(turnId),
@@ -175,7 +180,8 @@ export class CodexLiveProcess implements LingeringLiveProcess {
   }
 
   private event(event: Record<string, unknown>): void {
-    if (this.held) this.held.push(event);
+    const streaming = this.unrecorded.at(-1);
+    if (streaming) streaming.held.push(event);
     else this.output().recordEvent(event);
   }
 
@@ -203,13 +209,10 @@ export class CodexLiveProcess implements LingeringLiveProcess {
 
   /** The open turn's answer is in: keep the process for an active goal's next turn, or let it go. */
   private decide(): void {
-    if (this.phaseValue === "settling" && this.pendingWake) {
-      this.decideAfterWake = true;
-      return;
-    }
     if (this.phaseValue !== "turn" || this.decided) return;
     this.decided = true;
-    if (this.goalActive() && this.linger()) return;
+    // a continuation still waiting for its turn keeps it too, whatever the goal says by now
+    if ((this.goalActive() || this.unrecorded.length > 0) && this.linger()) return;
     void closeLiveInput(this.taskId, this.current.turnId);
   }
 
@@ -241,40 +244,33 @@ export class CodexLiveProcess implements LingeringLiveProcess {
   private afterSettle(): void {
     if (this.phaseValue !== "settling") return;
     this.phaseValue = "lingering";
-    const woke = this.pendingWake;
-    const held = this.held;
-    const usage = this.heldUsage;
-    const decide = this.decideAfterWake;
-    this.pendingWake = false;
-    this.held = null;
-    this.heldUsage = null;
-    this.decideAfterWake = false;
-    if (woke) {
-      const next = this.wakeTurn();
-      if (!next) return;
-      if (usage) setTurnUsage(next.turnId, JSON.stringify(usage));
-    }
-    for (const event of held ?? []) this.output().recordEvent(event);
-    if (decide) this.decide();
+    const next = this.unrecorded.shift();
+    if (next && !this.record(next)) return;
     if (this.phaseValue === "lingering") this.options.linger?.idle();
     this.checkQuiet();
   }
 
-  /** The app-server started the goal's next turn by itself. */
-  private continuation(turnId: string): void {
-    if (this.phaseValue === "settling" && this.options.linger) {
-      if (this.pendingWake) return;
-      // It may print, and even end, before the settle is done: hold all of it
-      // for the follow-up turn the settle opens.
-      this.pendingWake = true;
-      this.held = [];
-      this.driver.reopen(turnId);
-    } else if (this.phaseValue === "lingering") {
-      this.driver.reopen(turnId);
+  /** Open the turn for a continuation held so far, and play back what it said. False when it could not be recorded. */
+  private record(continuation: { held: Record<string, unknown>[]; usage: Record<string, unknown> | null; ended: boolean }): boolean {
+    const turn = this.wakeTurn();
+    if (!turn) return false;
+    if (continuation.usage) setTurnUsage(turn.turnId, JSON.stringify(continuation.usage));
+    for (const event of continuation.held) turn.sink.recordEvent(event);
+    // its answer is in: settle it (and keep going for the goal) or let the process go
+    if (continuation.ended) this.decide();
+    return true;
+  }
+
+  /** The app-server started the goal's next turn by itself; the driver already serves it. */
+  private continuation(_turnId: string): void {
+    if (this.closing) return;
+    if (this.phaseValue === "lingering" && this.unrecorded.length === 0) {
       this.wakeTurn();
+    } else if (this.phaseValue === "settling" || this.unrecorded.length > 0) {
+      // recorded once the settle (or the turn before it) is done
+      this.unrecorded.push({ held: [], usage: null, ended: false });
     } else {
-      // A turn nobody can record (no hooks, or ours already closing) must not
-      // run unseen: let the process go.
+      // An answer already let go of (or no hooks at all): it must not run unseen.
       void this.close().catch(() => {});
     }
   }
@@ -285,6 +281,7 @@ export class CodexLiveProcess implements LingeringLiveProcess {
     const turn = this.options.linger?.wake(`Codex goal continued: ${(goal?.objective || "the thread's goal").slice(0, 200)}`) ?? null;
     if (!turn) {
       // Over a task that needs the person, failed, or is being stopped.
+      this.unrecorded = [];
       void this.close().catch(() => {});
       return null;
     }

@@ -34,8 +34,9 @@ interface CodexLiveOptions {
   onUsage?: (usage: Record<string, unknown>) => void;
   /**
    * The app-server started a turn of its own on this thread after ours ended:
-   * an active Goal continuing (`thread/goal/*`). The caller decides whether it
-   * becomes a new turn (`reopen`); until then nothing of it is recorded.
+   * an active Goal continuing (`thread/goal/*`). The driver serves it from
+   * here on (its events, usage and terminal follow); the caller decides where
+   * they are recorded.
    */
   onContinuation?: (turnId: string) => void;
   /** The thread's goal changed: its status, or null once it was cleared. */
@@ -269,6 +270,10 @@ export class CodexLiveDriver {
   private readonly previousLastCall: Record<string, number> | null;
   /** Usage updates that arrived before the turn's id was known; `adoptTurn` sorts them. */
   private heldUsage: Record<string, any>[] = [];
+  /** A turn/start Wisp sent after its turn ended is awaiting its answer: a turn/started now may be that one. */
+  private starting = false;
+  /** Completions that came while it awaited (one stdout read can carry a whole quick turn): judged once its id is known. */
+  private deferredCompletions: Record<string, any>[] = [];
   /** The thread's goal as last reported; null when it has none or none was reported. */
   private goalValue: CodexGoal | null = null;
   /** The last report handed to `onUsage`, serialized, so an unchanged re-send writes nothing. */
@@ -395,19 +400,43 @@ export class CodexLiveDriver {
     if (turnId) this.adoptTurn(turnId);
   }
 
-  /** Start a turn with this input on the open thread, after the last one ended (a message taken while it lingers). */
+  /**
+   * Start a turn with this input on the open thread, after the last one
+   * ended (a message taken while it lingers). Until turn/start answers, a
+   * turn/started is not taken for a continuation: it is most likely this one
+   * (one stdout read can carry it before the answer), and the answer's id
+   * says. A refusal (the app-server went on by itself first) throws, and the
+   * caller hands the message back.
+   */
   async startTurn(messageId: string, input: CodexLiveInput[]): Promise<void> {
     await this.ready;
     if (!this.threadId) throw new Error("Codex has no thread to start a turn on");
-    this.reopen();
     const params: Record<string, unknown> = { threadId: this.threadId, clientUserMessageId: messageId, input, cwd: this.options.cwd };
     if (this.options.model) params.model = this.options.model;
     if (this.options.effort) params.effort = this.options.effort;
     const tier = speedTier(this.options.def, this.options.fast);
     if (tier) params.serviceTier = tier;
-    const turn = record(record(await this.call("turn/start", params)).turn);
-    if (typeof turn.id !== "string" || !turn.id) throw new Error("Codex started without returning a turn id");
+    this.reopen();
+    this.starting = true;
+    this.deferredCompletions = [];
+    let turn: Record<string, any>;
+    try {
+      turn = record(record(await this.call("turn/start", params)).turn);
+    } catch (error) {
+      this.terminal = true;
+      throw error;
+    } finally {
+      this.starting = false;
+    }
+    const deferred = this.deferredCompletions;
+    this.deferredCompletions = [];
+    if (typeof turn.id !== "string" || !turn.id) {
+      this.terminal = true;
+      throw new Error("Codex started without returning a turn id");
+    }
     this.adoptTurn(turn.id);
+    // only this turn's own completion counts; another turn's is not ours to settle
+    for (const params of deferred) if (str(record(params.turn).id) === turn.id) this.turnCompleted(params);
   }
 
   async send(messageId: string, input: CodexLiveInput[]): Promise<void> {
@@ -534,10 +563,15 @@ export class CodexLiveDriver {
 
   private turnStarted(params: Record<string, any>): void {
     const turnId = str(record(params.turn).id);
-    if (!turnId || str(params.threadId) !== this.threadId) return;
-    // ours ended, and the app-server went on by itself (an active Goal)
-    if (this.terminal && turnId !== this.turnId) this.options.onContinuation?.(turnId);
-    else if (this.turnRequested) this.adoptTurn(turnId);
+    if (!turnId || str(params.threadId) !== this.threadId || this.starting) return;
+    if (this.terminal && turnId !== this.turnId) {
+      // Ours ended, and the app-server went on by itself (an active Goal):
+      // everything from here is that turn's, recorded or not.
+      this.reopen(turnId);
+      this.options.onContinuation?.(turnId);
+    } else if (this.turnRequested) {
+      this.adoptTurn(turnId);
+    }
   }
 
   private goalChanged(method: string, params: Record<string, any>): void {
@@ -551,6 +585,11 @@ export class CodexLiveDriver {
 
   private turnCompleted(params: Record<string, any>): void {
     if (this.terminal) return;
+    // while a turn/start is unanswered, a parent completion is not yet known to be ours
+    if (this.starting && str(params.threadId) === this.threadId) {
+      this.deferredCompletions.push(params);
+      return;
+    }
     const turn = record(params.turn);
     const threadId = str(params.threadId);
     if (threadId && this.threadId && threadId !== this.threadId) {
