@@ -91,12 +91,14 @@ function startedByParentOrAutopilot(turn: SettledTurn, parentId: string): boolea
 
 /**
  * Whether the parent asked this turn to report back (`wisp send --report`):
- * a marked message started it or was steered into it. The mark is the
- * parent's, once: the child's own later turns carry none, so the loop
- * breaker still holds for them.
+ * a marked message started it. A marked message never steers
+ * (task-submit.ts deliverToRunningTurn), so it always starts the turn that
+ * answers it. The mark is the parent's, once: the child's own later turns
+ * carry none, so the loop breaker still holds for them.
  */
 function reportRequested(turn: SettledTurn): boolean {
-  return Boolean(db.query(`SELECT 1 FROM task_messages WHERE task_id = ? AND turn_n = ? AND status = 'delivered' AND report_back = 1 LIMIT 1`)
+  return Boolean(db.query(`SELECT 1 FROM task_messages
+    WHERE task_id = ? AND turn_n = ? AND status = 'delivered' AND delivery = 'started' AND report_back = 1 LIMIT 1`)
     .get(turn.task_id, turn.n));
 }
 

@@ -96,20 +96,20 @@ describe("recording what a subtask reports", () => {
     expect(reports(child)).toHaveLength(1);
   });
 
-  test("a parent's follow-up sent with --report reports its turn back once, started or steered; the next turn stays quiet", () => {
+  test("a parent's follow-up sent with --report reports the turn it starts, once; the next turn stays quiet", () => {
     const parent = task();
     const child = task({ parent });
     settle(child, "done", { from: { actor: `agent:${parent}`, report: true }, result: "round 2: no blockers" });
     expect(reports(child).map((row) => [JSON.parse(row.facts_json).outcome, row.body])).toEqual([["done", "round 2: no blockers"]]);
-    // a turn the parent started without the mark, with a marked steer from the parent in it
+    // only the message that started the turn counts (a marked one is never steered)
     settle(child, "done", { from: { actor: `agent:${parent}` }, steered: { actor: `agent:${parent}`, report: true } });
-    expect(reports(child)).toHaveLength(2);
+    expect(reports(child)).toHaveLength(1);
     // the parent's next message carries no mark: the loop breaker holds again
-    settle(child, "done", { from: { actor: `agent:${parent}` }, steered: { actor: `agent:${parent}`, report: false } });
-    expect(reports(child)).toHaveLength(2);
+    settle(child, "done", { from: { actor: `agent:${parent}` } });
+    expect(reports(child)).toHaveLength(1);
     // an interrupted turn still reports nothing, marked or not
     settle(child, "interrupted", { from: { actor: `agent:${parent}`, report: true } });
-    expect(reports(child)).toHaveLength(2);
+    expect(reports(child)).toHaveLength(1);
   });
 
   test("stuck reports once per turn; setup failure and PR events record their facts; an archived parent drops the row", () => {

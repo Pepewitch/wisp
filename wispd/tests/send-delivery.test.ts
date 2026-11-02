@@ -70,6 +70,23 @@ async function until(pred: () => boolean, ms = 10_000): Promise<void> {
 
 const prompts = (taskId: string) => turnsFor(taskId).map((turn) => [turn.prompt, turn.status]);
 
+describe("a message marked to report back (send --report)", () => {
+  test("is never steered: it starts the next turn, whose settle reports it", async () => {
+    const def = liveAdapter(["IFS= read -r first", "IFS= read -r -t 2 second", RESULT].join("; "));
+    const task = makeTask();
+    startTurn(task, "original", def, cfg);
+    await until(() => hasRunningTurn(task.id) !== null);
+    expect(turnInput(task.id)?.mode).toBe("steer");
+
+    const marked = await submitTaskMessage(getTask(task.id)!, "round 2?", def, cfg, [], undefined, { fake: def }, undefined, "allow-steer", null, true);
+    expect(marked.disposition).toBe("queued-next");
+
+    await until(() => turnsFor(task.id)[1]?.status === "done");
+    expect(turnsFor(task.id).map((turn) => turn.prompt)).toEqual(["original", "round 2?"]);
+    expect(messagesFor(task.id).map((message) => [message.text, message.delivery, message.turn_n])).toEqual([["round 2?", "started", 2]]);
+  }, 20_000);
+});
+
 describe("a message held for the next turn", () => {
   test("is never steered, and a later ordinary message steers past it", async () => {
     // the next turn has nothing steered into it, so it stops waiting on its own

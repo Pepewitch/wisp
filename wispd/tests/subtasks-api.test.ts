@@ -118,6 +118,11 @@ describe("the subtask API", () => {
     // the mark is internal: stored on the row, never served
     expect(message).not.toHaveProperty("report_back");
     expect(db.query("SELECT report_back FROM task_messages WHERE id = ?").get(message.id as string)).toEqual({ report_back: 1 });
+    // a retry of a stable id must ask the same thing: adding the mark is different content
+    await until(() => settled(child.id));
+    expect((await call(`/api/tasks/${child.id}/send`, "POST", { message: "round 3?", clientMessageId: "mreportretry1" })).status).toBe(200);
+    const retried = await call(`/api/tasks/${child.id}/send`, "POST", { message: "round 3?", clientMessageId: "mreportretry1", report: true });
+    expect({ status: retried.status, body: await retried.json() }).toEqual({ status: 409, body: { error: "message id mreportretry1 was already used for different content" } });
   });
 
   test("a review subtask's managed push is refused", async () => {

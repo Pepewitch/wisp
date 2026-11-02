@@ -303,9 +303,9 @@ wisp interrupt <task>
 wisp fresh <task>
 ```
 
-`--report` is for a parent's follow-up to its own subtask: the turn the message
-starts or steers into reports back once when it ends, which a parent's message
-otherwise never does ([supervise.md](supervise.md#subtasks)).
+`--report` is for a parent's follow-up to its own subtask: the message never
+steers, and the turn it starts reports back once when it ends, which a
+parent's message otherwise never does ([supervise.md](supervise.md#subtasks)).
 
 `send` steers a supported live harness or queues the message for the next turn;
 it does not stop current work. On an idle task it starts the next turn in the

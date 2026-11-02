@@ -30,9 +30,11 @@ function sameMessage(
   task: Task,
   text: string,
   attachmentHashes: readonly string[],
+  reportBack: boolean,
 ): boolean {
   return (
     existing.task_id === task.id &&
+    (existing.report_back === 1) === reportBack &&
     existing.text === text &&
     existing.context_n === task.context_n &&
     existing.harness === task.harness &&
@@ -49,8 +51,9 @@ async function reuseTaskMessage(
   task: Task,
   text: string,
   attachmentHashes: readonly string[],
+  reportBack: boolean,
 ): Promise<TaskMessage> {
-  if (!sameMessage(existing, task, text, attachmentHashes)) {
+  if (!sameMessage(existing, task, text, attachmentHashes, reportBack)) {
     throw new Error(`message id ${existing.id} was already used for different content`)
   }
   if (existing.status === "queued" && existing.claim !== null) {
@@ -92,7 +95,7 @@ export async function persistTaskSubmission(
     const storedTask = getTask(existing.task_id) ?? task
     return {
       task: storedTask,
-      message: await reuseTaskMessage(existing, storedTask, text, attachmentHashes),
+      message: await reuseTaskMessage(existing, storedTask, text, attachmentHashes, reportBack),
     }
   }
 
@@ -151,7 +154,10 @@ export async function deliverToRunningTurn(
   }
   const running = runningTurn(task.id)
   if (!running) return { running: false, result: null }
-  if (message.deferred === 1) return { running: true, result: null }
+  // A held message waits for the next turn. So does one marked to report back:
+  // it starts its own turn, whose settle reports it. Steered, it could land
+  // after the running turn had settled with nothing to report.
+  if (message.deferred === 1 || message.report_back === 1) return { running: true, result: null }
   const sameAgent =
     running.context_n === message.context_n &&
     running.harness === message.harness &&
