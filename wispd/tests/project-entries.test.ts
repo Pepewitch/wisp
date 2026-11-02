@@ -209,6 +209,64 @@ describe("GET /api/projects/entries", () => {
     expect("entries" in body && body.entries.map((entry) => entry.name)).toContain("deps");
   });
 
+  test("a link into a nested repository is not judged by rules from the root", async () => {
+    const { root } = makeProject();
+    const nested = join(root, "nested");
+    mkdirSync(join(nested, "saved"), { recursive: true });
+    git(nested, ["init", "-q"]);
+    writeFileSync(join(nested, ".gitignore"), "saved/\n");
+    writeFileSync(join(nested, "saved/code.ts"), "export {}\n");
+    git(nested, ["add", "-f", "saved/code.ts"]);
+    symlinkSync(join(nested, "saved"), join(root, "alias"));
+    const body = await listProjectEntries(root, "");
+    expect("entries" in body && body.entries.map((entry) => entry.name)).toContain("alias");
+    const inside = await listProjectEntries(root, "alias");
+    expect("entries" in inside && inside.entries.map((entry) => entry.name)).toEqual(["code.ts"]);
+  });
+
+  test("links to folders cost one more batched check, never one per link", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "wisp-entries-dirlinks-")));
+    git(root, ["init", "-q"]);
+    writeFileSync(join(root, ".gitignore"), "ignored-*/\n");
+    mkdirSync(join(root, "links"));
+    for (let i = 0; i < 50; i += 1) {
+      mkdirSync(join(root, i % 2 ? `ignored-${i}` : `kept-${i}`));
+      symlinkSync(join(root, i % 2 ? `ignored-${i}` : `kept-${i}`), join(root, "links", `l${i}`));
+    }
+    let checks = 0;
+    const counting: IgnoreGit = {
+      checkIgnore: (cwd, paths) => { checks += 1; return GIT.checkIgnore(cwd, paths); },
+      outsideRepository: (cwd) => GIT.outsideRepository(cwd),
+    };
+    const body = await listProjectEntries(root, "links", "", counting);
+    expect(checks).toBe(2);
+    expect("entries" in body && body.entries.length).toBe(25);
+  });
+
+  test("a listing whose client went away while it waited is dropped without running git", async () => {
+    const { root } = makeProject();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let checks = 0;
+    const held: IgnoreGit = {
+      async checkIgnore(cwd, paths) {
+        checks += 1;
+        await gate;
+        return GIT.checkIgnore(cwd, paths);
+      },
+      outsideRepository: (cwd) => GIT.outsideRepository(cwd),
+    };
+    const busy = Array.from({ length: LISTING_SLOTS }, () => listProjectEntries(root, "src", "", held));
+    const gone = new AbortController();
+    const waiting = listProjectEntries(root, "src", "", held, gone.signal);
+    gone.abort();
+    await Bun.sleep(10);
+    release();
+    await Promise.all(busy);
+    expect(await waiting).toEqual({ status: 400, error: "the request was cancelled" });
+    expect(checks).toBe(LISTING_SLOTS);
+  });
+
   test("listings run a few at a time, daemon-wide", async () => {
     const { root } = makeProject();
     let inFlight = 0;

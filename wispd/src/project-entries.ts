@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { opendir, realpath, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, sep } from "node:path";
 import type { ProjectEntriesResponse, ProjectEntry } from "../../shared/api/project-entries";
@@ -25,10 +26,12 @@ import { Semaphore } from "./subprocess";
  */
 
 /**
- * Listings at once, daemon-wide. One listing runs at most two git processes,
- * but nothing bounded how many listings a tight client loop could start;
- * later ones wait their turn rather than being refused, since the composer
- * only shows the newest answer anyway.
+ * Listings at once, daemon-wide. One listing runs at most four git processes
+ * (the folder's check and the link-target check, each followed by a
+ * `rev-parse` only when it fails), but nothing bounded how many listings a
+ * tight client loop could start. Later ones wait their turn rather than being
+ * refused, since the composer only shows the newest answer anyway; one whose
+ * client has gone by then is dropped without running.
  */
 export const LISTING_SLOTS = 4;
 const listings = new Semaphore(LISTING_SLOTS);
@@ -65,8 +68,11 @@ export function listProjectEntries(
   dir: string,
   filter = "",
   ignoreGit: IgnoreGit = GIT,
+  signal?: AbortSignal,
 ): Promise<ProjectEntriesResponse | EntriesRefusal> {
-  return listings.run(() => listEntries(root, dir, filter, ignoreGit));
+  return listings.run(async () =>
+    // the client gave up while this waited: nobody reads the answer
+    signal?.aborted ? { status: 400 as const, error: "the request was cancelled" } : listEntries(root, dir, filter, ignoreGit));
 }
 
 async function listEntries(
@@ -130,12 +136,15 @@ type ScannedEntry = ProjectEntry & { asked: string; target?: string };
 /**
  * The links to folders whose target git ignores (`deps -> node_modules`):
  * offered, they would open onto a listing with nothing in it. One batched
- * check from the root, and only when the listing has such links. Best effort:
- * a git that cannot answer (a target inside a submodule, say) hides none, and
- * the listing stands as the link's own name judged it.
+ * check from the root, and only when the listing has such links. A target in
+ * another repository (a nested one, a submodule) is never judged from the
+ * root, whose rules are not its own; that link stays. Best effort: a git
+ * that cannot answer hides none, and the listing stands as the link's own
+ * name judged it.
  */
 async function ignoredLinkTargets(realRoot: string, entries: ScannedEntry[], ignoreGit: IgnoreGit): Promise<Set<ScannedEntry>> {
-  const links = entries.filter((entry) => entry.target !== undefined && entry.target !== "");
+  const boundaries = new Map<string, boolean>();
+  const links = entries.filter((entry) => entry.target !== undefined && entry.target !== "" && !crossesRepository(realRoot, entry.target, boundaries));
   if (links.length === 0) return new Set();
   try {
     const ignored = await ignoredNames(realRoot, links.map((entry) => `${entry.target}/`), ignoreGit);
@@ -143,6 +152,21 @@ async function ignoredLinkTargets(realRoot: string, entries: ScannedEntry[], ign
   } catch {
     return new Set();
   }
+}
+
+/** Whether any folder on the way from the root to `target` (relative, `/`-separated) starts a repository of its own. */
+function crossesRepository(realRoot: string, target: string, seen: Map<string, boolean>): boolean {
+  const segments = target.split("/");
+  for (let depth = 1; depth <= segments.length; depth += 1) {
+    const folder = segments.slice(0, depth).join("/");
+    let starts = seen.get(folder);
+    if (starts === undefined) {
+      starts = existsSync(join(realRoot, folder, ".git"));
+      seen.set(folder, starts);
+    }
+    if (starts) return true;
+  }
+  return false;
 }
 
 function compareEntries(a: ProjectEntry, b: ProjectEntry): number {

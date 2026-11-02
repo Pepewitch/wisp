@@ -212,14 +212,14 @@ export function reposRoute(cfg: WispConfig): Promise<Response> {
  * keeps names containing it (case-insensitive) before the row cap. Only those roots
  * may be listed; project-entries.ts owns containment and the ignore rules.
  */
-export async function projectEntriesRoute(url: URL, cfg: WispConfig): Promise<Response> {
+export async function projectEntriesRoute(url: URL, cfg: WispConfig, signal?: AbortSignal): Promise<Response> {
   const project = url.searchParams.get("project");
   if (!project || !isAbsolute(project)) return err("project must be a project's absolute path", 400);
   const root = projectList(cfg)
     .map(({ path }) => resolve(path))
     .find((path) => path === resolve(project));
   if (root === undefined) return err(`not a Wisp project: ${project}`, 404);
-  const listing = await listProjectEntries(root, url.searchParams.get("dir") ?? "", url.searchParams.get("q") ?? "");
+  const listing = await listProjectEntries(root, url.searchParams.get("dir") ?? "", url.searchParams.get("q") ?? "", undefined, signal);
   return "error" in listing ? err(listing.error, listing.status) : json(listing);
 }
 
