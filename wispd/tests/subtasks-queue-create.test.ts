@@ -10,7 +10,7 @@ import type { WispConfig } from "../src/config";
 import { createTaskRoute, taskRoute } from "../src/routes/tasks";
 import { taskMessageRoute } from "../src/routes/task-messages";
 import { startNextQueuedMessage } from "../src/runner";
-import { assertTaskCapacity, reserveTaskCapacity } from "../src/task-admission";
+import { assertTaskCapacity, hasTaskCapacity, reserveTaskCapacity } from "../src/task-admission";
 import { createTask, createTaskMessage, db, freeSlot, getTask, newTaskId, setTaskFields, transition, turnsFor } from "../src/store";
 
 const cfg: WispConfig = {
@@ -107,7 +107,10 @@ describe("a queued subtask", () => {
     const parent = await created({ repoPath: await repo() });
     await until(() => getTask(parent)!.state === "done");
     const child = queuedChild(parent, "after the daemon frees up");
-    const tight: WispConfig = { ...cfg, maxConcurrentTasks: 1 };
+    // other tests' turns may hold slots in this process: the limit is the one that leaves exactly one free
+    let limit = 1;
+    while (!hasTaskCapacity({ ...cfg, maxConcurrentTasks: limit }, undefined, { parentId: null })) limit += 1;
+    const tight: WispConfig = { ...cfg, maxConcurrentTasks: limit };
     const release = reserveTaskCapacity(`tfill${child}`, tight);
     try {
       expect(startNextQueuedMessage(child, adapters, tight)).toBeNull();
