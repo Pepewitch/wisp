@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { closeSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { outputImageNote, outputImageNoteId, type OutputImage } from "../../shared/api/outputs";
 import { samplePng } from "../scripts/harness/image-output-probe";
@@ -10,7 +10,7 @@ import { MAX_OUTPUT_IMAGE_BYTES, outputImagePath, parseOutputManifest, publishin
 import { outputRoute } from "../src/routes/outputs";
 import { TurnRecorder } from "../src/recording/turn-recorder";
 import { createTask, createTurn, freeSlot, getTurn, newTaskId, setTaskFields } from "../src/store";
-import { finalizeTurn } from "../src/turn-finalize";
+import { LOG_POLL_MS, startLoggedImageCapture } from "../src/logged-images";
 
 /** A task whose worktree lives under the Wisp home, as real worktrees do. */
 function fixture() {
@@ -103,24 +103,57 @@ test("a codex image_generation result far over the transcript's 16 KB bound is c
   } finally { closeSync(outFd); closeSync(errFd); }
 });
 
-test("cursor and opencode turns capture no images: a file read once the turn ends cannot show what a step saw", async () => {
+test("cursor copies an image its read completed, and leaves a text file's read alone", () => {
   const f = fixture();
   const path = join(f.worktree, "shot.png");
   writeFileSync(path, samplePng());
-  const read = { type: "tool_call", subtype: "completed", call_id: "call-log-1", tool_call: { readToolCall: { args: { path }, result: { success: { path, fileSize: 1 } } }, completedAtMs: String(Date.now()) } };
-  const log = [JSON.stringify(read), JSON.stringify({ type: "result", subtype: "success", result: "Seen.", is_error: false })].join("\n") + "\n";
-  writeFileSync(f.log, log);
-  writeFileSync(`${f.log}.err`, "");
-  await finalizeTurn(f.task.id, f.turnId, BUILTIN_ADAPTERS.cursor!, 0, f.log, `${f.log}.err`);
-  expect(outputs(f.turnId)).toEqual([]);
-  expect(readFileSync(f.log, "utf8")).toBe(log);
-  const attachment = { type: "tool_use", part: { type: "tool", tool: "read", callID: "call_01", state: { status: "completed", input: { filePath: path }, attachments: [{ type: "file", mime: "image/png", url: `data:image/png;base64,${base64()}` }] } } };
-  for (const harness of ["cursor", "opencode"]) {
-    const { run, notes } = capture(harness, f.turnId);
-    for (const event of [read, attachment]) expect(run(event)).toBe(event);
-    expect(notes).toEqual([]);
-  }
-  expect(outputs(f.turnId)).toEqual([]);
+  const text = join(f.worktree, "notes.md");
+  writeFileSync(text, "hello");
+  const { run, notes } = capture("cursor", f.turnId);
+  const read = (call: string, target: string) => ({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path: target }, result: { success: { path: target, fileSize: 1 } } } } });
+  expect(run(read("call-log-1", text))).toEqual(read("call-log-1", text));
+  expect(notes).toEqual([]);
+  run(read("call-log-2", path));
+  expect(outputs(f.turnId)).toEqual([expect.objectContaining({ name: "shot.png", source: "native", step: { id: "call-log-2", label: `Read ${path}` } })]);
+  expect(notes[0]).toContain("Image output: shot.png");
+});
+
+test("opencode keeps the bytes a tool showed the model, anchored to the tool call", () => {
+  const f = fixture();
+  const { run } = capture("opencode", f.turnId);
+  const path = "/work/repo/red.png";
+  run({ type: "tool_use", part: { type: "tool", tool: "read", callID: "call_01", state: { status: "completed", input: { filePath: path }, attachments: [{ type: "file", mime: "image/png", url: `data:image/png;base64,${base64()}` }] } } });
+  expect(outputs(f.turnId)).toEqual([expect.objectContaining({ name: "red.png", source: "native", step: { id: "call_01", label: `read ${path}` } })]);
+});
+
+test("a running cursor turn's log is followed: an image overwritten after the read keeps what the read saw", async () => {
+  const f = fixture();
+  const path = join(f.worktree, "frame.png");
+  const original = samplePng();
+  writeFileSync(path, original);
+  writeFileSync(f.log, "");
+  const logged = startLoggedImageCapture(BUILTIN_ADAPTERS.cursor!, f.turnId, f.log)!;
+  const read = { type: "tool_call", subtype: "completed", call_id: "call-live-1", tool_call: { readToolCall: { args: { path }, result: { success: { path, fileSize: original.length } } } } };
+  // the harness writes the read, then replaces the file before its turn ends
+  appendFileSync(f.log, `${JSON.stringify(read)}\n`);
+  await Bun.sleep(LOG_POLL_MS * 3);
+  writeFileSync(path, Buffer.concat([original, Buffer.from("changed later")]));
+  appendFileSync(f.log, `${JSON.stringify({ type: "result", subtype: "success", result: "Seen.", is_error: false })}\n`);
+  await logged.finish();
+  const [image] = outputs(f.turnId);
+  expect(readFileSync(outputImagePath(f.task.id, 1, image!.id))).toEqual(original);
+  // its note lands in the log once the harness has exited
+  expect(readFileSync(f.log, "utf8")).toContain("Image output: frame.png");
+});
+
+test("an opencode turn's images are read from its log when it ends; a cursor turn that ended unseen gets none", async () => {
+  const f = fixture();
+  const attachment = { type: "tool_use", part: { type: "tool", tool: "read", callID: "call_02", state: { status: "completed", input: { filePath: "/work/repo/b.png" }, attachments: [{ type: "file", mime: "image/png", url: `data:image/png;base64,${base64()}` }] } } };
+  writeFileSync(f.log, `${JSON.stringify(attachment)}\n`);
+  await startLoggedImageCapture(BUILTIN_ADAPTERS.opencode!, f.turnId, f.log, "ended")!.finish();
+  expect(outputs(f.turnId)).toEqual([expect.objectContaining({ name: "b.png" })]);
+  expect(startLoggedImageCapture(BUILTIN_ADAPTERS.cursor!, f.turnId, f.log, "ended")).toBeNull();
+  expect(startLoggedImageCapture(BUILTIN_ADAPTERS.claude!, f.turnId, f.log)).toBeNull();
 });
 
 test("unsafe paths are refused and the transcript says why", () => {

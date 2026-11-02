@@ -49,16 +49,20 @@ before transcript bounding, and names each after the file its tool call read
 | Claude | base64 image parts of a `tool_result`, e.g. from `Read`; the bytes are replaced in the transcript |
 | Droid | base64 image parts of a `tool_result`, e.g. from `Read`; the bytes are replaced in the transcript |
 | Codex | MCP image content; `image_view` files, copied from their path when the item completes; `image_generation` results, recorded as **shared** since the agent made them for you (the whole base64 `result`, captured before the transcript is bounded; the copy in Codex's own home is not read) |
-| Cursor | nothing (known limit, below) |
-| OpenCode | nothing (known limit, below) |
+| Cursor | a successful `readToolCall` of a `.png`, `.jpg`, `.gif` or `.webp` file, copied from its path while the turn runs |
+| OpenCode | `data:` image attachments of a completed tool part, e.g. from `read` (the bytes the model saw) |
+| custom adapters | nothing; publish files with `wisp output add` |
 
-Cursor and OpenCode write their output straight to the log, so Wisp reads
-their events only once the turn has ended. A file read from disk then cannot
-show what the step saw (it may have been overwritten or replaced since), so
-Wisp captures no images for them; images their agents share with
-`wisp output add` or `wisp capture` still appear. Running them through live
-input, as Claude, Droid and Codex are, would let Wisp capture their images
-the way it does for those.
+Cursor and OpenCode write their output straight to the turn's log, with no
+daemon pipe in between (which is what lets their turns outlive a daemon
+restart), so Wisp reads their events from the log. OpenCode's events carry
+the image bytes themselves, so they are read when the turn ends. Cursor
+reports only the path it read, and that file may be overwritten or replaced
+later, so Wisp follows a running Cursor turn's log and copies each image
+within a fraction of a second of the read completing. A Cursor turn Wisp
+re-adopts after a restart is followed from then on; its earlier reads, and
+those of a turn that ended while the daemon was down, are not captured.
+Neither harness can take input while it runs, so neither is steered.
 
 A Codex `image_view` reports only a path, so Wisp copies the file at that
 moment. It resolves the path first (following symlinks) and copies only a
@@ -99,8 +103,8 @@ Wisp records a step only when it cannot be the wrong one:
   one command step is running and its command is the publisher
   (`output add` for `wisp output add`, `wisp capture` for a capture). With
   no command running, or more than one (parallel calls), it has no step.
-  Only Claude, Droid and Codex report running steps to Wisp, so Cursor and
-  OpenCode published images have no step.
+  Only Claude, Droid and Codex report running steps to Wisp as they run, so
+  Cursor and OpenCode published images have no step.
 - Publishing bytes the agent already looked at turns that image into a
   shared one, under the publishing step when there is one, and otherwise
   under the step that first showed it.

@@ -22,9 +22,9 @@ export type OutputImageCapture = (event: RecordValue) => RecordValue;
  * can publish files explicitly. Inline bytes are replaced with a text note
  * before transcript bounding, keeping adjacent text. A path is copied only
  * when the harness reports the agent just viewed it (see readViewedImage).
- * It runs only on a live turn's events: Cursor and OpenCode write their
- * output straight to the log, and a file read once the turn has ended cannot
- * show what the step saw, so their images are not captured.
+ * It runs on a live turn's events as they arrive; Cursor and OpenCode write
+ * their output straight to the log, which logged-images.ts reads (Cursor's
+ * while the turn runs, since it reports only a path).
  */
 export function createOutputImageCapture(def: AdapterDef, turnId: number, note: (text: string) => void): OutputImageCapture {
   const calls = new Map<string, ToolCall>();
@@ -63,6 +63,8 @@ export function createOutputImageCapture(def: AdapterDef, turnId: number, note: 
     if (def.events === "claude-stream-json") return claude(event, remember, inline);
     if (def.events === "droid-stream-json") return droid(event, remember, inline);
     if (def.events === "codex-jsonl") return codex(event, inline, viewed);
+    if (def.events === "cursor-stream-json") return cursor(event, viewed);
+    if (def.events === "opencode-json") return opencode(event, inline);
     return event;
   };
 }
@@ -129,6 +131,44 @@ function codex(event: RecordValue, inline: Inline, viewed: Viewed): RecordValue 
     const saved = string(item.savedPath ?? item.saved_path);
     const replaced = inline(item.result, "image/png", callId, "image generation", saved, "published");
     return { ...event, item: { ...item, result: replaced.text } };
+  }
+  return event;
+}
+
+const IMAGE_PATH = /\.(png|jpe?g|gif|webp)$/i;
+
+/**
+ * Cursor (2026.10): a `tool_call` `completed` whose `readToolCall` succeeded
+ * names only the path it read, so that file is copied now (the log is
+ * followed while the turn runs; logged-images.ts). Only image paths: a text
+ * file's read is not an image anyone looked at.
+ */
+function cursor(event: RecordValue, viewed: Viewed): RecordValue {
+  if (event.type !== "tool_call" || event.subtype !== "completed" || !isRecord(event.tool_call)) return event;
+  const read = event.tool_call.readToolCall;
+  if (!isRecord(read) || !isRecord(read.result) || !isRecord(read.result.success)) return event;
+  const path = string(read.result.success.path) ?? (isRecord(read.args) ? string(read.args.path) : null);
+  if (path && IMAGE_PATH.test(path)) viewed(path, string(event.call_id), `Read ${path}`);
+  return event;
+}
+
+/**
+ * OpenCode (live-probed): a completed tool part carries what the tool showed
+ * the model as `attachments`, an image as a `data:<mime>;base64,` URL. These
+ * are the bytes the step saw, so reading them after the turn is exact.
+ */
+function opencode(event: RecordValue, inline: Inline): RecordValue {
+  if (event.type !== "tool_use" || !isRecord(event.part) || !isRecord(event.part.state)) return event;
+  const part = event.part;
+  const state = part.state as Record<string, unknown>;
+  if (state.status !== "completed" || !Array.isArray(state.attachments)) return event;
+  const input = isRecord(state.input) ? state.input : {};
+  const path = string(input.filePath) ?? string(input.path);
+  const label = [string(part.tool) ?? "tool", path].filter(Boolean).join(" ");
+  for (const attachment of state.attachments) {
+    if (!isRecord(attachment) || typeof attachment.url !== "string") continue;
+    const match = /^data:(image\/(?:png|jpeg|gif|webp));base64,(.+)$/.exec(attachment.url);
+    if (match) inline(match[2], match[1], string(part.callID), label, path);
   }
   return event;
 }
