@@ -1,4 +1,5 @@
 import { readContextPoint, type ContextPoint } from "./context";
+import { DroidAnswer, type DroidAnswerState } from "./droid-answer";
 import { addUsageBlobs } from "./usage";
 import type { AdapterDef, ParsedTurn } from "./types";
 import { isRecord } from "../validate";
@@ -39,6 +40,8 @@ export interface OutcomeCheckpointV1 {
   opencodeSteps: unknown[];
   /** Last context reading the adapter's tracker recognized; absent in checkpoints written before it existed. */
   context?: ContextPoint | null;
+  /** Droid's answer across its messages (droid-answer.ts); absent in checkpoints written before it existed. */
+  droidAnswer?: DroidAnswerState;
   firstStderr: string | null;
   stderrTail: string[];
 }
@@ -100,6 +103,7 @@ export class IncrementalOutcomeReducer {
   private droidAgentLoopError: string | null = null;
   private droidOtherError: string | null = null;
   private droidCompletionError: string | null = null;
+  private readonly droidAnswer = new DroidAnswer();
   private opencodeError: string | null = null;
   private opencodeMessage: string | null = null;
   private opencodeSteps: unknown[] = [];
@@ -181,6 +185,7 @@ export class IncrementalOutcomeReducer {
     else if (this.kind === "cursor-stream-json") this.pushCursor(event);
     else if (this.kind === "opencode-json") this.pushOpencode(event);
     else this.pushMapped(event);
+    if (this.def.events === "droid-stream-json") this.pushDroidAnswer(event);
     this.pushErrorEvent(event);
     return this.earlySession !== knownSession || this.earlyModel !== knownModel || this.earlySkills !== knownSkills;
   }
@@ -253,7 +258,9 @@ export class IncrementalOutcomeReducer {
       };
     }
     const rawResult = this.def.parse.result ? event[this.def.parse.result] : null;
-    const result = typeof rawResult === "string" ? rawResult : rawResult != null ? JSON.stringify(rawResult) : null;
+    // Droid's own finalText is its last message, even one only acknowledging a TodoWrite
+    const text = typeof rawResult === "string" && this.def.events === "droid-stream-json" ? this.droidAnswer.result(rawResult) : rawResult;
+    const result = typeof text === "string" ? text : text != null ? JSON.stringify(text) : null;
     const rawSession = this.def.parse.session ? event[this.def.parse.session] : null;
     const rawModel = this.def.parse.model ? event[this.def.parse.model] : null;
     const needsInputField = this.def.parse.needsInput;
@@ -325,6 +332,7 @@ export class IncrementalOutcomeReducer {
       opencodeMessage: this.opencodeMessage,
       opencodeSteps: [...this.opencodeSteps],
       context: this.context,
+      droidAnswer: this.droidAnswer.checkpoint(),
       firstStderr: this.firstStderr,
       stderrTail: [...this.stderrTail],
     };
@@ -360,6 +368,7 @@ export class IncrementalOutcomeReducer {
     this.opencodeMessage = checkpoint.opencodeMessage ?? null;
     this.opencodeSteps = [...(checkpoint.opencodeSteps ?? [])];
     this.context = checkpoint.context ?? null;
+    this.droidAnswer.restore(checkpoint.droidAnswer);
     this.firstStderr = checkpoint.firstStderr;
     this.stderrTail = checkpoint.stderrTail.slice(-3);
   }
@@ -546,6 +555,11 @@ export class IncrementalOutcomeReducer {
     ) {
       this.codexWarningError ??= this.factString(event.item.message.trim());
     }
+  }
+
+  private pushDroidAnswer(event: Record<string, any>): void {
+    if (event.type === "message" && event.role === "assistant" && typeof event.text === "string") this.droidAnswer.text(this.factString(event.text));
+    else if (event.type === "tool_call") this.droidAnswer.tool(String(event.toolName));
   }
 
   private pushDroidError(event: Record<string, any>): void {

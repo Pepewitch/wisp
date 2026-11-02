@@ -1,6 +1,7 @@
 import { hostname } from "node:os";
 import { FACTORY_PROTOCOL_VERSION } from "../../probes";
 import type { AdapterDef } from "../types";
+import { DroidAnswer } from "../droid-answer";
 import { boundedOutput } from "./bounded-output";
 import { createDroidBackground } from "./droid-background";
 import { DroidSubagentStream } from "./droid-subagents";
@@ -169,16 +170,6 @@ const ASK_USER_GRACE_MS = 10_000;
  */
 const FOREIGN_END_GRACE_MS = 2_000;
 
-/**
- * Tools whose calls only keep Droid's own books. Droid often acknowledges one
- * after its answer ("Plan is up-to-date."), and that line must not become the
- * turn's result.
- */
-const BOOKKEEPING_TOOLS = new Set(["TodoWrite"]);
-
-/** The longest assistant message after only bookkeeping tools that still counts as an acknowledgement. */
-const ACKNOWLEDGEMENT_MAX_CHARS = 200;
-
 /** What a superseded questionnaire tells the model, in place of an answer. */
 const DEFERRED_ANSWER = "(no selection — see the message that follows)";
 
@@ -217,9 +208,7 @@ export class DroidLiveDriver {
   private terminal = false;
   private sessionId: string | null;
   private model: string | null;
-  private finalText = "";
-  /** Names of the tools called since the last assistant text. */
-  private toolsSinceText: string[] = [];
+  private readonly reply = new DroidAnswer();
   private subagents: DroidSubagentStream | null = null;
   private readonly questions = new Map<string, PendingQuestion>();
   private askUserGrace: ReturnType<typeof setTimeout> | null = null;
@@ -340,8 +329,7 @@ export class DroidLiveDriver {
     this.clearForeignEnd();
     this.owned = new Set([startedBy]);
     this.terminal = false;
-    this.finalText = "";
-    this.toolsSinceText = [];
+    this.reply.reset();
     this.turn = turn;
     this.emitInit();
   }
@@ -605,7 +593,7 @@ export class DroidLiveDriver {
 
   /**
    * Last assistant prose is the conclusion, except a short acknowledgement of
-   * bookkeeping tools (see `keepsAnswer`). Error copy lives on the error
+   * bookkeeping tools (see `DroidAnswer`). Error copy lives on the error
    * event, not here.
    */
   private emitCompletion(options: {
@@ -618,7 +606,7 @@ export class DroidLiveDriver {
     this.clearForeignEnd();
     this.options.emit({
       type: "completion",
-      finalText: this.finalText,
+      finalText: this.reply.answer,
       session_id: this.sessionId,
       model: this.model,
       usage: options.usage,
@@ -647,8 +635,7 @@ export class DroidLiveDriver {
         .map((block) => block.text as string);
       if (texts.length > 0) {
         const text = texts.join("\n");
-        if (!this.keepsAnswer(text)) this.finalText = text;
-        this.toolsSinceText = [];
+        this.reply.text(text);
         if (typeof message.modelId === "string") this.model = message.modelId;
         this.options.emit({
           type: "message",
@@ -662,7 +649,7 @@ export class DroidLiveDriver {
     }
     for (const block of content) {
       if (block.type === "tool_use") {
-        this.toolsSinceText.push(String(block.name));
+        this.reply.tool(String(block.name));
         if (typeof block.id === "string") this.background.noteToolUse(block.id, String(block.name), record(block.input));
         this.options.emit({
           type: "tool_call",
@@ -701,22 +688,6 @@ export class DroidLiveDriver {
         });
       }
     }
-  }
-
-  /**
-   * Whether `text` only acknowledges bookkeeping, so the answer before it
-   * stays the turn's result: every tool called since the previous assistant
-   * text was a bookkeeping tool, and `text` is short. The message itself
-   * still reaches the transcript unchanged.
-   */
-  private keepsAnswer(text: string): boolean {
-    const tools = this.toolsSinceText;
-    return (
-      this.finalText.trim() !== "" &&
-      tools.length > 0 &&
-      tools.every((name) => BOOKKEEPING_TOOLS.has(name)) &&
-      text.trim().length <= ACKNOWLEDGEMENT_MAX_CHARS
-    );
   }
 
   failPending(message: string): void {
