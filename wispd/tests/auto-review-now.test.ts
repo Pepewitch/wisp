@@ -303,9 +303,10 @@ test("rounds from before an upgraded profile's switch reset do not spend its fre
     const { clock, task } = setup();
     forgetEpoch(task.id, clock);
     const row = autopilotRow(task.id)!;
-    createTaskMessage({ id: "mdelivered", taskId: task.id, text: "old", attachmentHash: "" }, false);
-    db.run("UPDATE task_messages SET workflow_id = ?, status = 'cancelled' WHERE id = ?", [row.id, "mdelivered"]);
-    db.run("INSERT INTO workflow_wakes(workflow_id, event_key, message_id, prior_checkpoint_json) VALUES (?, 'fix:2', ?, '{broken')", [row.id, "mdelivered"]);
+    // still queued, so only the JSON guard keeps it out of the update
+    createTaskMessage({ id: "mdamaged", taskId: task.id, text: "old", attachmentHash: "" }, false);
+    db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [row.id, "mdamaged"]);
+    db.run("INSERT INTO workflow_wakes(workflow_id, event_key, message_id, prior_checkpoint_json) VALUES (?, 'fix:2', ?, '{broken')", [row.id, "mdamaged"]);
     await reviewNow(task.id);
     expect(checkpointOf(autopilotRow(task.id)!).reviewArmedAt).toBeString();
   });
