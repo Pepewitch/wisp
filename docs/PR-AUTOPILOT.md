@@ -208,8 +208,13 @@ three switches is on, the task shows as **Paused · network** rather than
 failed (`paused` in `wisp ls`), and Wisp resumes it on its own: one message,
 "The network dropped; continue from where you stopped.", after 1 minute, then
 2, then 4 if the resumed turn drops too. That is at most three resumes in a
-row; a turn that ends any other way starts the count over. After the third,
-the task reads failed and waits for you, as any failed task does.
+row. A turn started by something other than you that drops as well (a
+heartbeat's wake, for one) is part of the same row, so a long outage gets
+three resumes, not three per wake. Your own message, or a turn that ends any
+other way, starts the count over. After the third, the task reads failed and
+waits for you, as any failed task does. An auto-review reviewer that loses the
+network is resumed the same way
+([A fallback reviewer](AUTO-REVIEW.md#a-fallback-reviewer)).
 
 Only a dropped connection is retried. An expired login, a usage or rate
 limit, a quota, or any other error waits for you at once. Your own message

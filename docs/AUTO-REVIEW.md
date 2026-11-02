@@ -77,10 +77,13 @@ actually reviewed. The failed task is archived; its transcript stays readable.
 If the daemon stops between the substitution and that archive, the next pass
 archives it.
 
-**A known limit: a network outage.** A fallback starts at once. When the whole
-machine has lost its route to the providers, the fallback is likely to fail
-the same way and the round then needs you. Autopilot's own resume-after-network
-pause does not hold the fallback back.
+**A network drop is resumed first.** A reviewer whose turn ended on the
+network gets the same pause autopilot gives a task of its own: after 1, 2, then
+4 minutes from the turn's end, Wisp tells it to continue, at most three times
+per review, all inside the tier's time limit. The round's history says
+`Round 1: reviewer A lost the network — resumed (1 of 3)`. These resumes do
+not spend the reviewer's one verdict nudge. Only once they are spent does the
+failure fall back, or, with no fallback set, end the review.
 
 **Depth, measured by Wisp.** Before a round starts, Wisp measures the diff (it
 fetches the PR's head and base first) and picks a tier. Reviewers are told the
@@ -232,8 +235,10 @@ The round's outcome, in this order:
 2. **A could not follow the recipe** → the PR is held. See
    [A broken recipe](#a-broken-recipe).
 3. **A reviewer gave no verdict** → the task needs you; **Resume** re-runs only
-   that reviewer. A reviewer whose task failed on the network, its provider or
-   setup is first replaced by its [fallback](#a-fallback-reviewer), when one is set.
+   that reviewer. A reviewer whose turn ended on the network is first told to
+   continue, up to three times. A reviewer whose task failed on the network
+   (its resumes spent), its provider or setup is first replaced by its
+   [fallback](#a-fallback-reviewer), when one is set.
 4. **An inconclusive change** → rejected.
 5. **Every reviewer passed** → passed. Auto-merge merges once its own gate
    allows; with auto-review alone, the task is done for this head.
