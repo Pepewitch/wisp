@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { outputImageNote, outputImageNoteId, type OutputImage } from "../../shared/api/outputs";
 import { samplePng } from "../scripts/harness/image-output-probe";
@@ -144,6 +144,52 @@ test("a running cursor turn's log is followed: an image overwritten after the re
   expect(readFileSync(outputImagePath(f.task.id, 1, image!.id))).toEqual(original);
   // its note lands in the log once the harness has exited
   expect(readFileSync(f.log, "utf8")).toContain("Image output: frame.png");
+});
+
+test("a followed cursor log refuses a file written after its read, and survives a split character, a missing newline and a rotation", async () => {
+  const f = fixture();
+  const changed = join(f.worktree, "late.png");
+  writeFileSync(changed, samplePng());
+  const read = (call: string, path: string, completedAtMs: number) => JSON.stringify({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path }, result: { success: { path } } }, completedAtMs: String(completedAtMs) } });
+  // read before the file's last write: not what the step saw
+  writeFileSync(f.log, `${read("call-early", changed, Date.now() - 60_000)}\n`);
+  let logged = startLoggedImageCapture(BUILTIN_ADAPTERS.cursor!, f.turnId, f.log)!;
+  await logged.finish();
+  expect(outputs(f.turnId)).toEqual([]);
+  expect(readFileSync(f.log, "utf8")).toContain("the image file changed after the step read it");
+
+  // a multi-byte path character across the read boundary, and a last line without its newline
+  const dir = join(f.worktree, "é");
+  mkdirSync(dir, { recursive: true });
+  const image = join(dir, "shot.png");
+  writeFileSync(image, samplePng());
+  const event = read("call-split", image, Date.now() + 60_000);
+  const filler = 256 * 1024 - 1 - event.indexOf("é") - 1;
+  const result = JSON.stringify({ type: "result", subtype: "success", result: "Seen.", is_error: false });
+  writeFileSync(f.log, `${"x".repeat(filler)}\n${event}\n${result}`);
+  logged = startLoggedImageCapture(BUILTIN_ADAPTERS.cursor!, f.turnId, f.log)!;
+  await logged.finish();
+  expect(outputs(f.turnId)).toEqual([expect.objectContaining({ name: "shot.png", step: expect.objectContaining({ id: "call-split" }) })]);
+  // the result line keeps its own line: the note starts a new one
+  expect(readFileSync(f.log, "utf8")).toContain(`${result}\n· Image output: shot.png`);
+
+  // a log replaced while followed is read again from its start
+  const other = join(f.worktree, "after-rotation.png");
+  writeFileSync(other, Buffer.concat([samplePng(), Buffer.from("x")]));
+  writeFileSync(f.log, "y".repeat(4097) + "\n");
+  logged = startLoggedImageCapture(BUILTIN_ADAPTERS.cursor!, f.turnId, f.log)!;
+  await Bun.sleep(LOG_POLL_MS * 2);
+  rmSync(f.log);
+  writeFileSync(f.log, `${read("call-rotated", other, Date.now() + 60_000)}\n`);
+  await logged.finish();
+  expect(outputs(f.turnId).map((image) => image.name)).toContain("after-rotation.png");
+});
+
+test("a huge newline-free log is read in bounded slices and captures nothing", async () => {
+  const f = fixture();
+  writeFileSync(f.log, "z".repeat(20 * 1024 * 1024));
+  await startLoggedImageCapture(BUILTIN_ADAPTERS.opencode!, f.turnId, f.log, "ended")!.finish();
+  expect(outputs(f.turnId)).toEqual([]);
 });
 
 test("an opencode turn's images are read from its log when it ends; a cursor turn that ended unseen gets none", async () => {

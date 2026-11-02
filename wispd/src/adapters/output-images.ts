@@ -1,7 +1,8 @@
+import { statSync } from "node:fs";
 import { basename } from "node:path";
 import { outputImageNote, type OutputImage, type OutputStep } from "../../../shared/api/outputs";
 import { readViewedImage } from "../output-files";
-import { decodeOutputImage, outputStep, publishOutputImage } from "../outputs";
+import { decodeOutputImage, OutputError, outputStep, publishOutputImage } from "../outputs";
 import { record, string } from "./activity-value";
 import type { AdapterDef } from "./types";
 
@@ -55,8 +56,14 @@ export function createOutputImageCapture(def: AdapterDef, turnId: number, note: 
     return saved(() => publishOutputImage(turnId, decodeOutputImage(data), file ? basename(file) : `image.${extension}`, source, stepOf(callId, fallbackLabel)));
   };
   /** A file the harness reports the agent viewed; the event keeps its path and gains a note. */
-  const viewed = (path: string, callId: string | null, label: string): void => {
-    saved(() => publishOutputImage(turnId, readViewedImage(turnId, path), basename(path), "native", stepOf(callId, label)));
+  const viewed = (path: string, callId: string | null, label: string, readAt?: number): void => {
+    saved(() => {
+      // copied after the fact (a followed log): a file written since the read is not what the step saw
+      if (readAt !== undefined && Number.isFinite(readAt) && statSync(path).mtimeMs > readAt) {
+        throw new OutputError("the image file changed after the step read it");
+      }
+      return publishOutputImage(turnId, readViewedImage(turnId, path), basename(path), "native", stepOf(callId, label));
+    });
   };
 
   return (event) => {
@@ -71,7 +78,7 @@ export function createOutputImageCapture(def: AdapterDef, turnId: number, note: 
 
 type Remember = (id: string | null, name: string | null, input: unknown) => void;
 type Inline = (data: unknown, declaredType: unknown, callId: string | null, fallbackLabel: string, path?: string | null, source?: OutputImage["source"]) => RecordValue;
-type Viewed = (path: string, callId: string | null, label: string) => void;
+type Viewed = (path: string, callId: string | null, label: string, readAt?: number) => void;
 
 /** `tool_use` in an assistant message, then a `tool_result` with base64 image parts and the same `tool_use_id`. */
 function claude(event: RecordValue, remember: Remember, inline: Inline): RecordValue {
@@ -148,7 +155,9 @@ function cursor(event: RecordValue, viewed: Viewed): RecordValue {
   const read = event.tool_call.readToolCall;
   if (!isRecord(read) || !isRecord(read.result) || !isRecord(read.result.success)) return event;
   const path = string(read.result.success.path) ?? (isRecord(read.args) ? string(read.args.path) : null);
-  if (path && IMAGE_PATH.test(path)) viewed(path, string(event.call_id), `Read ${path}`);
+  // when the read finished: the file must not have been written after it
+  const readAt = Number(event.tool_call.completedAtMs ?? event.timestamp_ms);
+  if (path && IMAGE_PATH.test(path)) viewed(path, string(event.call_id), `Read ${path}`, Number.isFinite(readAt) ? readAt : undefined);
   return event;
 }
 
