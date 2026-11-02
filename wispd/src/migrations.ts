@@ -33,6 +33,7 @@ import { MESSAGE_SOURCE } from "./migration-message-source";
 import { TASK_WORKFLOWS } from "./migration-task-workflows";
 import { SUBTASKS } from "./migration-subtasks";
 import { REVIEW_NOW } from "./migration-review-now";
+import { TURN_FAILURE } from "./migration-turn-failure";
 
 /** `ALTER TABLE … ADD COLUMN`, unless a partly upgraded profile already has the column. */
 function addColumn(db: Database, table: string, column: string, definition: string): void {
@@ -663,6 +664,7 @@ CREATE INDEX IF NOT EXISTS idx_task_answer_observations_task ON task_answer_obse
   REVIEW_FALLBACK,
   MESSAGE_SOURCE,
   REVIEW_NOW,
+  TURN_FAILURE,
 ];
 
 /** The newest schema this build knows how to run. */

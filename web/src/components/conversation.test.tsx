@@ -971,3 +971,20 @@ describe("a turn a subtask report started", () => {
     expect(screen.getByRole("button", { name: "Copy the reports", hidden: true })).toBeInTheDocument()
   })
 })
+
+describe("Why a turn failed", () => {
+  it("stays on a failed turn after a later turn ran, from the turn's own stored reason", () => {
+    const task = pagedTask([1, 2])
+    task.turns[0] = {
+      ...task.turns[0]!,
+      status: "failed",
+      result: null,
+      failure_detail: "turn exited 1: ActionRequiredError: Model unavailable on Free",
+    }
+    render(<Conversation task={task} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport("failed-turn-reason")),
+    })
+    expect(screen.getByText("Why it failed")).toBeInTheDocument()
+    expect(screen.getByText("turn exited 1: ActionRequiredError: Model unavailable on Free")).toBeInTheDocument()
+  })
+})

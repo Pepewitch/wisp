@@ -273,7 +273,8 @@ export function Conversation({
                   // own last words often are the conclusion — droid, for one,
                   // pattern-matches its final message and exits 1 on a hit, so the
                   // real result ends up here and nowhere else.
-                  failure={i === task.turns.length - 1 && task.state === "failed" ? task.state_detail : null}
+                  // The turn keeps its own reason once a later turn runs.
+                  failure={turn.failure_detail ?? (i === task.turns.length - 1 && task.state === "failed" ? task.state_detail : null)}
                   archived={task.archived && !task.attachmentsRetained}
                   // a handed-over prose hit lives in a timeline nobody opened
                   revealActivity={find.revealTurn === turn.n}
@@ -352,7 +353,7 @@ const TurnBlock = memo(function TurnBlock({
   live?: TurnActivity
   first: boolean
   latest: boolean
-  /** the task's state_detail, on the turn that failed it */
+  /** why this turn failed: its own stored reason, else the task's state_detail on the turn that failed it */
   failure?: string | null
   /** archived tasks keep their manifests but not their image bytes (A1a / Q4) */
   archived?: boolean

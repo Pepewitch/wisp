@@ -296,6 +296,8 @@ export interface ApiTurn {
   pid_start_time: string | null;
   interrupt_detail: string | null;
   kill_detail: string | null;
+  /** Why the turn failed (the harness's last words, a spawn error, a kill), kept after later turns; null for any other turn, and for turns that settled before the field existed. */
+  failure_detail?: string | null;
   exit_code: number | null;
   /** The model the turn actually ran on; null = the harness never reported one. */
   model: string | null;

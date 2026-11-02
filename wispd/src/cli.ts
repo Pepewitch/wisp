@@ -100,7 +100,9 @@ async function resultCommand(positional: string[]): Promise<void> {
     process.exit(1);
   }
   print(`── you (turn ${turn.n}) ──\n${turn.prompt}\n── agent ──`);
-  print(turn.result ?? `(turn ${turn.n} is ${turn.status}, no result text)`);
+  if (turn.result) print(turn.result);
+  else if (turn.failure_detail) print(`(turn ${turn.n} failed, no result text: ${turn.failure_detail})`);
+  else print(`(turn ${turn.n} is ${turn.status}, no result text)`);
 }
 
 async function showCommand(positional: string[]): Promise<void> {
@@ -178,6 +180,7 @@ function printTurn(
   for (const image of turn.outputs ?? []) print(`  output: ${image.name} (${formatBytes(image.size)}, ${outputProvenance(image)})\n    ${saveCommand(task.id, turn.n, image)}`);
   if (turn.usage) print(`  usage: ${usageLine(turn.usage)}`);
   if (turn.result) print(`  agent: ${turn.result.slice(0, 400)}`);
+  if (turn.failure_detail) print(`  failed: ${turn.failure_detail.slice(0, 400)}`);
 }
 
 async function logCommand(positional: string[], flags: Flags): Promise<void> {
