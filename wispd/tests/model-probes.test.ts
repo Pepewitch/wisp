@@ -6,6 +6,7 @@ import { BUILTIN_ADAPTERS, DROID_MODEL_PROBE_SENTINEL, type AdapterDef } from ".
 import {
   bunModelProbeSpawn,
   MODEL_PROBE_MAX_BYTES,
+  MODEL_PROBE_RETRY_MS,
   ModelProbeCache,
   type ModelProbeCacheOptions,
 } from "../src/model-probes";
@@ -268,6 +269,69 @@ describe("daemon model probe cache", () => {
       models: successful,
       modelsError: "temporarily unavailable",
     });
+  });
+
+  test("a CLI that lists no models has not answered: the last list stays, the reason shows, and it is tried again soon", async () => {
+    // what `cursor-agent models` printed on one real install, then a moment when it printed nothing usable
+    const listing = "Available models\n\nauto - Auto (default)\ncomposer-2.5 - Composer 2.5\n";
+    let stdout = listing;
+    let probes = 0;
+    const now = new Date("2026-11-01T08:00:00.000Z");
+    const path = cachePath();
+    const cache = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      now: () => now,
+      spawn: () => {
+        probes++;
+        return { exitCode: 0, stdout, stderr: "" };
+      },
+    });
+    await cache.refresh();
+    const good = cache.snapshot("cursor").models;
+    expect(good?.list).toEqual(["auto", "composer-2.5"]);
+
+    stdout = "";
+    await cache.refresh();
+    expect(cache.snapshot("cursor").models).toEqual(good);
+    expect(cache.snapshot("cursor").modelsError).toContain("printed no '<id> - <display name>' records");
+    // the empty answer never reaches the disk cache
+    expect(JSON.parse(readFileSync(path, "utf8")).entries.cursor.models.list).toEqual(["auto", "composer-2.5"]);
+
+    // not a day later: a few minutes
+    probes = 0;
+    now.setTime(now.getTime() + MODEL_PROBE_RETRY_MS - 1_000);
+    await cache.refreshIfStale();
+    expect(probes).toBe(0);
+    stdout = listing;
+    now.setTime(now.getTime() + 2_000);
+    await cache.refreshIfStale();
+    expect(probes).toBe(1);
+    expect(cache.snapshot("cursor")).toEqual({ models: expect.objectContaining({ list: ["auto", "composer-2.5"] }) });
+  });
+
+  test("an empty list an older build persisted is probed again at boot", async () => {
+    const path = cachePath();
+    const fresh = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      spawn: () => ({ exitCode: 0, stdout: "auto - Auto (default)\n", stderr: "" }),
+    });
+    await fresh.refresh();
+    const stored = JSON.parse(readFileSync(path, "utf8"));
+    stored.entries.cursor.models = { list: [], defaultModel: null, probedAt: new Date().toISOString() };
+    writeFileSync(path, JSON.stringify(stored));
+
+    let probes = 0;
+    const restored = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      spawn: () => {
+        probes++;
+        return { exitCode: 0, stdout: "auto - Auto (default)\n", stderr: "" };
+      },
+    });
+    expect(restored.snapshot("cursor").models).toBeNull();
+    await restored.refreshIfStale();
+    expect(probes).toBe(1);
+    expect(restored.snapshot("cursor").models?.list).toEqual(["auto"]);
   });
 
   test("a hung injected probe is stopped by the per-probe timeout", async () => {

@@ -12,6 +12,13 @@ import { isRecord } from "./validate";
 export const MODEL_PROBE_TIMEOUT_MS = 10_000;
 export const MODEL_PROBE_MAX_BYTES = 2 * 1024 * 1024;
 export const MODEL_PROBE_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/**
+ * How soon a refresh in which a discovering harness reported no models is
+ * tried again. Such an answer is usually transient (a CLI briefly signed out,
+ * offline, or slow under load), and waiting the full interval would leave the
+ * harness unpickable for a day.
+ */
+export const MODEL_PROBE_RETRY_MS = 5 * 60 * 1000;
 const MODEL_PROBE_CACHE_MAX_BYTES = 2 * 1024 * 1024;
 
 /** Production async process runner; unlike bunSpawn it never blocks the event loop. */
@@ -154,9 +161,11 @@ export class ModelProbeCache {
   refresh(): Promise<void> {
     if (this.stopping.signal.aborted) return Promise.resolve();
     if (this.refreshInFlight) return this.refreshInFlight;
-    this.lastRefreshAttemptAt = this.now().getTime();
+    const attemptAt = this.now().getTime();
+    this.lastRefreshAttemptAt = attemptAt;
     let changed = false;
     let cacheUpdated = false;
+    let discoveryFailed = false;
     this.refreshInFlight = Promise.all(
       Object.entries(this.adapters).map(async ([name, def]) => {
         const previous = this.snapshot(name);
@@ -167,9 +176,12 @@ export class ModelProbeCache {
         this.entries.set(name, answer);
         if (!sameAnswer(previous, answer)) changed = true;
         if (def.modelDiscovery && next.models) cacheUpdated = true;
+        if (def.modelDiscovery && !next.models) discoveryFailed = true;
       }),
     )
       .then(async () => {
+        // the next refreshIfStale (a picker read, a restart) tries again soon, not in a day
+        if (discoveryFailed) this.lastRefreshAttemptAt = attemptAt - this.refreshIntervalMs + MODEL_PROBE_RETRY_MS;
         if (cacheUpdated) await this.persist();
         if (changed) emit({ type: "harnesses" });
       })
@@ -196,6 +208,8 @@ export class ModelProbeCache {
           !isRecord(cached)
           || cached.adapterSignature !== adapterSignature(def)
           || !validCachedModels(cached.models)
+          // an empty list is no answer (older builds stored one): probe again at boot
+          || cached.models.list.length === 0
         ) {
           complete = false;
           continue;
@@ -253,6 +267,12 @@ export class ModelProbeCache {
     });
     try {
       const discovery = await Promise.race([discoverModels(def, this.spawn, controller.signal), abandoned]);
+      // A discovering harness that names no model has not answered: its notes
+      // say why. Cached as an empty list, it would hide every model it had for
+      // a whole refresh interval.
+      if (def.modelDiscovery && !discovery.models?.length) {
+        return { models: null, modelsError: discovery.notes.join("; ") || "the model probe reported no models" };
+      }
       return {
         models: {
           list: discovery.models ?? [],
