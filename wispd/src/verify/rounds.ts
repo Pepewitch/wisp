@@ -131,9 +131,20 @@ export function reviewLedger(workflowId: string, pr: number, since: string, base
  * save, which a moved revision or a throw can drop, so no round is ever
  * planned before the epoch that counts it is stored. Fills a missing value
  * only; returns the stored one.
+ *
+ * The epoch also goes into the checkpoint each queued wake would restore if
+ * its message were cancelled (the workflows_cancel_message trigger): an
+ * auto-fix message queued before the epoch existed would otherwise take it
+ * back, and the next look would stamp a later one that misses rounds planned
+ * in between, giving the budget an extra round.
  */
 export function armReviewEpoch(workflowId: string, at: string): string {
-  db.run("UPDATE workflows SET checkpoint_json = json_set(checkpoint_json, '$.reviewArmedAt', ?) WHERE id = ? AND json_extract(checkpoint_json, '$.reviewArmedAt') IS NULL", [at, workflowId])
+  db.transaction(() => {
+    db.run("UPDATE workflows SET checkpoint_json = json_set(checkpoint_json, '$.reviewArmedAt', ?) WHERE id = ? AND json_extract(checkpoint_json, '$.reviewArmedAt') IS NULL", [at, workflowId])
+    db.run(`UPDATE workflow_wakes SET prior_checkpoint_json = json_set(prior_checkpoint_json, '$.reviewArmedAt',
+        (SELECT json_extract(checkpoint_json, '$.reviewArmedAt') FROM workflows WHERE id = ?))
+      WHERE workflow_id = ? AND json_extract(prior_checkpoint_json, '$.reviewArmedAt') IS NULL`, [workflowId, workflowId])
+  })()
   const row = db.query("SELECT json_extract(checkpoint_json, '$.reviewArmedAt') AS armed FROM workflows WHERE id = ?").get(workflowId) as { armed: string | null } | null
   return row?.armed ?? at
 }

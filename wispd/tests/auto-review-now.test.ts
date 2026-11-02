@@ -6,7 +6,7 @@ import { GitHubPausedError } from "../src/github-budget";
 import { loadConfig, type WispConfig } from "../src/config";
 import type { NewTaskInput } from "../src/domain/task-create";
 import { autopilotRoute } from "../src/routes/autopilot";
-import { createTask, db, freeSlot, getTask, messagesFor, newTaskId, setTaskFields, transition } from "../src/store";
+import { createTask, createTaskMessage, db, freeSlot, getTask, messagesFor, newTaskId, setTaskFields, transition } from "../src/store";
 import { submitVerdict } from "../src/verify/reviewer";
 import { roundsOf } from "../src/verify/rounds";
 import { reviewsOf } from "../src/verify/reviews";
@@ -249,6 +249,36 @@ test("rounds from before an upgraded profile's switch reset do not spend its fre
     expect(launched).toHaveLength(1);
     expect(autopilotStatus(task.id)).toMatchObject({ state: "waiting", reviewRounds: 4, reviewSpent: 0 });
   });
+  test("an upgraded profile's first look stores its epoch even when its save is refused mid-launch", async () => {
+    const { clock, launched, task, rt, during } = setup({ checks: GREEN });
+    forgetEpoch(task.id, clock);
+    // the revision moves while the reviewers launch, so the look's own checkpoint is not saved
+    during.launch = () => { setAutopilot(task.id, { autoMerge: false }, new Date(clock.now)); };
+    await pass(rt, task.id, clock);
+    during.launch = undefined;
+    expect(launched).toHaveLength(1);
+    // the epoch is on the row anyway, no later than the round it counts
+    const epoch = checkpointOf(autopilotRow(task.id)!).reviewArmedAt;
+    expect(epoch).toBeString();
+    expect(epoch! <= latest(task.id).created_at).toBe(true);
+  });
+
+  test("a queued auto-fix message cancelled after Review now does not take the epoch back", async () => {
+    const { clock, task } = setup({ autoFix: true });
+    forgetEpoch(task.id, clock);
+    const row = autopilotRow(task.id)!;
+    // an auto-fix message queued before the epoch existed, with the checkpoint its cancel restores
+    createTaskMessage({ id: "mfixbeforeepoch", taskId: task.id, text: "fix the checks", attachmentHash: "" }, false);
+    db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [row.id, "mfixbeforeepoch"]);
+    db.run("INSERT INTO workflow_wakes(workflow_id, event_key, message_id, prior_checkpoint_json) VALUES (?, 'fix:1', ?, ?)",
+      [row.id, "mfixbeforeepoch", JSON.stringify(checkpointOf(row))]);
+    await reviewNow(task.id);
+    const epoch = checkpointOf(autopilotRow(task.id)!).reviewArmedAt;
+    expect(epoch).toBeString();
+    db.run("UPDATE task_messages SET status = 'cancelled' WHERE id = ?", ["mfixbeforeepoch"]);
+    expect(checkpointOf(autopilotRow(task.id)!).reviewArmedAt).toBe(epoch);
+  });
+
   test("a switch moved while its reviewers launch does not leave its round behind the checks", async () => {
     const { clock, launched, task, rt, during } = setup();
     await pass(rt, task.id, clock);
