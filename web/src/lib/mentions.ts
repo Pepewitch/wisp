@@ -112,8 +112,13 @@ export type MentionQuery =
   | { kind: "entries"; project: MentionProject; dir: string; filter: string }
 
 /** `a/b` + `c/d/` → `a/b/c/d`: relative folder segments, never a leading or doubled `/`. */
+/**
+ * Relative segments joined with one `/`, without empty and `.` segments: the
+ * daemon answers `./src` as `src`, and an answer is only taken for the exact
+ * folder asked for, so the two must agree.
+ */
 function joinDir(...parts: string[]): string {
-  return parts.flatMap((part) => part.split("/")).filter(Boolean).join("/")
+  return parts.flatMap((part) => part.split("/")).filter((segment) => segment !== "" && segment !== ".").join("/")
 }
 
 /**

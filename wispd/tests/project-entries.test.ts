@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { ProjectEntriesResponse } from "../../shared/api/project-entries";
 import { CONFIG_PATH, type WispConfig } from "../src/config";
 import { serve } from "../src/daemon";
-import { ENTRY_CAP, listProjectEntries, projectDirSegments, SCAN_CAP } from "../src/project-entries";
+import { ENTRY_CAP, LISTING_SLOTS, listProjectEntries, projectDirSegments, SCAN_CAP } from "../src/project-entries";
 import { GIT, type IgnoreGit } from "../src/project-ignore";
 
 const token = "project-entries-token";
@@ -163,7 +163,7 @@ describe("GET /api/projects/entries", () => {
     expect(body.truncated).toBe(true);
   });
 
-  test("a link into .git is neither listed nor listable; any other link is judged by its own name", async () => {
+  test("a link into .git is neither listed nor listable; a link to an ignored folder is left out", async () => {
     const { root } = makeProject();
     symlinkSync(join(root, ".git"), join(root, "gitlink"));
     symlinkSync(join(root, ".git/HEAD"), join(root, "head-link"));
@@ -172,12 +172,120 @@ describe("GET /api/projects/entries", () => {
     const names = (await listing(await entries(base, root))).entries.map((entry) => entry.name);
     expect(names).not.toContain("gitlink");
     expect(names).not.toContain("head-link");
-    // `deps` leads to the ignored node_modules, but its own name is not ignored
-    expect(names).toContain("deps");
+    // `deps` is not ignored by its own name, but it leads to the ignored
+    // node_modules, where it would list nothing
+    expect(names).not.toContain("deps");
+    expect(names).toContain("src-link");
     const refused = await entries(base, root, "gitlink");
     expect(refused.status).toBe(403);
     expect(await refused.text()).not.toContain("HEAD");
     expect((await entries(base, root, "gitlink/refs")).status).toBe(403);
+  });
+
+  test("a link into a nested repository's .git is neither listed nor listable", async () => {
+    const { root } = makeProject();
+    mkdirSync(join(root, "nested"));
+    git(join(root, "nested"), ["init", "-q"]);
+    symlinkSync(join(root, "nested/.git"), join(root, "nested-git"));
+    symlinkSync(join(root, "nested/.git/HEAD"), join(root, "nested-head"));
+    const base = await startServer([root]);
+    const names = (await listing(await entries(base, root))).entries.map((entry) => entry.name);
+    expect(names).toContain("nested");
+    expect(names).not.toContain("nested-git");
+    expect(names).not.toContain("nested-head");
+    expect((await entries(base, root, "nested-git")).status).toBe(403);
+  });
+
+  test("a git that cannot judge a link's target hides no link", async () => {
+    const { root } = makeProject();
+    symlinkSync(join(root, "node_modules"), join(root, "deps"));
+    let call = 0;
+    const flaky: IgnoreGit = {
+      // the listed folder's check answers; the link-target check from the root fails
+      checkIgnore: (cwd, paths) => (++call === 1 ? GIT.checkIgnore(cwd, paths) : Promise.resolve({ ok: false, detail: "pathspec is in submodule" })),
+      outsideRepository: async () => false,
+    };
+    const body = await listProjectEntries(root, "", "", flaky);
+    expect("entries" in body && body.entries.map((entry) => entry.name)).toContain("deps");
+  });
+
+  test("a link into a nested repository is not judged by rules from the root", async () => {
+    const { root } = makeProject();
+    const nested = join(root, "nested");
+    mkdirSync(join(nested, "saved"), { recursive: true });
+    git(nested, ["init", "-q"]);
+    writeFileSync(join(nested, ".gitignore"), "saved/\n");
+    writeFileSync(join(nested, "saved/code.ts"), "export {}\n");
+    git(nested, ["add", "-f", "saved/code.ts"]);
+    symlinkSync(join(nested, "saved"), join(root, "alias"));
+    const body = await listProjectEntries(root, "");
+    expect("entries" in body && body.entries.map((entry) => entry.name)).toContain("alias");
+    const inside = await listProjectEntries(root, "alias");
+    expect("entries" in inside && inside.entries.map((entry) => entry.name)).toEqual(["code.ts"]);
+  });
+
+  test("links to folders cost one more batched check, never one per link", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "wisp-entries-dirlinks-")));
+    git(root, ["init", "-q"]);
+    writeFileSync(join(root, ".gitignore"), "ignored-*/\n");
+    mkdirSync(join(root, "links"));
+    for (let i = 0; i < 50; i += 1) {
+      mkdirSync(join(root, i % 2 ? `ignored-${i}` : `kept-${i}`));
+      symlinkSync(join(root, i % 2 ? `ignored-${i}` : `kept-${i}`), join(root, "links", `l${i}`));
+    }
+    let checks = 0;
+    const counting: IgnoreGit = {
+      checkIgnore: (cwd, paths) => { checks += 1; return GIT.checkIgnore(cwd, paths); },
+      outsideRepository: (cwd) => GIT.outsideRepository(cwd),
+    };
+    const body = await listProjectEntries(root, "links", "", counting);
+    expect(checks).toBe(2);
+    expect("entries" in body && body.entries.length).toBe(25);
+  });
+
+  test("a listing whose client went away while it waited is dropped without running git", async () => {
+    const { root } = makeProject();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let checks = 0;
+    const held: IgnoreGit = {
+      async checkIgnore(cwd, paths) {
+        checks += 1;
+        await gate;
+        return GIT.checkIgnore(cwd, paths);
+      },
+      outsideRepository: (cwd) => GIT.outsideRepository(cwd),
+    };
+    const busy = Array.from({ length: LISTING_SLOTS }, () => listProjectEntries(root, "src", "", held));
+    const gone = new AbortController();
+    const waiting = listProjectEntries(root, "src", "", held, gone.signal);
+    gone.abort();
+    await Bun.sleep(10);
+    release();
+    await Promise.all(busy);
+    expect(await waiting).toEqual({ status: 400, error: "the request was cancelled" });
+    expect(checks).toBe(LISTING_SLOTS);
+  });
+
+  test("listings run a few at a time, daemon-wide", async () => {
+    const { root } = makeProject();
+    let inFlight = 0;
+    let peak = 0;
+    const slow: IgnoreGit = {
+      async checkIgnore(cwd, paths) {
+        peak = Math.max(peak, (inFlight += 1));
+        await Bun.sleep(20);
+        try {
+          return await GIT.checkIgnore(cwd, paths);
+        } finally {
+          inFlight -= 1;
+        }
+      },
+      outsideRepository: (cwd) => GIT.outsideRepository(cwd),
+    };
+    const all = await Promise.all(Array.from({ length: LISTING_SLOTS * 3 }, () => listProjectEntries(root, "src", "", slow)));
+    expect(all.every((body) => "entries" in body)).toBe(true);
+    expect(peak).toBeLessThanOrEqual(LISTING_SLOTS);
   });
 
   test("a link is ignored by its own name", async () => {

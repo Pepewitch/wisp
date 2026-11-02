@@ -85,7 +85,9 @@ function mount(node: ReactNode, repos: RepoInfo[] = REPOS) {
     if (path.startsWith("/api/projects/entries?")) {
       const query = new URLSearchParams(path.slice(path.indexOf("?") + 1))
       if (query.get("project") === "/work/slow") return new Promise<T>(() => {})
-      const found = LISTINGS[`${query.get("project")}|${query.get("dir") ?? ""}`]
+      // the real daemon drops empty and `.` segments, and answers for the folder it normalised
+      const dir = (query.get("dir") ?? "").split("/").filter((segment) => segment !== "" && segment !== ".").join("/")
+      const found = LISTINGS[`${query.get("project")}|${dir}`]
       if (!found) throw new ApiError("no such folder", 404)
       const q = (query.get("q") ?? "").toLowerCase()
       return { ...found, entries: found.entries.filter((entry) => entry.name.toLowerCase().includes(q)) } as T
@@ -273,6 +275,23 @@ describe("the @ list", () => {
     await waitFor(() => expect(options()).toEqual(["README.md"]))
     const asked = paths.filter((path) => path.startsWith("/api/projects/entries?"))
     expect(asked).toEqual(["/api/projects/entries?project=%2Fwork%2Fsuperapp&dir=&q=REA"])
+  })
+
+  it("while the next folder's request waits out the pause, the last folder's rows are not shown as its", async () => {
+    mount(<SteerBox task={task()} onSend={async () => {}} />)
+    type("@superapp/")
+    await waitFor(() => expect(options()).toEqual(["My Docs/", "src/", "README.md"]))
+    type("@superapp/src/")
+    // the cache still answers for the root until the debounced request lands
+    expect(options()).toEqual([])
+    expect(screen.getByTestId("mention-list")).toHaveTextContent("Listing…")
+    await waitFor(() => expect(options()).toEqual(["components/", "config.ts"]))
+  })
+
+  it("`.` segments name the folder the daemon answers for", async () => {
+    mount(<SteerBox task={task()} onSend={async () => {}} />)
+    type("@superapp/./src/")
+    await waitFor(() => expect(options()).toEqual(["components/", "config.ts"]))
   })
 
   it("a folder with a space in its name opens, and its paths arrive quoted", async () => {

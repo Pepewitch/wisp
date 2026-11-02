@@ -5,13 +5,15 @@ import { READ_TIMEOUT_MS, runBounded } from "./subprocess";
  * list: one `git check-ignore --stdin` run FROM that folder, over the
  * entries' names, so git applies the rules of the repository that owns the
  * folder (a submodule's own `.gitignore` inside a submodule). A symlink is
- * asked about by its own name, as the file git sees; where it leads is never
- * asked about.
+ * asked about by its own name, as the file git sees. Where a link to a
+ * folder leads is asked about once more, from the project root, only to hide
+ * a link whose target is ignored (project-entries.ts ignoredLinkTargets).
  *
- * At most two git processes per listing: the check, and, only when it fails,
- * a `rev-parse` that tells a folder outside every repository (no rules, so
- * nothing is hidden) from a repository git could not read. The latter fails
- * the request: a listing is never served unfiltered because git broke.
+ * Each check is at most two git processes: the check, and, only when it
+ * fails, a `rev-parse` that tells a folder outside every repository (no
+ * rules, so nothing is hidden) from a repository git could not read. For the
+ * listed folder the latter fails the request: a listing is never served
+ * unfiltered because git broke.
  */
 
 /** Git could not answer for a folder that is inside a repository. */
