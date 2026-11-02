@@ -12,7 +12,8 @@ import { hasRunningTurn, submitTaskMessage } from "../src/runner";
 import { cancelQueuedTaskMessage, createTaskMessage, db, getTask, listTasksWithLatestTurn, setTaskFields, transition, turnsFor } from "../src/store";
 import { SubtaskDelivery } from "../src/subtask-delivery";
 import { recordPrEvent, reportFraming } from "../src/subtask-reports";
-import type { Task } from "../src/types";
+import { reportBefore } from "../src/subtask-report-queue";
+import type { Task, TaskMessage } from "../src/types";
 import { withWispSection } from "../src/turn-input";
 
 const cfg = (extra: Partial<WispConfig> = {}): WispConfig => ({
@@ -129,6 +130,30 @@ describe("delivering subtask reports", () => {
     expect(next!.prompt).toContain("and then this");
     expect(rows(parent.id).map((row) => row.state)).toEqual(["delivered"]);
   }, 20_000);
+
+  test("a parent's background work still running holds the report back at its turn end, as delivery does", async () => {
+    const adapters = { quick };
+    const parent = await make({ repoPath: await repo() }, adapters);
+    await make({ subtask: { parentId: parent.id, report: true } }, adapters);
+    // queued while busy, then the person's next message behind it
+    transition(parent.id, "running", "turn 2");
+    new SubtaskDelivery(cfg(), adapters, 0).deliver(parent.id);
+    transition(parent.id, "done");
+    createTaskMessage({ id: `mnext${parent.id}`, taskId: parent.id, text: "and then this", attachmentHash: "" }, false);
+    const head = db.query("SELECT * FROM task_messages WHERE id = ?").get(`mnext${parent.id}`) as TaskMessage;
+    const report = reportMessages(parent.id)[0]!.id;
+    expect(reportBefore(getTask(parent.id)!, head)).toBe(report);
+    // its last turn left a process running: the report waits, like delivery's own readiness
+    const turn = turnsFor(parent.id).at(-1)!;
+    db.run(`INSERT INTO turn_process_groups (turn_id, task_id, pgid, members_json, state, stop_requested)
+      VALUES (?, ?, 999999, '[{"pid":999999,"started":null}]', 'running', 0)
+      ON CONFLICT(turn_id) DO UPDATE SET state = 'running', members_json = excluded.members_json`, [turn.id, parent.id]);
+    try {
+      expect(reportBefore(getTask(parent.id)!, head)).toBeNull();
+    } finally {
+      db.run("UPDATE turn_process_groups SET state = 'none' WHERE turn_id = ?", [turn.id]);
+    }
+  });
 
   test("a report queued before a crash is started by id, never queued twice", async () => {
     const adapters = { quick };
