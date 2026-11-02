@@ -279,6 +279,37 @@ test("rounds from before an upgraded profile's switch reset do not spend its fre
     expect(checkpointOf(autopilotRow(task.id)!).reviewArmedAt).toBe(epoch);
   });
 
+  test("auto-review switched back on keeps its fresh budget when a fix queued before the switch is cancelled", async () => {
+    const { clock, task } = setup({ autoFix: true });
+    const row = autopilotRow(task.id)!;
+    // three rejections spent under an old epoch
+    writeAutopilotCheckpoint(row, { ...checkpointOf(row), reviewSpent: 3, reviewBase: 0, reviewArmedAt: new Date(START).toISOString() }, new Date(clock.now));
+    setAutopilot(task.id, { autoReview: false }, new Date(clock.now));
+    // a fix queued while auto-review is off, with the checkpoint its cancel would restore
+    const off = autopilotRow(task.id)!;
+    createTaskMessage({ id: "mfixwhileoff", taskId: task.id, text: "fix the checks", attachmentHash: "" }, false);
+    db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [off.id, "mfixwhileoff"]);
+    db.run("INSERT INTO workflow_wakes(workflow_id, event_key, message_id, prior_checkpoint_json) VALUES (?, 'fix:9', ?, ?)",
+      [off.id, "mfixwhileoff", JSON.stringify(checkpointOf(off))]);
+    clock.now += 60_000;
+    setAutopilot(task.id, { autoReview: true }, new Date(clock.now));
+    const fresh = checkpointOf(autopilotRow(task.id)!);
+    expect(fresh).toMatchObject({ reviewSpent: 0, reviewArmedAt: new Date(clock.now).toISOString() });
+    db.run("UPDATE task_messages SET status = 'cancelled' WHERE id = ?", ["mfixwhileoff"]);
+    expect(checkpointOf(autopilotRow(task.id)!)).toMatchObject({ reviewSpent: 0, reviewBase: fresh.reviewBase, reviewArmedAt: fresh.reviewArmedAt });
+  });
+
+  test("a damaged wake snapshot does not stop the epoch from being stored", async () => {
+    const { clock, task } = setup();
+    forgetEpoch(task.id, clock);
+    const row = autopilotRow(task.id)!;
+    createTaskMessage({ id: "mdelivered", taskId: task.id, text: "old", attachmentHash: "" }, false);
+    db.run("UPDATE task_messages SET workflow_id = ?, status = 'cancelled' WHERE id = ?", [row.id, "mdelivered"]);
+    db.run("INSERT INTO workflow_wakes(workflow_id, event_key, message_id, prior_checkpoint_json) VALUES (?, 'fix:2', ?, '{broken')", [row.id, "mdelivered"]);
+    await reviewNow(task.id);
+    expect(checkpointOf(autopilotRow(task.id)!).reviewArmedAt).toBeString();
+  });
+
   test("a switch moved while its reviewers launch does not leave its round behind the checks", async () => {
     const { clock, launched, task, rt, during } = setup();
     await pass(rt, task.id, clock);

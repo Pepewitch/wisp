@@ -141,9 +141,12 @@ export function reviewLedger(workflowId: string, pr: number, since: string, base
 export function armReviewEpoch(workflowId: string, at: string): string {
   db.transaction(() => {
     db.run("UPDATE workflows SET checkpoint_json = json_set(checkpoint_json, '$.reviewArmedAt', ?) WHERE id = ? AND json_extract(checkpoint_json, '$.reviewArmedAt') IS NULL", [at, workflowId])
+    // only snapshots a cancel can still restore (their message queued), and only valid ones
     db.run(`UPDATE workflow_wakes SET prior_checkpoint_json = json_set(prior_checkpoint_json, '$.reviewArmedAt',
         (SELECT json_extract(checkpoint_json, '$.reviewArmedAt') FROM workflows WHERE id = ?))
-      WHERE workflow_id = ? AND json_extract(prior_checkpoint_json, '$.reviewArmedAt') IS NULL`, [workflowId, workflowId])
+      WHERE workflow_id = ? AND json_valid(prior_checkpoint_json)
+        AND message_id IN (SELECT id FROM task_messages WHERE workflow_id = ? AND status = 'queued')
+        AND json_extract(prior_checkpoint_json, '$.reviewArmedAt') IS NULL`, [workflowId, workflowId, workflowId])
   })()
   const row = db.query("SELECT json_extract(checkpoint_json, '$.reviewArmedAt') AS armed FROM workflows WHERE id = ?").get(workflowId) as { armed: string | null } | null
   return row?.armed ?? at

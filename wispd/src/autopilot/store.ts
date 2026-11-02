@@ -337,6 +337,22 @@ function grantAutoMerge(task: Task, wasOn: boolean, next: AutopilotParams, actor
 }
 
 /** Change the switches of a row that is already on. */
+/**
+ * A fresh review budget (a switch-on, a Resume) also goes into the checkpoint
+ * each queued wake would restore if its message were cancelled
+ * (workflows_cancel_message): restored as it was, a snapshot from before the
+ * reset would take back the new base and epoch, and the next look would find
+ * the old rejections spent. Only snapshots a cancel can still restore.
+ */
+function carryReviewBudget(workflowId: string, checkpoint: AutopilotCheckpoint): void {
+  const fields: [string, string | number][] = [["$.reviewBase", checkpoint.reviewBase ?? 0], ["$.reviewSpent", checkpoint.reviewSpent ?? 0]]
+  if (checkpoint.reviewArmedAt) fields.push(["$.reviewArmedAt", checkpoint.reviewArmedAt])
+  db.run(`UPDATE workflow_wakes SET prior_checkpoint_json = json_set(prior_checkpoint_json, ${fields.map(() => "?, ?").join(", ")})
+    WHERE workflow_id = ? AND json_valid(prior_checkpoint_json)
+      AND message_id IN (SELECT id FROM task_messages WHERE workflow_id = ? AND status = 'queued')`,
+    [...fields.flat(), workflowId, workflowId])
+}
+
 function reconfigure(row: WorkflowRow, current: AutopilotParams, next: AutopilotParams, label: string, now: Date): void {
   if (current.autoMerge === next.autoMerge && current.autoFix === next.autoFix && current.autoReview === next.autoReview) return
   const at = now.toISOString()
@@ -362,6 +378,7 @@ function reconfigure(row: WorkflowRow, current: AutopilotParams, next: Autopilot
   if (lift) Object.assign(checkpoint, { state: "waiting", about: "task", by: speakerOf({}, next) })
   db.run("UPDATE workflows SET params_json = ?, checkpoint_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
     [JSON.stringify(next), JSON.stringify(checkpoint), at, at, row.id])
+  if (!current.autoReview && next.autoReview) carryReviewBudget(row.id, checkpoint)
   recordWorkflow(row.id, "configured", label, at)
   if (lift) changeWorkflowState(row.id, "active", fixOff ? "Auto-fix off" : "Auto-review off", now)
 }
@@ -408,6 +425,7 @@ export function resumeAutopilot(taskId: string, now = new Date()): AutopilotStat
   checkpoint.about = "task"
   db.run("UPDATE workflows SET checkpoint_json = ?, revision = revision + 1, next_check_at = ?, updated_at = ? WHERE id = ?",
     [JSON.stringify(checkpoint), now.toISOString(), now.toISOString(), row.id])
+  if (row.state === "paused") carryReviewBudget(row.id, checkpoint)
   if (row.state === "paused") changeWorkflowState(row.id, "active", "Resumed", now)
   else recordWorkflow(row.id, "resumed", "Continued", now.toISOString())
   announceWorkflow(taskId)
