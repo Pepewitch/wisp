@@ -36,9 +36,7 @@ import { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
 import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
 import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./evidence"
-import {
-  approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, relayedBlocks, reviewerPasses, withDelivered, type FeedbackItem,
-} from "./feedback"
+import { approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, relayedBlocks, repeatHold, reviewerPasses, withSent, type FeedbackItem } from "./feedback"
 import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsChanges, writeJudgeLog, type Judged, type JudgeClient, type JudgeLook } from "./judge"
 import { headFirstSeen, headSince } from "./heads"
 import { planFix, type FixPlan } from "./fix"
@@ -467,6 +465,9 @@ export class AutopilotRuntime {
       }
       return nothingToSend(plan, checkpoint, say)
     }
+    // only bots repeating what the agent already answered twice: the person decides, Send now sends it
+    const repeated = repeatHold({ items, deliveries: checkpoint.deliveries, ci, review, sendNow: checkpoint.sendNow === key })
+    if (repeated) return say("needs-you", repeated, WAITING_ON_YOU_MS)
     const summary = [review ? "auto-review's findings" : null, ci?.summary, items.length > 0 ? feedbackSummary(items) : null].filter(Boolean).join(" and ")
     // A push would end the round running on this head: what auto-fix holds goes once it settles,
     // unless a person says Send now. Before the cap's pause, which would strand the round.
@@ -598,7 +599,7 @@ export class AutopilotRuntime {
     // In the round's own checkpoint, so a withdrawn round's cancel rolls both back.
     const next: AutopilotCheckpoint = {
       ...checkpoint, rounds: round, lastRoundAt: this.now().toISOString(), done: undefined, greenHead: undefined, greenAt: undefined,
-      delivered: withDelivered(checkpoint.delivered, Object.fromEntries(content.items.map((item) => [item.id, item.fingerprint]))),
+      ...withSent(checkpoint, content.items),
       sentCi: content.ci ? [...(checkpoint.sentCi ?? []).slice(-20), content.ci.key] : checkpoint.sentCi,
       reviewsSent: content.review ? withReviewsSent(checkpoint.reviewsSent, [content.review.id]) : checkpoint.reviewsSent,
     }

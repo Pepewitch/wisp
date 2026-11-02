@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PrCheck } from "../src/autopilot/checks";
-import { acknowledgement, approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, keyParts, markerOf, pairedChecks, relayedBlocks, reviewerPasses, withDelivered, type FeedbackInput } from "../src/autopilot/feedback";
+import { acknowledgement, approvalCandidates, botRepeats, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, keyParts, markerOf, pairedChecks, relayedBlocks, repeatHold, reviewerPasses, withDelivered, withSent, type FeedbackInput } from "../src/autopilot/feedback";
 import type { Judged } from "../src/autopilot/judge";
 import type { PrComment, PrReview, PrSnapshot, PrThread } from "../src/autopilot/github";
 
@@ -380,5 +380,35 @@ describe("the ledger", () => {
     expect(Object.keys(big)).toHaveLength(500);
     expect(big["comment:new"]).toBe("t");
     expect(big["comment:0"]).toBeUndefined();
+  });
+});
+
+describe("a bot repeating what the agent already answered (#476)", () => {
+  // a reviewer bot's sticky summary, rewritten for each new head: the same item id, a new fingerprint
+  const sticky = (head: string) => items({ head, comments: [comment({ id: "IC_9", author: "pr-reviewer", bot: true, body: `Summary for ${head.slice(0, 3)}: please update the docs` })], checks: [check("pr-reviewer", "FAILURE", "pr-reviewer")] });
+
+  test("sent twice, the same bot item alone is held for the person on its third head", () => {
+    const first = sticky("a".repeat(40));
+    expect(first).toHaveLength(1);
+    let ledgers = withSent({}, first);
+    expect(repeatHold({ items: sticky("b".repeat(40)), deliveries: ledgers.deliveries, ci: null, review: null, sendNow: false })).toBeNull();
+    ledgers = withSent(ledgers, sticky("b".repeat(40)));
+    expect(ledgers.deliveries).toEqual({ "comment:IC_9": 2 });
+    const third = sticky("c".repeat(40));
+    expect(botRepeats(third, ledgers.deliveries)).toHaveLength(1);
+    expect(repeatHold({ items: third, deliveries: ledgers.deliveries, ci: null, review: null, sendNow: false }))
+      .toBe("@pr-reviewer repeated what the agent already answered twice; not sent again (Send now sends it)");
+  });
+
+  test("anything else in the round sends it: a new item, a person's words, CI, auto-review's findings, or Send now", () => {
+    const deliveries = { "comment:IC_9": 2 };
+    const repeat = sticky("c".repeat(40));
+    const fresh = items({ threads: [thread({}, [comment({ id: "RC_7", author: "pr-reviewer", bot: true, body: "new finding" })])] });
+    expect(botRepeats([...repeat, ...fresh], deliveries)).toEqual([]);
+    const person = items({ comments: [comment({ id: "IC_9", body: "Please rename this." })] });
+    expect(botRepeats(person, deliveries)).toEqual([]);
+    for (const extra of [{ ci: { key: "ci" } }, { review: { id: "r" } }, { sendNow: true }]) {
+      expect(repeatHold({ items: repeat, deliveries, ci: null, review: null, sendNow: false, ...extra })).toBeNull();
+    }
   });
 });

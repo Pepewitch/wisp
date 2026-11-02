@@ -71,6 +71,8 @@ export interface AutopilotCheckpoint {
   reviewArmedAt?: string
   /** review items sent to the agent: item id → the fingerprint sent */
   delivered?: Record<string, string>
+  /** how many rounds sent each review item: item id → count (feedback.ts botRepeats) */
+  deliveries?: Record<string, number>
   /** the review judge's answers: item id → the version it read and what it said (judge.ts) */
   judged?: Record<string, Judged>
   /** versions the judge could not answer: item id → how often, and when to ask again */
