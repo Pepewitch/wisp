@@ -36,6 +36,8 @@ function configuredPaths(repos: readonly RepoInfo[]): string[] {
  * A move made while a save is out becomes the queued order, and a later one
  * replaces it, so the daemon only hears the latest. When the queue drains the
  * repos list is read again once, and `pending` clears when that read is in.
+ * A read that fails leaves the cache on the list from before the save, so
+ * `pending` stays until a later read of the list succeeds.
  * A refusal clears `pending`, drops the queued order, says why, and reads
  * the list again. Each move works from what the sidebar shows now, not the
  * last render, so two moves inside one frame build on each other.
@@ -47,6 +49,8 @@ export class ProjectOrderQueue {
   #state: ProjectOrderState = IDLE
   #queued: string[] | null = null
   #inFlight = false
+  /** stops waiting for a successful read of the list to clear `pending` */
+  #unwatch: (() => void) | null = null
   readonly #listeners = new Set<() => void>()
 
   constructor(client: QueryClient, qk: Pick<ConnectionQueryKeys, "repos">, transport: DaemonTransport) {
@@ -71,6 +75,7 @@ export class ProjectOrderQueue {
     const to = "step" in move ? from + move.step : move.to
     if (from < 0 || to < 0 || to >= order.length || to === from) return
     const next = moveProject(order, from, to)
+    this.#stopWatching()
     this.#set({ pending: next, error: null })
     if (this.#inFlight) this.#queued = next
     else void this.#send(next)
@@ -93,6 +98,7 @@ export class ProjectOrderQueue {
     } catch (error) {
       this.#inFlight = false
       this.#queued = null
+      this.#stopWatching()
       this.#set({ pending: null, error: refusal(error) })
       void this.#client.invalidateQueries({ queryKey: this.#reposKey })
       return
@@ -104,11 +110,36 @@ export class ProjectOrderQueue {
     if (queued) return this.#send(this.#shown() ?? queued)
     this.#inFlight = false
     const saved = this.#state.pending
+    const before = this.#client.getQueryState(this.#reposKey)?.dataUpdatedAt ?? 0
     // "all": with the sidebar unmounted (another connection showing) the
     // read still lands before `pending` clears, so coming back shows no stale order
     await this.#client.invalidateQueries({ queryKey: this.#reposKey, refetchType: "all" })
     // a move made while the list was being read owns `pending` now
+    if (this.#inFlight || this.#state.pending !== saved) return
+    // a failed read resolves too, and leaves the pre-save list in the cache
+    if ((this.#client.getQueryState(this.#reposKey)?.dataUpdatedAt ?? 0) > before) this.#clear(saved)
+    else this.#clearOnNextRead(saved)
+  }
+
+  /** Clear `pending` once the list is read successfully, unless a move has replaced it by then. */
+  #clearOnNextRead(saved: readonly string[] | null): void {
+    this.#stopWatching()
+    const cache = this.#client.getQueryCache()
+    const key = JSON.stringify(this.#reposKey)
+    this.#unwatch = cache.subscribe((event) => {
+      if (event.type !== "updated" || event.action.type !== "success" || JSON.stringify(event.query.queryKey) !== key) return
+      this.#stopWatching()
+      this.#clear(saved)
+    })
+  }
+
+  #clear(saved: readonly string[] | null): void {
     if (!this.#inFlight && this.#state.pending === saved) this.#set({ ...this.#state, pending: null })
+  }
+
+  #stopWatching(): void {
+    this.#unwatch?.()
+    this.#unwatch = null
   }
 
   #set(state: ProjectOrderState): void {
@@ -117,8 +148,13 @@ export class ProjectOrderQueue {
   }
 }
 
+/** How the daemon's own 409 for this save begins (routes/projects.ts STALE_ORDER): a project was added or removed. */
+const STALE_ORDER = "The project list changed since it was loaded."
+
 function refusal(error: unknown): string {
-  if (error instanceof ApiError && error.status === 409) {
+  // Only the daemon's membership refusal gets this copy; any other 409 (a
+  // Desktop proxy's, which names itself in `code`) says what it means.
+  if (error instanceof ApiError && error.status === 409 && error.code === null && error.message.startsWith(STALE_ORDER)) {
     return "the project list changed while it was being saved (a project was added or removed), so the new order was not kept. Move it again."
   }
   return error instanceof Error ? error.message : String(error)

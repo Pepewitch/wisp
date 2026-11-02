@@ -135,6 +135,24 @@ describe("useProjectOrder", () => {
     expect(result.current.order!.error).toBeNull()
   })
 
+  it("a read that fails after the save keeps the shown order until a later read succeeds", async () => {
+    const daemon = fakeDaemon("a")
+    const { result, client, shown, cached, move, answerReads } = mount([daemon])
+
+    await move("/src/gamma", { to: 0 })
+    await settle(() => daemon.puts[0]!.resolve())
+    await settle(() => daemon.gets.splice(0).forEach((get) => get.reject(new Error("offline"))))
+    // the cache still holds the list from before the save; the daemon has the new order
+    expect(cached()).toEqual(["/src/alpha", "/src/beta", "/src/gamma"])
+    expect(result.current.order!.pending).not.toBeNull()
+    expect(shown()).toEqual(["/src/gamma", "/src/alpha", "/src/beta"])
+
+    await refetch(client)
+    await answerReads()
+    expect(result.current.order!.pending).toBeNull()
+    expect(shown()).toEqual(["/src/gamma", "/src/alpha", "/src/beta"])
+  })
+
   it("two moves in one frame build on each other", async () => {
     const { result, shown } = mount([fakeDaemon("a")])
 
@@ -234,6 +252,16 @@ describe("useProjectOrder", () => {
 
     await settle(() => result.current.order!.onDismissError())
     expect(result.current.order!.error).toBeNull()
+  })
+
+  it("a 409 that is not the daemon's membership refusal says what it means", async () => {
+    const daemon = fakeDaemon("a")
+    const { result, move } = mount([daemon])
+
+    await move("/src/gamma", { to: 0 })
+    await settle(() => daemon.puts[0]!.reject(new ApiError("The daemon behind this connection changed.", 409, "identity-changed")))
+
+    expect(result.current.order!.error).toBe("Could not save the project order: The daemon behind this connection changed.")
   })
 
   it("any other refusal says what the daemon said", async () => {
