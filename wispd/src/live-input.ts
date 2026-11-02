@@ -15,7 +15,7 @@ import {
   type StoredAttachment,
 } from "./attachments";
 import { emit } from "./events";
-import { getTask, runningTurn, turnForTask } from "./store";
+import { getTask, runningTurn, setTurnUsage, turnForTask } from "./store";
 import { clearHarnessBackground, setHarnessBackground } from "./task-processes";
 import { deliveredMessage, nativeImageAttachments } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
@@ -711,6 +711,8 @@ function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
     onTerminal: () => void closeLiveInput(options.task.id, options.turnId),
     // The driver reads its resume's starting point from the previous turn's usage.
     previousUsage: options.task.session_id ? turnForTask(options.task.id, options.turn - 1)?.usage_json : null,
+    // ...so the turn stores its own as it grows: one that never completes still leaves a starting point
+    onUsage: (usage) => setTurnUsage(options.turnId, JSON.stringify(usage)),
   });
   liveInputs.set(options.task.id, {
     turnId: options.turnId,
