@@ -47,10 +47,15 @@ describe("one task", () => {
   test("--settled holds only on work the harness named: a process left behind, like a dev server, has no agent to wake", () => {
     const leftBehind: BackgroundWork = { ...running, details: [{ ...running.details[0]!, tasks: undefined }] };
     expect(settledCode(task("ta", "done", leftBehind), true)).toBe(0);
-    expect(settledCode(task("ta", "done", { ...running, details: [{ ...running.details[0]!, tasks: [] }] }), true)).toBe(0);
     expect(backgroundNote(task("ta", "done", leftBehind), false)).toBeNull();
     // the line still reports the process; only the wait ignores it
     expect(waitLine(task("ta", "done", leftBehind))).toContain("background process");
+  });
+
+  test("--settled keeps holding a kept harness whose list just emptied: its follow-up turn has not opened yet", () => {
+    const emptied: BackgroundWork = { ...running, details: [{ ...running.details[0]!, tasks: [] }] };
+    expect(settledCode(task("ta", "done", emptied), true)).toBeUndefined();
+    expect(backgroundNote(task("ta", "done", emptied), false)).toContain("--settled");
   });
 
   test("--settled keeps holding named work through an unknown snapshot", () => {

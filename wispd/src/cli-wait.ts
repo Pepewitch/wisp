@@ -31,23 +31,27 @@ export type WaitMode = "one" | "any" | "all";
 type WaitTask = Pick<ApiTask, "id" | "state" | "state_detail" | "background">;
 
 /**
- * Background work the task's own agent will wake for: what a lingering Claude
- * or Droid process names (a Monitor, a `fireAndForget` command, a background
- * subagent). Wisp keeps that harness alive on purpose and reports it at once,
- * so there is no settle window to slip through, and it holds even while the
- * group reads `unknown` (one failed process snapshot marks every group so).
- * A process a finished harness merely left behind, such as a dev server, has
- * no agent to wake and never holds the wait.
+ * Background work the task's own agent will wake for: a lingering Claude or
+ * Droid process Wisp keeps alive on purpose (a Monitor, a `fireAndForget`
+ * command, a background subagent). Such a group carries `tasks`, even once
+ * the list empties: Claude clears it before its follow-up turn opens, and that
+ * gap must not end the wait. The group is reported at once (no settle window
+ * to slip through) and holds even while it reads `unknown` (one failed process
+ * snapshot marks every group so). A process a finished harness merely left
+ * behind, such as a dev server, has no `tasks`, no agent to wake, and never
+ * holds the wait. A kept harness with nothing left closes itself within
+ * seconds.
  */
 function agentWillWake(task: WaitTask): boolean {
   const background = task.background;
-  return background !== undefined && background.state !== "none" && background.details.some(group => (group.tasks?.length ?? 0) > 0);
+  return background !== undefined && background.state !== "none" && background.details.some(group => group.tasks !== undefined);
 }
 
 /**
  * The exit code if this task ends the wait now, else undefined. A `done` task
- * with its own background work still running is done for now: the agent wakes
- * and answers again when that work finishes, which `--settled` waits for.
+ * whose harness is kept alive for its background work is done for now: the
+ * agent wakes and answers again when that work finishes, which `--settled`
+ * waits for.
  */
 export function settledCode(task: WaitTask, settled: boolean): number | undefined {
   const code = WAIT_EXIT[task.state];
