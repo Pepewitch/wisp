@@ -1,11 +1,11 @@
 import { readFileSync, writeSync } from "node:fs";
 import type { AdapterDef, ImageInputStrategy } from "./adapters";
-import { CodexLiveDriver, type CodexLiveInput } from "./adapters/live/codex";
 import { liveCommand } from "./adapters/live/command";
 import type { QuestionAnswer } from "./adapters/live/droid";
 import type { QuestionPrompt } from "./adapters/types";
 import { JsonLineBuffer } from "./adapters/live/json-lines";
 import { createBackgroundFollowUp, isSystem, noticeText, startsModelCall, type TurnKind } from "./adapters/live/claude-background";
+import { configureCodex } from "./live-codex";
 import { configureDroid } from "./live-droid";
 import { pipeReader } from "./pipe-drain";
 import {
@@ -15,7 +15,7 @@ import {
   type StoredAttachment,
 } from "./attachments";
 import { emit } from "./events";
-import { getTask, runningTurn, setTurnUsage, turnForTask } from "./store";
+import { getTask, runningTurn } from "./store";
 import { clearHarnessBackground, setHarnessBackground } from "./task-processes";
 import { deliveredMessage, nativeImageAttachments } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
@@ -305,7 +305,7 @@ export interface LingeringLiveProcess {
 /** Live processes that can linger, by task, from spawn until the runner sees them exit. */
 const lingeringProcesses = new Map<string, LingeringLiveProcess>();
 
-/** The task's live Claude or Droid process, if one is running. */
+/** The task's live Claude, Droid or Codex process, if one is running. */
 export function liveProcess(taskId: string): LingeringLiveProcess | undefined {
   return lingeringProcesses.get(taskId);
 }
@@ -679,55 +679,6 @@ export function messageAttachments(taskId: string, message: TaskMessage): Stored
 export function noteDelivery(recorder: LiveOutputSink, message: TaskMessage, files: StoredAttachment[]): void {
   recorder.recordNote(formatSteerNote(message.id, message.text));
   if (files.length > 0) recorder.recordNote(formatAttachNote(files));
-}
-
-function codexInput(def: AdapterDef, text: string, attachments: StoredAttachment[]): CodexLiveInput[] {
-  return [
-    ...nativeImageAttachments(def, attachments).map((attachment) => ({
-      type: "localImage" as const,
-      path: attachment.path,
-    })),
-    { type: "text", text, text_elements: [] },
-  ];
-}
-
-function configureCodex(options: ConfigureLiveTurnOptions): Promise<void> {
-  const sink = options.child.stdin;
-  if (!sink || typeof sink === "number") throw new Error("Codex live process did not expose stdin");
-  const emit = (event: Record<string, unknown>): void => {
-    options.recorder.recordEvent(event);
-  };
-  const driver = new CodexLiveDriver({
-    sink,
-    def: options.def,
-    cwd: options.task.worktree_path!,
-    sessionId: options.task.session_id,
-    model: options.task.model,
-    effort: options.task.effort,
-    fast: options.task.fast !== 0,
-    initialMessageId: options.initialMessageId,
-    initialInput: codexInput(options.def, options.prompt, options.attachments),
-    emit,
-    onTerminal: () => void closeLiveInput(options.task.id, options.turnId),
-    // The driver reads its resume's starting point from the previous turn's usage.
-    previousUsage: options.task.session_id ? turnForTask(options.task.id, options.turn - 1)?.usage_json : null,
-    // ...so the turn stores its own as it grows: one that never completes still leaves a starting point
-    onUsage: (usage) => setTurnUsage(options.turnId, JSON.stringify(usage)),
-  });
-  liveInputs.set(options.task.id, {
-    turnId: options.turnId,
-    turn: options.turn,
-    async send(message) {
-      const files = messageAttachments(options.task.id, message);
-      await driver.send(message.id, codexInput(options.def, steerText(options.def, message, files), files));
-      noteDelivery(options.recorder, message, files);
-    },
-    close: () => driver.close(),
-  });
-  return Promise.all([
-    staged("live input setup", driver.ready),
-    staged("live output pump", pumpJsonLines(options.child, options.recorder, driver, "Codex closed the app-server channel")),
-  ]).then(() => {});
 }
 
 interface JsonLineDriver {

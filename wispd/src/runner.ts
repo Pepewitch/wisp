@@ -380,7 +380,7 @@ function attachCapture(
 ): { outputPump: Promise<void>; stderrPump: Promise<void> } {
   const { child, def, cfg, slot } = proc;
   const isLive = Boolean(def.liveInput);
-  const canLinger = def.liveInput === "claude-stream-json" || def.liveInput === "droid-jsonrpc";
+  const canLinger = def.liveInput === "claude-stream-json" || def.liveInput === "droid-jsonrpc" || def.liveInput === "codex-app-server";
   const lingers = canLinger && input.recorderEligible;
   const stderrTo = lingers ? () => proc.live?.output() ?? proc.slot.sink : undefined;
   const capture = startCapture(input.recorderEligible, slot.turnId, def, cfg, child, slot.fds[0]!, slot.fds[1]!, input.attachments, stderrTo);
@@ -410,7 +410,7 @@ function attachCapture(
       claudeStrategy: input.claudeStrategy,
       linger: lingers ? lingerHooks(proc) : undefined,
     });
-    // Every Claude or Droid process has its protocol side, which the exit
+    // Every Claude, Droid or Codex process has its protocol side, which the exit
     // watcher forgets; only one with the hooks can outlive a turn and take the next.
     if (canLinger) proc.live = liveProcess(task.id);
     if (lingers) turnProcesses.set(task.id, proc);

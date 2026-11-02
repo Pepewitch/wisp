@@ -12,6 +12,7 @@ import {
 } from "../attachments";
 import type { WispConfig } from "../config";
 import { emit } from "../events";
+import { liveProcess } from "../live-input";
 import { answerQuestionResponse } from "./task-answer";
 import type { PullRequestCache } from "../pull-requests";
 import { hasRunningTurn, interruptTurn, submitTaskMessage } from "../runner";
@@ -536,6 +537,8 @@ export function taskRoute(
     return (async () => {
       const unavailable = idleTaskError(task, " — compaction waits for it");
       if (unavailable) return unavailable;
+      // a harness kept alive past its answer (background work, a Codex goal) still owns the session
+      if (liveProcess(task.id)) return err("the harness is still running for the last turn's background work or goal — compaction waits for it", 409);
       const def = adapters[task.harness];
       if (!def) return err(`unknown harness: ${task.harness}`, 500);
       if (!compacts) return err("compaction is not available on this daemon", 500);

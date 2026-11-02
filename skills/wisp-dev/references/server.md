@@ -87,8 +87,14 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   message for another agent stops it first, and so does a closing input: the
   next turn then waits for the exit and resumes. Only the daemon that spawned
   it owns its stdin, so boot recovery stops any it finds rather than resume
-  the session beside it. See `ClaudeLiveProcess` and `DroidLiveProcess` in
-  `live-input.ts`, `adapters/live/droid-background.ts`, and `turn-process.ts`.
+  the session beside it. A Codex turn on a thread with an active Goal lingers
+  the same way: the app-server starts the goal's next turn by itself right
+  after the answer (`thread/goal/updated`, then a `turn/started` Wisp did not
+  ask for), which becomes the follow-up turn; once the goal is no longer
+  active, or no continuation comes within the wait, stdin closes. See
+  `ClaudeLiveProcess` in `live-input.ts`, `DroidLiveProcess` in
+  `live-droid.ts`, `CodexLiveProcess` in `live-codex.ts`,
+  `adapters/live/droid-background.ts`, and `turn-process.ts`.
 - Stopping a turn signals that group, not just the leader: a harness is a
   supervisor, and killing only it left builds, servers, and sub-agents running
   (ENG-03). A descendant that calls `setsid` itself leaves the group by design
