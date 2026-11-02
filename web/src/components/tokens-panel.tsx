@@ -49,7 +49,7 @@ export function TokensReport({
         </p>
       ) : reportCount === 0 ? (
         <p className="text-[11.5px] text-muted-foreground">
-          No turn has reported token usage yet. Usage arrives after a turn settles.
+          No turn has reported token usage yet. Usage appears as turns report it.
         </p>
       ) : (
         <div className="space-y-3">

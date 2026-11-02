@@ -25,6 +25,13 @@ interface CodexLiveOptions {
   onTerminal: () => void;
   /** The usage JSON Wisp stored for the previous turn, when resuming. */
   previousUsage?: string | null;
+  /**
+   * The turn's usage report so far, after each update that changed it. Wisp
+   * stores it on the turn, so a turn that never reaches `turn/completed` (a
+   * killed process, a daemon restart) still leaves the thread's total for the
+   * next resume to start from.
+   */
+  onUsage?: (usage: Record<string, unknown>) => void;
 }
 
 function record(value: unknown): Record<string, any> {
@@ -247,6 +254,8 @@ export class CodexLiveDriver {
   private readonly previousLastCall: Record<string, number> | null;
   /** Usage updates that arrived before the turn's id was known; `adoptTurn` sorts them. */
   private heldUsage: Record<string, any>[] = [];
+  /** The last report handed to `onUsage`, serialized, so an unchanged re-send writes nothing. */
+  private reportedUsage: string | null = null;
   /** Set once turn/start is sent: from then on, the thread's next turn is ours. */
   private turnRequested = false;
   private readonly children = new Set<string>();
@@ -405,6 +414,18 @@ export class CodexLiveDriver {
     }
     this.threadTotal = total;
     this.lastUsage = snakeUsage(tokenUsage.last);
+    // After the terminal the turn's completion report is the record; and a
+    // failed write must never throw into the frame pump or boot.
+    const report = this.terminal ? null : this.usageReport();
+    const serialized = report ? JSON.stringify(report) : null;
+    if (report && serialized !== this.reportedUsage) {
+      try {
+        this.options.onUsage?.(report);
+        this.reportedUsage = serialized;
+      } catch {
+        // the next changed (or re-sent) update writes it again
+      }
+    }
   }
 
   /** The turn's summed usage, stored with the thread's total so the next resume can start from it. */

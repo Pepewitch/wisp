@@ -40,6 +40,7 @@ const frame = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
 const usage = (input, output) => ({ totalTokens: input + output, inputTokens: input, cachedInputTokens: 0,
   cacheWriteInputTokens: 0, outputTokens: output, reasoningOutputTokens: 0 });
 const earlier = usage(1000, 10);
+const DIES = process.env.FAKE_CODEX_DIES === "1";
 let resumed = false;
 for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
   const request = JSON.parse(line);
@@ -54,11 +55,17 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     const notify = (method, params) => chunk.push({ jsonrpc: "2.0", method, params });
     const update = (total, last) =>
       notify("thread/tokenUsage/updated", { threadId: "stored-total-thread", turnId, tokenUsage: { total, last } });
-    if (resumed) {
+    if (resumed && DIES) {
+      update(usage(3000, 30), usage(2000, 20));
+    } else if (resumed) {
       update(earlier, earlier);
       update(usage(3000, 30), usage(2000, 20));
     } else {
       update(earlier, earlier);
+      if (DIES) {
+        process.stdout.write(chunk.map((value) => JSON.stringify(value) + "\\n").join(""));
+        process.exit(1);
+      }
     }
     notify("item/completed", {
       threadId: "stored-total-thread",
@@ -71,28 +78,35 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
 }
 `;
 
+function fakeCodexTask(dies: boolean): { def: AdapterDef; taskId: string } {
+  const dir = mkdtempSync(join(tmpdir(), "wisp-codex-total-"));
+  const harnessPath = join(dir, "fake-codex");
+  writeFileSync(harnessPath, dies ? `#!/bin/sh\nFAKE_CODEX_DIES=1 exec bun ${join(dir, "fake.js")} "$@"\n` : FAKE_CODEX);
+  if (dies) writeFileSync(join(dir, "fake.js"), FAKE_CODEX.replace(/^#!.*\n/, ""));
+  chmodSync(harnessPath, 0o755);
+  const def: AdapterDef = {
+    bin: harnessPath,
+    exec: ["exec", "--dangerously-bypass-approvals-and-sandbox"],
+    liveInput: "codex-app-server",
+    parse: { format: "json", strategy: "codex-jsonl" },
+    attach: null,
+  };
+  const task = createTask({
+    id: newTaskId(),
+    title: "codex thread total",
+    repo_path: "/tmp/repo",
+    harness: "fake",
+    model: null,
+    slot: freeSlot(),
+  });
+  setTaskFields(task.id, { worktree_path: mkdtempSync(join(tmpdir(), "wisp-codex-total-wt-")) });
+  return { def, taskId: task.id };
+}
+
 describe("codex thread total across turns", () => {
   test("a resume with no replay starts from the total the previous turn stored", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "wisp-codex-total-"));
-    const harnessPath = join(dir, "fake-codex");
-    writeFileSync(harnessPath, FAKE_CODEX);
-    chmodSync(harnessPath, 0o755);
-    const def: AdapterDef = {
-      bin: harnessPath,
-      exec: ["exec", "--dangerously-bypass-approvals-and-sandbox"],
-      liveInput: "codex-app-server",
-      parse: { format: "json", strategy: "codex-jsonl" },
-      attach: null,
-    };
-    const task = createTask({
-      id: newTaskId(),
-      title: "codex thread total",
-      repo_path: "/tmp/repo",
-      harness: "fake",
-      model: null,
-      slot: freeSlot(),
-    });
-    setTaskFields(task.id, { worktree_path: mkdtempSync(join(tmpdir(), "wisp-codex-total-wt-")) });
+    const { def, taskId } = fakeCodexTask(false);
+    const task = { id: taskId };
 
     startTurn(getTask(task.id)!, "first", def, cfg);
     await until(() => turnsFor(task.id)[0]?.status === "done");
@@ -108,6 +122,27 @@ describe("codex thread total across turns", () => {
     // Without the stored total, the re-sent earlier call (total == last)
     // would look like the thread's first call and be counted again.
     expect(JSON.parse(turnsFor(task.id)[1]!.usage_json!)).toMatchObject({
+      input_tokens: 2000,
+      output_tokens: 20,
+      thread_total: { input_tokens: 3000, output_tokens: 30 },
+    });
+  });
+
+  test("a turn that dies before turn/completed still leaves its thread total for the next resume (#428)", async () => {
+    const { def, taskId } = fakeCodexTask(true);
+    startTurn(getTask(taskId)!, "first", def, cfg);
+    await until(() => turnsFor(taskId)[0]?.status === "failed");
+    // stored as the update arrived: nothing at the end of the turn wrote it
+    expect(JSON.parse(turnsFor(taskId)[0]!.usage_json!)).toMatchObject({
+      thread_id: "stored-total-thread",
+      thread_total: { input_tokens: 1000, output_tokens: 10 },
+    });
+
+    startTurn(getTask(taskId)!, "second", def, cfg);
+    await until(() => turnsFor(taskId)[1]?.status === "done");
+    // The resume's first update is a real call (total > last). With no
+    // starting point it would read as a re-send and be dropped.
+    expect(JSON.parse(turnsFor(taskId)[1]!.usage_json!)).toMatchObject({
       input_tokens: 2000,
       output_tokens: 20,
       thread_total: { input_tokens: 3000, output_tokens: 30 },
