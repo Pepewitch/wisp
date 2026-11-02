@@ -191,8 +191,9 @@ export class ModelProbeCache {
         const hadRetry = this.retryAt !== null;
         this.retryAt = discoveryFailed ? attemptAt + Math.min(MODEL_PROBE_RETRY_MS, this.refreshIntervalMs) : null;
         if (this.retryAt !== null) this.lastRefreshAttemptAt = this.retryAt - this.refreshIntervalMs;
-        if (cacheUpdated || discoveryFailed || hadRetry) await this.persist();
+        // announced first: clients read the snapshot in memory, and a file write must not hold the news back
         if (changed) emit({ type: "harnesses" });
+        if (cacheUpdated || discoveryFailed || hadRetry) await this.persist();
       })
       .finally(() => {
         this.refreshInFlight = null;
