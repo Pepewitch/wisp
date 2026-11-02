@@ -234,6 +234,31 @@ test("a cursor image renamed over, or relinked, after its read is refused", () =
   expect(notes.filter((note) => note.includes("changed after the step read it"))).toHaveLength(2);
 });
 
+test("a cursor image whose folder was swapped, or whose parent link was retargeted, after its read is refused", () => {
+  const f = fixture();
+  const make = (dir: string) => {
+    mkdirSync(join(f.worktree, dir), { recursive: true });
+    writeFileSync(join(f.worktree, dir, "frame.png"), samplePng());
+  };
+  for (const dir of ["active", "spare", "a", "b"]) make(dir);
+  symlinkSync(join(f.worktree, "a"), join(f.worktree, "current"));
+  const past = new Date(Date.now() - 3_600_000);
+  for (const dir of ["spare", "b"]) utimesSync(join(f.worktree, dir, "frame.png"), past, past);
+  const readAt = Date.now() + 1;
+  Bun.sleepSync(20);
+  // the folder replaced by another holding an older frame, and the parent link pointed elsewhere
+  renameSync(join(f.worktree, "active"), join(f.worktree, "old-active"));
+  renameSync(join(f.worktree, "spare"), join(f.worktree, "active"));
+  rmSync(join(f.worktree, "current"));
+  symlinkSync(join(f.worktree, "b"), join(f.worktree, "current"));
+  const { run, notes } = capture("cursor", f.turnId);
+  for (const [call, path] of [["call-dir", join(f.worktree, "active", "frame.png")], ["call-parent-link", join(f.worktree, "current", "frame.png")]] as const) {
+    run({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path }, result: { success: { path } } }, completedAtMs: String(readAt) } });
+  }
+  expect(outputs(f.turnId)).toEqual([]);
+  expect(notes.filter((note) => note.includes("changed after the step read it"))).toHaveLength(2);
+});
+
 test("an opencode turn's images are read from its log when it ends; a cursor turn that ended unseen gets none", async () => {
   const f = fixture();
   const attachment = { type: "tool_use", part: { type: "tool", tool: "read", callID: "call_02", state: { status: "completed", input: { filePath: "/work/repo/b.png" }, attachments: [{ type: "file", mime: "image/png", url: `data:image/png;base64,${base64()}` }] } } };

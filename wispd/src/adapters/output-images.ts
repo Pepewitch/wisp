@@ -1,7 +1,6 @@
-import { lstatSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { outputImageNote, type OutputImage, type OutputStep } from "../../../shared/api/outputs";
-import { readViewedImage } from "../output-files";
+import { readViewedImage, viewedPathChangedAfter } from "../output-files";
 import { decodeOutputImage, OutputError, outputStep, publishOutputImage } from "../outputs";
 import { record, string } from "./activity-value";
 import type { AdapterDef } from "./types";
@@ -59,7 +58,7 @@ export function createOutputImageCapture(def: AdapterDef, turnId: number, note: 
   const viewed = (path: string, callId: string | null, label: string, readAt?: number): void => {
     saved(() => {
       // copied after the fact (a followed log): a file written, renamed over or relinked since the read is not what the step saw
-      if (readAt !== undefined && Number.isFinite(readAt) && changedSince(path, readAt)) {
+      if (readAt !== undefined && Number.isFinite(readAt) && viewedPathChangedAfter(turnId, path, readAt)) {
         throw new OutputError("the image file changed after the step read it");
       }
       return publishOutputImage(turnId, readViewedImage(turnId, path), basename(path), "native", stepOf(callId, label));
@@ -140,12 +139,6 @@ function codex(event: RecordValue, inline: Inline, viewed: Viewed): RecordValue 
     return { ...event, item: { ...item, result: replaced.text } };
   }
   return event;
-}
-
-/** The file, or the link that names it, changed (content, inode metadata, rename) after `at`. */
-function changedSince(path: string, at: number): boolean {
-  const target = statSync(path);
-  return Math.max(target.mtimeMs, target.ctimeMs, lstatSync(path).ctimeMs) > at;
 }
 
 const IMAGE_PATH = /\.(png|jpe?g|gif|webp)$/i;
