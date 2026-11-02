@@ -176,12 +176,13 @@ export class ModelProbeCache {
         this.entries.set(name, answer);
         if (!sameAnswer(previous, answer)) changed = true;
         if (def.modelDiscovery && next.models) cacheUpdated = true;
-        if (def.modelDiscovery && !next.models) discoveryFailed = true;
+        // a missing binary stays missing until someone installs it: the daily pass finds it
+        if (def.modelDiscovery && !next.models && next.modelsError !== "bin not found") discoveryFailed = true;
       }),
     )
       .then(async () => {
         // the next refreshIfStale (a picker read, a restart) tries again soon, not in a day
-        if (discoveryFailed) this.lastRefreshAttemptAt = attemptAt - this.refreshIntervalMs + MODEL_PROBE_RETRY_MS;
+        if (discoveryFailed) this.lastRefreshAttemptAt = attemptAt - this.refreshIntervalMs + Math.min(MODEL_PROBE_RETRY_MS, this.refreshIntervalMs);
         if (cacheUpdated) await this.persist();
         if (changed) emit({ type: "harnesses" });
       })

@@ -309,6 +309,23 @@ describe("daemon model probe cache", () => {
     expect(cache.snapshot("cursor")).toEqual({ models: expect.objectContaining({ list: ["auto", "composer-2.5"] }) });
   });
 
+  test("a missing binary does not put the cache on the quick retry", async () => {
+    let probes = 0;
+    const now = new Date("2026-11-01T08:00:00.000Z");
+    const cache = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      now: () => now,
+      spawn: () => {
+        probes++;
+        throw new Error("Executable not found in $PATH: \"cursor-agent\"");
+      },
+    });
+    await cache.refresh();
+    expect(cache.snapshot("cursor").modelsError).toBe("bin not found");
+    now.setTime(now.getTime() + MODEL_PROBE_RETRY_MS + 1_000);
+    await cache.refreshIfStale();
+    expect(probes).toBe(1);
+  });
+
   test("an empty list an older build persisted is probed again at boot", async () => {
     const path = cachePath();
     const fresh = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
