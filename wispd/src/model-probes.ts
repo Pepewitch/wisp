@@ -185,6 +185,8 @@ export class ModelProbeCache {
       }),
     )
       .then(async () => {
+        // an abandoned refresh learned nothing: the retry it was meant to answer stays due
+        if (this.stopping.signal.aborted) return;
         // the next refreshIfStale (a picker read, a restart) tries again soon, not in a day
         const hadRetry = this.retryAt !== null;
         this.retryAt = discoveryFailed ? attemptAt + Math.min(MODEL_PROBE_RETRY_MS, this.refreshIntervalMs) : null;

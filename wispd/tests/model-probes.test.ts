@@ -341,6 +341,34 @@ describe("daemon model probe cache", () => {
     expect(JSON.parse(readFileSync(path, "utf8")).retryAt).toBeUndefined();
   });
 
+  test("a retry abandoned by a stopping daemon stays due after the restart", async () => {
+    const path = cachePath();
+    const now = new Date("2026-11-01T08:00:00.000Z");
+    let mode: "list" | "empty" | "hang" = "list";
+    const first = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      now: () => now,
+      timeoutMs: 60_000,
+      spawn: () => mode === "hang"
+        ? new Promise(() => undefined)
+        : { exitCode: 0, stdout: mode === "list" ? "auto - Auto (default)\n" : "", stderr: "" },
+    });
+    await first.refresh();
+    now.setTime(now.getTime() + 60_000);
+    mode = "empty";
+    await first.refresh();
+    const due = JSON.parse(readFileSync(path, "utf8")).retryAt;
+    expect(due).toBeString();
+
+    now.setTime(now.getTime() + MODEL_PROBE_RETRY_MS + 1_000);
+    mode = "hang";
+    const retrying = first.refreshIfStale();
+    await Bun.sleep(10);
+    first.stop();
+    await retrying;
+    expect(JSON.parse(readFileSync(path, "utf8")).retryAt).toBe(due);
+  });
+
   test("a missing binary does not put the cache on the quick retry", async () => {
     let probes = 0;
     const now = new Date("2026-11-01T08:00:00.000Z");
