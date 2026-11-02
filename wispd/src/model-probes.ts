@@ -62,6 +62,8 @@ interface PersistedModelCache {
     adapterSignature: string;
     models: CachedModels;
   }>;
+  /** When a refresh in which a discovering harness answered nothing is due again (MODEL_PROBE_RETRY_MS), so a restart keeps the date. */
+  retryAt?: string;
 }
 
 function adapterSignature(def: AdapterDef): string {
@@ -115,6 +117,8 @@ export class ModelProbeCache {
   private readonly cachePath: string | undefined;
   private readonly refreshIntervalMs: number;
   private lastRefreshAttemptAt = 0;
+  /** A failed discovery's earlier due time; null once a refresh had no such failure. */
+  private retryAt: number | null = null;
   private readonly stopping = new AbortController();
 
   constructor(
@@ -182,8 +186,10 @@ export class ModelProbeCache {
     )
       .then(async () => {
         // the next refreshIfStale (a picker read, a restart) tries again soon, not in a day
-        if (discoveryFailed) this.lastRefreshAttemptAt = attemptAt - this.refreshIntervalMs + Math.min(MODEL_PROBE_RETRY_MS, this.refreshIntervalMs);
-        if (cacheUpdated) await this.persist();
+        const hadRetry = this.retryAt !== null;
+        this.retryAt = discoveryFailed ? attemptAt + Math.min(MODEL_PROBE_RETRY_MS, this.refreshIntervalMs) : null;
+        if (this.retryAt !== null) this.lastRefreshAttemptAt = this.retryAt - this.refreshIntervalMs;
+        if (cacheUpdated || discoveryFailed || hadRetry) await this.persist();
         if (changed) emit({ type: "harnesses" });
       })
       .finally(() => {
@@ -219,6 +225,11 @@ export class ModelProbeCache {
         probedTimes.push(Date.parse(cached.models.probedAt));
       }
       this.lastRefreshAttemptAt = complete && probedTimes.length > 0 ? Math.min(...probedTimes) : 0;
+      const retryAt = typeof store.retryAt === "string" ? Date.parse(store.retryAt) : Number.NaN;
+      if (Number.isFinite(retryAt)) {
+        this.retryAt = retryAt;
+        this.lastRefreshAttemptAt = Math.min(this.lastRefreshAttemptAt, retryAt - this.refreshIntervalMs);
+      }
     } catch {
       // This file is only a cache. A partial or hand-edited file starts cold.
     }
@@ -234,7 +245,8 @@ export class ModelProbeCache {
       if (!def.modelDiscovery || !models) continue;
       entries[name] = { adapterSignature: adapterSignature(def), models };
     }
-    const text = JSON.stringify({ version: 1, entries }, null, 2) + "\n";
+    const store: PersistedModelCache = { version: 1, entries, ...(this.retryAt !== null ? { retryAt: new Date(this.retryAt).toISOString() } : {}) };
+    const text = JSON.stringify(store, null, 2) + "\n";
     if (Buffer.byteLength(text) > MODEL_PROBE_CACHE_MAX_BYTES) return;
     const temporary = `${this.cachePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
     try {

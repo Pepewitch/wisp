@@ -309,6 +309,38 @@ describe("daemon model probe cache", () => {
     expect(cache.snapshot("cursor")).toEqual({ models: expect.objectContaining({ list: ["auto", "composer-2.5"] }) });
   });
 
+  test("a restart keeps the quick retry a failed discovery scheduled", async () => {
+    const path = cachePath();
+    const now = new Date("2026-11-01T08:00:00.000Z");
+    let stdout = "auto - Auto (default)\n";
+    const first = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      now: () => now,
+      spawn: () => ({ exitCode: 0, stdout, stderr: "" }),
+    });
+    await first.refresh();
+    now.setTime(now.getTime() + 60_000);
+    stdout = "";
+    await first.refresh();
+    expect(JSON.parse(readFileSync(path, "utf8")).retryAt).toBe(new Date(now.getTime() + MODEL_PROBE_RETRY_MS).toISOString());
+
+    // the daemon restarts after the retry is due: it probes, though its last good list is from today
+    now.setTime(now.getTime() + MODEL_PROBE_RETRY_MS + 1_000);
+    let probes = 0;
+    const restarted = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      now: () => now,
+      spawn: () => {
+        probes++;
+        return { exitCode: 0, stdout: "auto - Auto (default)\n", stderr: "" };
+      },
+    });
+    await restarted.refreshIfStale();
+    expect(probes).toBe(1);
+    // a clean refresh clears the scheduled retry from disk
+    expect(JSON.parse(readFileSync(path, "utf8")).retryAt).toBeUndefined();
+  });
+
   test("a missing binary does not put the cache on the quick retry", async () => {
     let probes = 0;
     const now = new Date("2026-11-01T08:00:00.000Z");

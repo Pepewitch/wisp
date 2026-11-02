@@ -125,6 +125,14 @@ export function unusableReason(h: HarnessInfo): string {
   return "no models reported"
 }
 
+/**
+ * Why a usable harness's list may be out of date: its latest probe failed,
+ * and the daemon kept the list it had. The list still works; null otherwise.
+ */
+export function staleReason(h: HarnessInfo): string | null {
+  return isUsable(h) && h.modelsError ? `last list kept: ${h.modelsError}` : null
+}
+
 /** The opening selection: an available preference, then the first harness this machine can actually run. */
 export function initialChoice(
   harnesses: HarnessInfo[],

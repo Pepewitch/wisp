@@ -8,6 +8,7 @@ import {
   modelOptionsFor,
   orderHarnesses,
   savePreferredModel,
+  staleReason,
   unusableReason,
 } from "./model-choice"
 import {
@@ -115,6 +116,14 @@ describe("isUsable / unusableReason", () => {
     expect(unusableReason(h("droid", { modelsError: "bin not found" }))).toBe(
       "bin not found"
     )
+  })
+
+  it("names a failed probe on a harness that still offers the list it kept, and only then", () => {
+    const kept = h("cursor", { models: probed(["auto"]), modelsError: "'cursor-agent models' printed no records" })
+    expect(isUsable(kept)).toBe(true)
+    expect(staleReason(kept)).toBe("last list kept: 'cursor-agent models' printed no records")
+    expect(staleReason(h("cursor", { models: probed(["auto"]) }))).toBeNull()
+    expect(staleReason(h("cursor", { modelsError: "bin not found" }))).toBeNull()
   })
 
   it("distinguishes never-probed from probed-and-empty", () => {
