@@ -15,6 +15,7 @@ describe("wisp send agent flags", () => {
     const harness = parseArgs(["t1", "go", "--harness", "claude", "--model", "claude-opus-5-5", "--fresh-context"]).flags;
     expect(sendAgentFields(harness)).toEqual({ harness: "claude", model: "claude-opus-5-5", startFreshContext: true });
     expect(sendAgentFields(parseArgs(["t1", "go"]).flags)).toEqual({});
+    expect(sendAgentFields(parseArgs(["t1", "go", "--report"]).flags)).toEqual({ report: true });
   });
 
   test("a malformed flag is refused before anything is sent", () => {

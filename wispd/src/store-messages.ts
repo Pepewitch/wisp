@@ -36,6 +36,8 @@ interface CreateTaskMessageInput {
   deferred?: boolean;
   /** who sent it, as the task audit names actors; fixed at creation, and kept by a retry */
   actor?: string | null;
+  /** a parent's message whose turn reports back to it anyway (subtask-reports.ts) */
+  reportBack?: boolean;
 }
 
 export type TaskAgentSelection = TaskAgentTarget & { freshContext: boolean };
@@ -60,8 +62,8 @@ function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessa
   db.run(
     `INSERT INTO task_messages
       (id, task_id, context_n, harness, model, effort, fast, text, status, delivery, turn_n,
-       attachment_hash, attachments_json, origin, source_json, source_seq, deferred, actor, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       attachment_hash, attachments_json, origin, source_json, source_seq, deferred, actor, report_back, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'queued', NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       input.id,
       input.taskId,
@@ -78,6 +80,7 @@ function insertTaskMessage(input: CreateTaskMessageInput, task: Task): TaskMessa
       seq,
       input.deferred ? 1 : 0,
       input.actor ?? null,
+      input.reportBack ? 1 : null,
       timestamp,
       timestamp,
     ],

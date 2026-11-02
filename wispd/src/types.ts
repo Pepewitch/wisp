@@ -322,6 +322,8 @@ export interface TaskMessage {
   source_seq?: number | null;
   /** Who sent it, as the task audit names actors (migration 26); NULL for a row older than the column. Internal. */
   actor?: string | null;
+  /** 1 for a parent's follow-up sent with `--report` (migration 31): its turn reports back. Internal. */
+  report_back?: number | null;
   created_at: string;
   updated_at: string;
 }

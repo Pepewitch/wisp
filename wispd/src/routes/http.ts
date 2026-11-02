@@ -46,6 +46,7 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
     source_json: _source,
     source_seq: _sourceSeq,
     actor: _actor,
+    report_back: _reportBack,
     ...rest
   } = message;
   return {

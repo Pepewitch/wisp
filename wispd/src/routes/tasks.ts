@@ -49,6 +49,7 @@ import { conversationDetail, conversationResponse, taskUsageResponse } from "./t
 import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
 import { recordAudit, recordSendAudit, requestActor } from "../task-audit";
 import { taskAuditRoute } from "./task-audit";
+import { reportsToParent } from "../subtask-reports";
 import { subtaskBodyError, subtaskRequest, subtasksRoute, type SubtaskBody } from "./subtasks";
 
 /** GET /api/tasks */
@@ -217,7 +218,7 @@ async function sendTaskResponse(
   const current = getTask(task.id);
   if (!current) return err(`no such task: ${task.id}`, 404);
   task = current;
-  const invalid = sendTaskBodyError(body);
+  const invalid = sendTaskBodyError(body, () => reportsToParent(task.id));
   if (invalid) return invalid;
   if (task.archived) return err("task is archived — archived tasks are read-only", 409);
   if (task.state === "creating") return err("task is still being created", 409);
@@ -266,6 +267,7 @@ async function sendTaskResponse(
       agent,
       operation ? "next-turn-only" : body.when === "now" ? "now" : body.when === "next-turn" ? "hold" : "allow-steer",
       requestActor(req),
+      body.report === true,
     );
     recordSendAudit(task.id, result, requestActor(req));
     return json<SendResponse>({

@@ -11,7 +11,7 @@ import type { ModelProbeCache } from "../src/model-probes";
 import { harnessesRoute } from "../src/routes/harnesses";
 import { createTaskRoute, taskRoute } from "../src/routes/tasks";
 import { hasRunningTurn } from "../src/runner";
-import { getTask, turnsFor } from "../src/store";
+import { db, getTask, turnsFor } from "../src/store";
 
 const cfg = (preview: boolean): WispConfig => ({
   instanceId: "123e4567-e89b-42d3-a456-426614174000", port: 0, host: "127.0.0.1", token: "test", webhooks: [], repos: [],
@@ -102,6 +102,29 @@ describe("the subtask API", () => {
     });
     const done = await call(`/api/tasks/${parent}/archive`, "POST", { subtasks: "archive" });
     expect({ status: done.status, body: await done.json() }).toEqual({ status: 200, body: expect.objectContaining({ ok: true, subtasks: [child.id] }) });
+  });
+
+  test("send --report: refused for a task that reports to no parent, stored on the message for a subtask", async () => {
+    const parent = await parentTask();
+    const refused = await call(`/api/tasks/${parent}/send`, "POST", { message: "and?", report: true });
+    expect({ status: refused.status, body: await refused.json() }).toEqual({ status: 400, body: { error: "report needs a subtask that reports to its parent" } });
+    const now = await call(`/api/tasks/${parent}/send`, "POST", { message: "and?", report: true, when: "now" });
+    expect(now.status).toBe(400);
+    const bad = await call(`/api/tasks/${parent}/send`, "POST", { message: "and?", report: "yes" });
+    expect({ status: bad.status, body: await bad.json() }).toEqual({ status: 400, body: { error: "report must be a boolean, got string" } });
+    const child = await (await create({ parentTaskId: parent, report: true })).json() as { id: string };
+    await until(() => settled(child.id));
+    const sent = await call(`/api/tasks/${child.id}/send`, "POST", { message: "round 2?", report: true });
+    expect(sent.status).toBe(200);
+    const { message } = await sent.json() as { message: Record<string, unknown> };
+    // the mark is internal: stored on the row, never served
+    expect(message).not.toHaveProperty("report_back");
+    expect(db.query("SELECT report_back FROM task_messages WHERE id = ?").get(message.id as string)).toEqual({ report_back: 1 });
+    // a retry of a stable id must ask the same thing: adding the mark is different content
+    await until(() => settled(child.id));
+    expect((await call(`/api/tasks/${child.id}/send`, "POST", { message: "round 3?", clientMessageId: "mreportretry1" })).status).toBe(200);
+    const retried = await call(`/api/tasks/${child.id}/send`, "POST", { message: "round 3?", clientMessageId: "mreportretry1", report: true });
+    expect({ status: retried.status, body: await retried.json() }).toEqual({ status: 409, body: { error: "message id mreportretry1 was already used for different content" } });
   });
 
   test("a review subtask's managed push is refused", async () => {
