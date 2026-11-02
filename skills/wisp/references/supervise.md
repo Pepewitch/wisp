@@ -48,7 +48,9 @@ it. A report arrives as a message of its own when a turn of the child ends
 auto-fix, auto-review or auto-merge on, you also hear when a review round
 settles, the PR merges or closes, and when autopilot needs a person. Reports
 wait until your turn ends and never interrupt it. Reports that arrive together
-come as one message. Read a review's findings with `wisp review show <child>`
+come as one message. While you are busy they queue in line (`wisp show` lists
+them as queued) and go before any message sent after them, so a steady stream
+of messages cannot hold them back. Read a review's findings with `wisp review show <child>`
 and a child's full answer with `wisp result <child>`.
 
 A message you send a child with `wisp send` starts a turn that does **not**

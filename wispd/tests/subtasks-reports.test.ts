@@ -12,7 +12,8 @@ import { hasRunningTurn, submitTaskMessage } from "../src/runner";
 import { cancelQueuedTaskMessage, createTaskMessage, db, getTask, listTasksWithLatestTurn, setTaskFields, transition, turnsFor } from "../src/store";
 import { SubtaskDelivery } from "../src/subtask-delivery";
 import { recordPrEvent, reportFraming } from "../src/subtask-reports";
-import type { Task } from "../src/types";
+import { reportBefore } from "../src/subtask-report-queue";
+import type { Task, TaskMessage } from "../src/types";
 import { withWispSection } from "../src/turn-input";
 
 const cfg = (extra: Partial<WispConfig> = {}): WispConfig => ({
@@ -83,26 +84,75 @@ describe("delivering subtask reports", () => {
     await submitTaskMessage(getTask(parent.id)!, "keep going", held(gate), cfg(), [], undefined, adapters, { harness: "held", model: null, effort: null, fast: false, freshContext: false });
     await until(() => hasRunningTurn(parent.id) !== null, "the parent's turn");
     delivery.deliver(parent.id);
-    expect(reportMessages(parent.id)).toEqual([]);
+    // queued to hold its place in line, never started into the running turn
+    const queued = () => reportMessages(parent.id).map((message) => message.status);
+    expect(queued()).toEqual(["queued"]);
+    // needs the person (before the turn's end can start it)
+    transition(parent.id, "needs-input", "a question");
     await Bun.write(gate, "");
-    await until(() => settled(parent.id), "the parent to settle");
-    // needs the person
+    await until(() => hasRunningTurn(parent.id) === null, "the parent's turn to end");
     transition(parent.id, "needs-input", "a question");
     delivery.deliver(parent.id);
-    expect(reportMessages(parent.id)).toEqual([]);
+    expect(queued()).toEqual(["queued"]);
     transition(parent.id, "done");
     // held after a Stop
     db.run(`INSERT INTO workflows (id, task_id, type, version, params_json, checkpoint_json, state, reason, context_n, next_check_at, expires_at, created_at, updated_at)
       VALUES (?, ?, 'pr-autopilot', '1', '{"autoFix":true}', '{"stopHold":{"turnCount":2}}', 'active', 'held', 1, 'x', 'x', 'x', 'x')`, [`wheld${parent.id}`, parent.id]);
     delivery.deliver(parent.id);
-    expect(reportMessages(parent.id)).toEqual([]);
+    expect(queued()).toEqual(["queued"]);
     db.run("UPDATE workflows SET state = 'completed' WHERE id = ?", [`wheld${parent.id}`]);
     // no free slot
     new SubtaskDelivery(cfg({ maxConcurrentTasks: 0 }), adapters, 0).deliver(parent.id);
-    expect(reportMessages(parent.id)).toEqual([]);
+    expect(queued()).toEqual(["queued"]);
     expect(getTask(parent.id)!.state).toBe("done");
     delivery.deliver(parent.id);
     await until(() => rows(parent.id).every((row) => row.state === "delivered"), "the report to be delivered");
+  });
+
+  test("a parent that is always sent something still gets its reports: older ones go before the next message (#499)", async () => {
+    const gate = join(scratch(), "open");
+    const adapters = { quick, held: held(gate) };
+    const parent = await make({ repoPath: await repo() }, adapters);
+    await make({ subtask: { parentId: parent.id, report: true } }, adapters);
+    expect(rows(parent.id).map((row) => row.state)).toEqual(["pending"]);
+    // the parent is busy, and the person queues the next message behind its turn
+    const agent = { harness: "held", model: null, effort: null, fast: false, freshContext: false };
+    await submitTaskMessage(getTask(parent.id)!, "keep going", held(gate), cfg(), [], undefined, adapters, agent);
+    await until(() => hasRunningTurn(parent.id) !== null, "the parent's turn");
+    // delivery finds the parent busy: the report is queued, holding its place
+    new SubtaskDelivery(cfg(), adapters, 0).deliver(parent.id);
+    await submitTaskMessage(getTask(parent.id)!, "and then this", held(gate), cfg(), [], undefined, adapters, agent);
+    await Bun.write(gate, "");
+    // the report, waiting since before that message, takes the next turn; the message the one after
+    await until(() => turnsFor(parent.id).length === 4 && settled(parent.id), "the report and the message");
+    const [, , report, next] = turnsFor(parent.id);
+    expect(report).toMatchObject({ origin: "report" });
+    expect(next!.prompt).toContain("and then this");
+    expect(rows(parent.id).map((row) => row.state)).toEqual(["delivered"]);
+  }, 20_000);
+
+  test("a parent's background work still running holds the report back at its turn end, as delivery does", async () => {
+    const adapters = { quick };
+    const parent = await make({ repoPath: await repo() }, adapters);
+    await make({ subtask: { parentId: parent.id, report: true } }, adapters);
+    // queued while busy, then the person's next message behind it
+    transition(parent.id, "running", "turn 2");
+    new SubtaskDelivery(cfg(), adapters, 0).deliver(parent.id);
+    transition(parent.id, "done");
+    createTaskMessage({ id: `mnext${parent.id}`, taskId: parent.id, text: "and then this", attachmentHash: "" }, false);
+    const head = db.query("SELECT * FROM task_messages WHERE id = ?").get(`mnext${parent.id}`) as TaskMessage;
+    const report = reportMessages(parent.id)[0]!.id;
+    expect(reportBefore(getTask(parent.id)!, head)).toBe(report);
+    // its last turn left a process running: the report waits, like delivery's own readiness
+    const turn = turnsFor(parent.id).at(-1)!;
+    db.run(`INSERT INTO turn_process_groups (turn_id, task_id, pgid, members_json, state, stop_requested)
+      VALUES (?, ?, 999999, '[{"pid":999999,"started":null}]', 'running', 0)
+      ON CONFLICT(turn_id) DO UPDATE SET state = 'running', members_json = excluded.members_json`, [turn.id, parent.id]);
+    try {
+      expect(reportBefore(getTask(parent.id)!, head)).toBeNull();
+    } finally {
+      db.run("UPDATE turn_process_groups SET state = 'none' WHERE turn_id = ?", [turn.id]);
+    }
   });
 
   test("a report queued before a crash is started by id, never queued twice", async () => {
