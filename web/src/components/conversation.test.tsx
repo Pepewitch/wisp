@@ -996,7 +996,12 @@ describe("Why the latest turn failed", () => {
     task.state_detail = "queued message could not start: worktree is gone"
     task.turns[0] = { ...task.turns[0]!, status: "failed", result: null, failure_detail: "turn exited 1: X" }
     render(<Conversation task={task} stream={initialStreamState} />, {
-      wrapper: runtimeWrapper(fakeDaemonTransport("failed-again-reason")),
+      // the latest failed turn loads its activity on mount, so its stream must close on unmount
+      wrapper: runtimeWrapper(fakeDaemonTransport("failed-again-reason", {
+        openEventStream: () => ({
+          onmessage: null, onopen: null, onerror: null, readyState: 1, addEventListener() {}, close() {},
+        }),
+      })),
     })
     expect(screen.getByText("queued message could not start: worktree is gone")).toBeInTheDocument()
     expect(screen.queryByText("turn exited 1: X")).toBeNull()
