@@ -23,14 +23,22 @@ function task(extra: { parent?: string; report?: boolean } = {}): string {
 let turns = 0;
 /** A turn of `taskId`, settled as asked; `from` is the message that started it, with its sender. */
 function settle(taskId: string, status: "done" | "failed" | "interrupted", options: {
-  state?: string; from?: { actor?: string; workflow?: string }; origin?: "background"; result?: string;
+  state?: string; from?: { actor?: string; workflow?: string; report?: boolean }; origin?: "background"; result?: string;
+  /** a message steered into the turn while it ran */
+  steered?: { actor: string; report: boolean };
 } = {}): number {
   const n = ++turns;
   let source: string | null = null;
   if (options.from) {
     source = `mrec${taskId}${n}`;
-    createTaskMessage({ id: source, taskId, text: "go", attachmentHash: "", actor: options.from.actor ?? null }, false);
+    createTaskMessage({ id: source, taskId, text: "go", attachmentHash: "", actor: options.from.actor ?? null, reportBack: options.from.report }, false);
+    db.run("UPDATE task_messages SET status = 'delivered', delivery = 'started', turn_n = ? WHERE id = ?", [n, source]);
     if (options.from.workflow) db.run("UPDATE task_messages SET workflow_id = ? WHERE id = ?", [options.from.workflow, source]);
+  }
+  if (options.steered) {
+    const steer = `msteer${taskId}${n}`;
+    createTaskMessage({ id: steer, taskId, text: "and this", attachmentHash: "", actor: options.steered.actor, reportBack: options.steered.report }, false);
+    db.run("UPDATE task_messages SET status = 'delivered', delivery = 'steered', turn_n = ? WHERE id = ?", [n, steer]);
   }
   const id = createTurn(taskId, n, "go", null, "/fixture/log", null, null, null, undefined, options.origin ?? null, source);
   settleTurn(id, { status, exitCode: 0, result: options.result ?? `answer ${n}` }, taskId, (options.state ?? (status === "interrupted" ? "needs-input" : status)) as "done", null);
@@ -86,6 +94,22 @@ describe("recording what a subtask reports", () => {
     // another agent's message, or a person's, still reports
     settle(child, "done", { from: { actor: "agent:tsomeone" } });
     expect(reports(child)).toHaveLength(1);
+  });
+
+  test("a parent's follow-up sent with --report reports its turn back once, started or steered; the next turn stays quiet", () => {
+    const parent = task();
+    const child = task({ parent });
+    settle(child, "done", { from: { actor: `agent:${parent}`, report: true }, result: "round 2: no blockers" });
+    expect(reports(child).map((row) => [JSON.parse(row.facts_json).outcome, row.body])).toEqual([["done", "round 2: no blockers"]]);
+    // a turn the parent started without the mark, with a marked steer from the parent in it
+    settle(child, "done", { from: { actor: `agent:${parent}` }, steered: { actor: `agent:${parent}`, report: true } });
+    expect(reports(child)).toHaveLength(2);
+    // the parent's next message carries no mark: the loop breaker holds again
+    settle(child, "done", { from: { actor: `agent:${parent}` }, steered: { actor: `agent:${parent}`, report: false } });
+    expect(reports(child)).toHaveLength(2);
+    // an interrupted turn still reports nothing, marked or not
+    settle(child, "interrupted", { from: { actor: `agent:${parent}`, report: true } });
+    expect(reports(child)).toHaveLength(2);
   });
 
   test("stuck reports once per turn; setup failure and PR events record their facts; an archived parent drops the row", () => {

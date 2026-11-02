@@ -298,10 +298,14 @@ behind, such as a dev server, has no agent to wake: the line still reports it,
 but it never holds the wait.
 
 ```
-wisp send <task> "message" [--model <m>] [--effort <level>] [--harness <h> --fresh-context] [--when now|next-turn] [--attach <path>]…
+wisp send <task> "message" [--model <m>] [--effort <level>] [--harness <h> --fresh-context] [--when now|next-turn] [--report] [--attach <path>]…
 wisp interrupt <task>
 wisp fresh <task>
 ```
+
+`--report` is for a parent's follow-up to its own subtask: the turn the message
+starts or steers into reports back once when it ends, which a parent's message
+otherwise never does ([supervise.md](supervise.md#subtasks)).
 
 `send` steers a supported live harness or queues the message for the next turn;
 it does not stop current work. On an idle task it starts the next turn in the

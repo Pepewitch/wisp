@@ -51,9 +51,13 @@ and a child's full answer with `wisp result <child>`.
 A message you send a child with `wisp send` starts a turn that does **not**
 report back: that rule keeps a parent and child from pinging each other
 forever. When you need the answer to a follow-up (a second review round of a
-plan, a question), block on it with `wisp wait <child> --timeout <s>` and then
-read `wisp result <child>`. Turns autopilot starts (auto-fix rounds) don't
-report either; their PR events do.
+plan, a question), send it with `wisp send <child> "…" --report`: the turn it
+starts, or the running turn it steers into, reports back once when it ends.
+The child's own later turns stay quiet, so the loop rule still holds. `--report`
+is refused for a task that does not report to a parent. Without it, block on
+the answer with `wisp wait <child> --timeout <s>` and then read
+`wisp result <child>`. Turns autopilot starts (auto-fix rounds) don't report
+either; their PR events do.
 
 A report that a child's PR "needs a decision" names why; `wisp pr <child>`
 shows it. `round-cap` means auto-review spent its three rejections or auto-fix

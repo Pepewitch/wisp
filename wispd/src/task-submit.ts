@@ -73,6 +73,8 @@ export async function persistTaskSubmission(
   deferred = false,
   /** who sent it; a retry with the same id keeps the first attempt's */
   actor: string | null = null,
+  /** `wisp send --report`: the turn it reaches reports to the parent */
+  reportBack = false,
 ): Promise<{ task: Task; message: TaskMessage }> {
   const id = clientMessageId ?? newTaskMessageId()
   const existing = getTaskMessage(id)
@@ -109,6 +111,7 @@ export async function persistTaskSubmission(
         attachmentsJson: attachmentManifest(stored),
         deferred,
         actor,
+        reportBack,
       },
       agent ?? {
         harness: task.harness,

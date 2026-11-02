@@ -26,11 +26,13 @@ export interface SendTaskBody {
   startFreshContext?: unknown;
   /** "now" steers or else stops the running turn; "next-turn" holds it; absent steers or else waits. */
   when?: unknown;
+  /** A parent's follow-up to its subtask: the turn it reaches reports back, once (subtask-reports.ts). */
+  report?: unknown;
 }
 
 const SEND_WHEN: readonly string[] = ["now", "next-turn"] satisfies SendWhen[];
 
-export function sendTaskBodyError(body: SendTaskBody): Response | null {
+export function sendTaskBodyError(body: SendTaskBody, reportsToParent: () => boolean = () => false): Response | null {
   if (typeof body.message !== "string" || body.message.length === 0) return err("message is required", 400);
   if (body.suffixPromptId !== undefined && typeof body.suffixPromptId !== "string") {
     return err(`suffixPromptId must be a string, got ${typeName(body.suffixPromptId)}`, 400);
@@ -53,6 +55,10 @@ export function sendTaskBodyError(body: SendTaskBody): Response | null {
   if (body.when !== undefined && (typeof body.when !== "string" || !SEND_WHEN.includes(body.when))) {
     return err(`when must be one of ${SEND_WHEN.join(", ")}`, 400);
   }
+  if (body.report !== undefined && typeof body.report !== "boolean") {
+    return err(`report must be a boolean, got ${typeName(body.report)}`, 400);
+  }
+  if (body.report === true && !reportsToParent()) return err("report needs a subtask that reports to its parent", 400);
   if (
     body.clientMessageId !== undefined &&
     (typeof body.clientMessageId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(body.clientMessageId))

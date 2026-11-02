@@ -19,7 +19,7 @@ interface SendCommandOptions {
 }
 
 const USAGE = (command: string): string =>
-  `usage: ${command} send <task> "message" [--model <m>] [--effort <level>] [--harness <h> --fresh-context] [--when now|next-turn] [--attach <path>]…`;
+  `usage: ${command} send <task> "message" [--model <m>] [--effort <level>] [--harness <h> --fresh-context] [--when now|next-turn] [--report] [--attach <path>]…`;
 
 /** The agent fields of a send: what `POST /api/tasks/:id/send` takes beside the message. */
 export interface SendAgentFields {
@@ -28,10 +28,12 @@ export interface SendAgentFields {
   effort?: string;
   startFreshContext?: true;
   when?: SendWhen;
+  /** a parent's follow-up to its subtask: that turn reports back */
+  report?: true;
 }
 
 /**
- * `--model`, `--effort`, `--harness`, `--fresh-context` and `--when`, mapped
+ * `--model`, `--effort`, `--harness`, `--fresh-context`, `--when` and `--report`, mapped
  * onto the API's own fields. The harness rules stay the API's (400 without a
  * model, 409 without a fresh context), so the CLI says exactly what the
  * composer would; only the shape of each flag is checked here.
@@ -45,6 +47,7 @@ export function sendAgentFields(flags: Flags): SendAgentFields | string {
     fields[flag] = value;
   }
   if (flags["fresh-context"] === true) fields.startFreshContext = true;
+  if (flags.report === true) fields.report = true;
   const when = flags.when;
   if (when !== undefined) {
     if (when !== "now" && when !== "next-turn") return "--when must be now or next-turn";

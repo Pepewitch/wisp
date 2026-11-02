@@ -443,6 +443,8 @@ export async function submitTaskMessage(
   deliveryPolicy: DeliveryPolicy = "allow-steer",
   /** who sent it (the task audit's actor), stored on the message */
   actor: string | null = null,
+  /** `wisp send --report`: the turn it reaches reports to the parent */
+  reportBack = false,
 ): Promise<SendResult> {
   const currentTask = getTask(task.id);
   if (!currentTask || currentTask.archived) throw new Error("task is archived — archived tasks are read-only");
@@ -451,7 +453,7 @@ export async function submitTaskMessage(
   task = currentTask;
   const existing = clientMessageId ? getTaskMessage(clientMessageId) : null;
   if (!existing) assertTaskCapacity(cfg, task.id);
-  const persisted = await persistTaskSubmission(task, text, attachments, clientMessageId, agent, deliveryPolicy === "hold", actor);
+  const persisted = await persistTaskSubmission(task, text, attachments, clientMessageId, agent, deliveryPolicy === "hold", actor, reportBack);
   task = persisted.task;
   const message = persisted.message;
   if (message.status !== "queued") {
