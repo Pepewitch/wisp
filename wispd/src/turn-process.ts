@@ -42,7 +42,7 @@ import type { Task, TurnOrigin } from "./types";
 /**
  * A spawned harness process and the turn rows it serves.
  *
- * Every process serves one turn, except a live Claude or Droid process whose
+ * Every process serves one turn, except a live Claude, Droid or Codex process whose
  * answer arrived while work it started in the background is still running:
  * that turn settles, and the process lingers for the work (see live-input's
  * ClaudeLiveProcess and DroidLiveProcess). The next message becomes a turn ON it (`adoptTurn`), a
@@ -66,7 +66,7 @@ export interface TurnAgent {
 
 /**
  * One turn a process is serving: its row, its transcript files, its capture.
- * A live Claude or Droid process can serve several turn rows one after another
+ * A live Claude, Droid or Codex process can serve several turn rows one after another
  * (see live-input's LingeringLiveProcess); every other process serves exactly one.
  */
 export interface TurnSlot {

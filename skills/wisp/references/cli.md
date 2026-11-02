@@ -324,7 +324,11 @@ becomes a new turn in that same process, and a model call the background work
 wakes on its own (a monitor event, the process finishing) is recorded as a
 turn of its own, which sends no finish notification or webhook. A message for
 a different agent or model stops that work first, and so does a daemon
-restart, which cannot hand the old process the next message.
+restart, which cannot hand the old process the next message. A Codex task
+whose thread has an active Goal works the same way: Codex goes on to the
+goal's next turn by itself after each answer, Wisp records each such turn,
+and the app-server exits once the goal is complete, paused, blocked or out of
+budget (`wisp wait --settled` waits for that).
 `interrupt` explicitly stops the active turn and all tracked task groups and waits
 for completion, escalating if needed. Sending and archiving are refused while
 Stop is pending or incomplete; retry Stop after resolving the reported failure.

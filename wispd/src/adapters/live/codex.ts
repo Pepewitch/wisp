@@ -32,6 +32,21 @@ interface CodexLiveOptions {
    * next resume to start from.
    */
   onUsage?: (usage: Record<string, unknown>) => void;
+  /**
+   * The app-server started a turn of its own on this thread after ours ended:
+   * an active Goal continuing (`thread/goal/*`). The caller decides whether it
+   * becomes a new turn (`reopen`); until then nothing of it is recorded.
+   */
+  onContinuation?: (turnId: string) => void;
+  /** The thread's goal changed: its status, or null once it was cleared. */
+  onGoal?: (goal: CodexGoal | null) => void;
+}
+
+/** A thread's Codex Goal as `thread/goal/updated` reports it (experimental API, 0.164.0). */
+export interface CodexGoal {
+  objective: string;
+  /** active | paused | blocked | usageLimited | budgetLimited | complete */
+  status: string;
 }
 
 function record(value: unknown): Record<string, any> {
@@ -254,6 +269,8 @@ export class CodexLiveDriver {
   private readonly previousLastCall: Record<string, number> | null;
   /** Usage updates that arrived before the turn's id was known; `adoptTurn` sorts them. */
   private heldUsage: Record<string, any>[] = [];
+  /** The thread's goal as last reported; null when it has none or none was reported. */
+  private goalValue: CodexGoal | null = null;
   /** The last report handed to `onUsage`, serialized, so an unchanged re-send writes nothing. */
   private reportedUsage: string | null = null;
   /** Set once turn/start is sent: from then on, the thread's next turn is ours. */
@@ -354,6 +371,43 @@ export class CodexLiveDriver {
     for (const params of held) {
       if (params.turnId === turnId) this.recordUsage(params);
     }
+  }
+
+  /** The thread's goal, when the app-server has reported one. */
+  get goal(): CodexGoal | null {
+    return this.goalValue;
+  }
+
+  /**
+   * Serve a new turn on the same thread after the last one ended: the
+   * app-server's own continuation (`turnId` known), or one Wisp is about to
+   * start (`startTurn`). The thread's running total carries on; the turn's own
+   * usage starts from nothing.
+   */
+  reopen(turnId?: string): void {
+    this.terminal = false;
+    this.turnId = null;
+    this.turnUsage = null;
+    this.lastUsage = null;
+    this.reportedUsage = null;
+    this.heldUsage = [];
+    this.turnRequested = true;
+    if (turnId) this.adoptTurn(turnId);
+  }
+
+  /** Start a turn with this input on the open thread, after the last one ended (a message taken while it lingers). */
+  async startTurn(messageId: string, input: CodexLiveInput[]): Promise<void> {
+    await this.ready;
+    if (!this.threadId) throw new Error("Codex has no thread to start a turn on");
+    this.reopen();
+    const params: Record<string, unknown> = { threadId: this.threadId, clientUserMessageId: messageId, input, cwd: this.options.cwd };
+    if (this.options.model) params.model = this.options.model;
+    if (this.options.effort) params.effort = this.options.effort;
+    const tier = speedTier(this.options.def, this.options.fast);
+    if (tier) params.serviceTier = tier;
+    const turn = record(record(await this.call("turn/start", params)).turn);
+    if (typeof turn.id !== "string" || !turn.id) throw new Error("Codex started without returning a turn id");
+    this.adoptTurn(turn.id);
   }
 
   async send(messageId: string, input: CodexLiveInput[]): Promise<void> {
@@ -460,52 +514,74 @@ export class CodexLiveDriver {
       case "thread/tokenUsage/updated":
         this.recordUsage(params);
         return;
-      case "turn/started": {
-        const turnId = str(record(params.turn).id);
-        if (this.turnRequested && turnId && str(params.threadId) === this.threadId) this.adoptTurn(turnId);
+      case "turn/started":
+        this.turnStarted(params);
         return;
-      }
-      case "turn/completed": {
-        if (this.terminal) return;
-        const turn = record(params.turn);
-        const threadId = str(params.threadId);
-        if (threadId && this.threadId && threadId !== this.threadId) {
-          // A child's turn settling is that card's outcome, never ours.
-          this.options.emit({
-            type: "subagent.completed",
-            thread_id: threadId,
-            status: str(turn.status),
-            error: str(record(turn.error).message),
-            result: lastAgentMessage(turn.items),
-            duration_ms: typeof turn.durationMs === "number" ? turn.durationMs : null,
-            timestamp: typeof turn.completedAt === "number" ? turn.completedAt * 1000 : null,
-          });
-          return;
-        }
-        if (!this.turnId && this.turnRequested && str(turn.id)) this.adoptTurn(turn.id);
-        if (this.turnId && turn.id !== this.turnId) return;
-        if (turn.status !== "completed") {
-          this.options.emit({
-            type: "turn.failed",
-            error: record(turn.error).message
-              ? turn.error
-              : { message: `Codex turn ${String(turn.status ?? "failed")}` },
-            usage: this.usageReport(),
-            last_usage: this.lastUsage,
-          });
-        } else {
-          this.options.emit({ type: "turn.completed", usage: this.usageReport(), last_usage: this.lastUsage });
-        }
-        this.terminal = true;
-        this.options.onTerminal();
+      case "thread/goal/updated":
+      case "thread/goal/cleared":
+        this.goalChanged(frame.method, params);
         return;
-      }
+      case "turn/completed":
+        this.turnCompleted(params);
+        return;
       case "error":
         if (typeof record(params.error).message === "string") {
           this.options.emit({ type: "error", message: record(params.error).message });
         }
         return;
     }
+  }
+
+  private turnStarted(params: Record<string, any>): void {
+    const turnId = str(record(params.turn).id);
+    if (!turnId || str(params.threadId) !== this.threadId) return;
+    // ours ended, and the app-server went on by itself (an active Goal)
+    if (this.terminal && turnId !== this.turnId) this.options.onContinuation?.(turnId);
+    else if (this.turnRequested) this.adoptTurn(turnId);
+  }
+
+  private goalChanged(method: string, params: Record<string, any>): void {
+    if (str(params.threadId) !== this.threadId) return;
+    const goal = record(params.goal);
+    this.goalValue = method === "thread/goal/updated" && typeof goal.status === "string"
+      ? { objective: str(goal.objective) ?? "", status: goal.status }
+      : null;
+    this.options.onGoal?.(this.goalValue);
+  }
+
+  private turnCompleted(params: Record<string, any>): void {
+    if (this.terminal) return;
+    const turn = record(params.turn);
+    const threadId = str(params.threadId);
+    if (threadId && this.threadId && threadId !== this.threadId) {
+      // A child's turn settling is that card's outcome, never ours.
+      this.options.emit({
+        type: "subagent.completed",
+        thread_id: threadId,
+        status: str(turn.status),
+        error: str(record(turn.error).message),
+        result: lastAgentMessage(turn.items),
+        duration_ms: typeof turn.durationMs === "number" ? turn.durationMs : null,
+        timestamp: typeof turn.completedAt === "number" ? turn.completedAt * 1000 : null,
+      });
+      return;
+    }
+    if (!this.turnId && this.turnRequested && str(turn.id)) this.adoptTurn(turn.id);
+    if (this.turnId && turn.id !== this.turnId) return;
+    if (turn.status !== "completed") {
+      this.options.emit({
+        type: "turn.failed",
+        error: record(turn.error).message
+          ? turn.error
+          : { message: `Codex turn ${String(turn.status ?? "failed")}` },
+        usage: this.usageReport(),
+        last_usage: this.lastUsage,
+      });
+    } else {
+      this.options.emit({ type: "turn.completed", usage: this.usageReport(), last_usage: this.lastUsage });
+    }
+    this.terminal = true;
+    this.options.onTerminal();
   }
 
   /**
