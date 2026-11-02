@@ -1,16 +1,13 @@
 import { assertTaskCapacity, capacityWait, TaskCapacityError } from "./task-admission";
 import { recordSetupFailure, reportFraming } from "./subtask-reports";
 import { liveNonReviewerChildren, parentsWithWaitingChildren } from "./subtasks";
+import { reportBefore } from "./subtask-report-queue";
 import { updateTaskAndEmit } from "./task-update";
 import { pauseTaskWorkflows } from "./workflows/store";
 import { backgroundPass, homeIsDraining } from "./home-lifetime";
 import { openSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import {
-  buildArgv,
-  hasIncrementalOutcomeReducer,
-  type AdapterDef,
-} from "./adapters";
+import { buildArgv, hasIncrementalOutcomeReducer, type AdapterDef } from "./adapters";
 import {
   attachmentManifest,
   formatAttachNote,
@@ -341,7 +338,8 @@ export function startTurn(
   const proc: TurnProcess = {
     taskId: task.id, child, def, cfg, agent: agentOf(task), pidStartTime, slot, settled: false, ending: false,
     startQueue: () => {
-      startNextQueuedMessage(task.id, adapters, cfg);
+      // a turn just ended: a report that waited behind it goes before the next message
+      startNextQueuedMessage(task.id, adapters, cfg, "", true);
       drainSubtaskQueues(task.parent_task_id, adapters, cfg);
     },
   };
@@ -551,6 +549,13 @@ export function startNextQueuedMessage(
   adapters: Readonly<Record<string, AdapterDef>>,
   cfg: WispConfig,
   workflowMessageId = "",
+  /**
+   * The parent's turn just ended (its queue starts again): a subtask report
+   * waiting since before the next message was queued goes first (#499).
+   * Without it a parent that is always sent something never settles, so its
+   * reports never went. A message sent to an idle parent still starts at once.
+   */
+  reportsFirst = false,
 ): TaskMessage | null {
   if (homeIsDraining()) return null;
   // A merge in flight holds new turns back: one could push onto the branch
@@ -562,6 +567,8 @@ export function startNextQueuedMessage(
   }
   const message = nextQueuedMessage(taskId, workflowMessageId);
   if (!message) return null;
+  const report = reportsFirst && !workflowMessageId ? reportBefore(task, message) : null;
+  if (report) return startNextQueuedMessage(taskId, adapters, cfg, report);
   const def = adapters[message.harness];
   if (!def) {
     transition(taskId, "failed", `queued message names unknown harness: ${message.harness}`);

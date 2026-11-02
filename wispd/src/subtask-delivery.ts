@@ -4,7 +4,11 @@
  * Rows go pending → queued → delivered. A pass for one parent:
  *  1. drops what can no longer reach it (archived, being deleted, gone);
  *  2. waits while it is busy, needs the person, is held after a Stop, or
- *     the daemon has no free slot: a report never interrupts its parent;
+ *     the daemon has no free slot: a report never interrupts its parent.
+ *     A busy parent's reports are queued meanwhile, unstarted, so they hold
+ *     their place in line: its next turn end starts them before anything
+ *     sent after them (runner.ts, subtask-report-queue.ts reportBefore), and
+ *     a parent that is always sent something cannot starve them (#499);
  *  3. starts the report message already queued for it, by id, or else turns
  *     every pending row into ONE message (reports close together arrive
  *     together) and starts that.
@@ -13,60 +17,23 @@
  * short debounce after anything about the parent or a child changes, at
  * startup, and on a backstop interval.
  */
-import { randomBytes } from "node:crypto";
 import type { AdapterDef } from "./adapters";
 import { canTakeReport } from "./autopilot/idle";
 import type { WispConfig } from "./config";
 import { subscribe } from "./events";
 import { homeIsDraining } from "./home-lifetime";
 import { startNextQueuedMessage } from "./runner";
-import { createTaskMessage, db, getTask } from "./store";
+import { db, getTask } from "./store";
 import { hasTaskCapacity } from "./task-admission";
-import { reportFraming } from "./subtask-reports";
-import type { Task } from "./types";
+import { heldAfterStop, queuedReport, queueReports } from "./subtask-report-queue";
 
 /** Reports arriving this close together are combined into one message. */
 export const REPORT_DEBOUNCE_MS = 3_000;
 const BACKSTOP_MS = 30_000;
 
-/** A Stop the person pressed holds the parent's automation until their next turn: a report waits for it too. */
-function heldAfterStop(taskId: string): boolean {
-  return db.query(`SELECT 1 FROM workflows WHERE task_id = ? AND state != 'completed'
-    AND json_valid(checkpoint_json) AND json_extract(checkpoint_json, '$.stopHold') IS NOT NULL`).get(taskId) !== null;
-}
-
-function queuedReport(parentId: string): string | null {
-  const row = db.query(`SELECT id FROM task_messages WHERE task_id = ? AND origin = 'subtask' AND status = 'queued'
-    ORDER BY source_seq, rowid LIMIT 1`).get(parentId) as { id: string } | null;
-  return row?.id ?? null;
-}
-
 function dropPending(parentId: string, reason: string): void {
   db.run("UPDATE subtask_reports SET state = 'dropped', reason = ?, updated_at = ? WHERE parent_task_id = ? AND state = 'pending'",
     [reason, new Date().toISOString(), parentId]);
-}
-
-/**
- * Every pending row of a parent, as one queued message, in one transaction.
- * Its text is what the transcript shows; the framing the parent receives is
- * built from the rows (subtask-reports.ts reportFraming).
- */
-function queueReports(parent: Task): string | null {
-  return db.transaction((): string | null => {
-    const rows = db.query("SELECT id FROM subtask_reports WHERE parent_task_id = ? AND state = 'pending' ORDER BY created_at, rowid")
-      .all(parent.id) as { id: string }[];
-    if (rows.length === 0) return null;
-    const id = `ms${randomBytes(9).toString("hex")}`;
-    // mark them first, so the framing below reads exactly this message's rows
-    const at = new Date().toISOString();
-    for (const row of rows) db.run("UPDATE subtask_reports SET state = 'queued', message_id = ?, updated_at = ? WHERE id = ?", [id, at, row.id]);
-    const framed = reportFraming(id);
-    createTaskMessage({
-      id, taskId: parent.id, text: [...framed.lines, ...(framed.words ? ["", framed.words] : [])].join("\n"),
-      attachmentHash: "", origin: "subtask", actor: "system",
-    });
-    return id;
-  })();
 }
 
 export class SubtaskDelivery {
@@ -119,7 +86,12 @@ export class SubtaskDelivery {
       if (!parent) return dropPending(parentId, "parent deleted");
       if (parent.archived) return dropPending(parentId, "parent archived");
       if (parent.purge_pending) return dropPending(parentId, "parent being deleted");
-      if (!canTakeReport(parent) || heldAfterStop(parent.id) || !hasTaskCapacity(this.cfg, parent.id)) return;
+      if (!canTakeReport(parent) || heldAfterStop(parent.id) || !hasTaskCapacity(this.cfg, parent.id)) {
+        // Busy with its own work: queue the reports now, unstarted, so they hold their place in
+        // line and its next turn end starts them before anything sent later (runner.ts reportBefore).
+        if (parent.state !== "needs-input" && !queuedReport(parent.id)) queueReports(parent);
+        return;
+      }
       const id = queuedReport(parent.id) ?? queueReports(parent);
       if (id) startNextQueuedMessage(parent.id, this.adapters, this.cfg, id);
     } catch (error) {
