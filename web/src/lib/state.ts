@@ -62,7 +62,7 @@ export const NETWORK_PAUSED_LABEL = "Paused · network"
  * is a pause, so it wears neither the failure word nor the failure hue. Once
  * the resumes are spent the daemon stops saying so, and it reads "Failed".
  */
-export function pausedOnNetwork(task: ApiTask): boolean {
+export function pausedOnNetwork(task: Pick<ApiTask, "state" | "autopilot">): boolean {
   return task.state === "failed" && Boolean(task.autopilot?.network)
 }
 
