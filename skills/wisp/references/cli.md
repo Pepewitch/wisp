@@ -272,13 +272,26 @@ and indexed agent prose. Results name the matched field and include a snippet.
 In the UI, `⌘F` searches the current task and `⌘⇧F` searches across tasks.
 
 ```
-wisp wait <task> [--timeout <sec>]
+wisp wait <task>… [--any|--all] [--settled] [--timeout <sec>]
 ```
 
 Blocks until the task settles: exit 0 done, 2 needs-input, 1 failed, 3 on
 timeout (default ≈ 1 day). Waits through `stuck`. It polls every 2 seconds.
 Exit 1 also reports a CLI error: a bad `--timeout`, an unknown task, or a poll
 that cannot reach the daemon, so run the wait again after a daemon restart.
+
+With several tasks, `--all` (the default) waits for every one, prints a line
+per task and exits with the most serious code: failed, then needs-input, then
+done. `--any` ends on the first task that settles and prints only that one.
+
+A `done` task can still have its own background work running, such as a
+Claude Monitor or a Droid `fireAndForget` command watching CI. Its agent wakes
+and answers again when that work finishes, so the printed line says
+`done · 1 background process running` and a note on stderr points at
+`--settled`. With `--settled`, a done task ends the wait only once that work
+is gone. A long-lived process such as a dev server holds a settled wait until
+its timeout, and background work Wisp cannot see (`background status
+unknown`) never holds it.
 
 ```
 wisp send <task> "message" [--model <m>] [--effort <level>] [--harness <h> --fresh-context] [--when now|next-turn] [--attach <path>]…
