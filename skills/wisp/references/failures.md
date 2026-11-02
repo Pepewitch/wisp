@@ -45,6 +45,10 @@ harness's last words, `turn reported failure: …`, `turn killed: …`, or
 `turn exited 0 but emitted no parseable result`. Fix what it names, then send
 a follow-up; the next turn continues in the same session.
 
+The failed turn keeps that detail after the task moves on: `wisp result <id>
+<turn>` prints it in place of the missing result, and `wisp show` adds a
+`failed:` line under the turn.
+
 ## exited N
 
 `exited N` is the word `wisp ls` and `wisp show` use for a failed task whose

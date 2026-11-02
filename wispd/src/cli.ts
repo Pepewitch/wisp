@@ -100,7 +100,12 @@ async function resultCommand(positional: string[]): Promise<void> {
     process.exit(1);
   }
   print(`── you (turn ${turn.n}) ──\n${turn.prompt}\n── agent ──`);
-  print(turn.result ?? `(turn ${turn.n} is ${turn.status}, no result text)`);
+  if (turn.result) {
+    print(turn.result);
+    // a turn can fail after its result landed (the harness exited nonzero)
+    if (turn.failure_detail) print(`── failed ──\n${turn.failure_detail}`);
+  } else if (turn.failure_detail) print(`(turn ${turn.n} failed, no result text: ${turn.failure_detail})`);
+  else print(`(turn ${turn.n} is ${turn.status}, no result text)`);
 }
 
 async function showCommand(positional: string[]): Promise<void> {
@@ -121,7 +126,7 @@ async function showCommand(positional: string[]): Promise<void> {
   if (task.worktreeReason) print(task.worktreeReason);
   await printFamily(task);
   printBackground(task);
-  for (const turn of task.turns) printTurn(task, turn);
+  for (const turn of task.turns) printTurn(task, turn, turn === latest && turn.failure_detail === task.state_detail);
   for (const message of task.messages ?? []) {
     const summary = taskMessageSummary(message, task.archived);
     if (summary) print(`\n${summary}`);
@@ -164,6 +169,8 @@ function printBackground(task: ApiTask): void {
 function printTurn(
   task: ApiTask,
   turn: ApiTurn,
+  /** The header already printed this turn's failure as the task's detail. */
+  failureShown = false,
 ): void {
   const model = turn.model ?? (turn.requested_model ? `${turn.requested_model} (requested)` : null);
   // who wrote the input: Wisp or the harness by its stored source, else the person
@@ -178,6 +185,7 @@ function printTurn(
   for (const image of turn.outputs ?? []) print(`  output: ${image.name} (${formatBytes(image.size)}, ${outputProvenance(image)})\n    ${saveCommand(task.id, turn.n, image)}`);
   if (turn.usage) print(`  usage: ${usageLine(turn.usage)}`);
   if (turn.result) print(`  agent: ${turn.result.slice(0, 400)}`);
+  if (turn.failure_detail && !failureShown) print(`  failed: ${turn.failure_detail.slice(0, 400)}`);
 }
 
 async function logCommand(positional: string[], flags: Flags): Promise<void> {

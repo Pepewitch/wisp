@@ -9,7 +9,7 @@ import { migrate, MIGRATIONS } from "../src/migrations";
 
 const AT = "2026-10-01T00:00:00.000Z";
 
-test("a schema-28 profile gains auto_review_rounds.early, 0 on its rounds, and only 29 runs", () => {
+test("a schema-28 profile gains auto_review_rounds.early, 0 on its rounds, and 29 runs first", () => {
   const db = new Database(join(mkdtempSync(join(tmpdir(), "wisp-migrate-review-now-")), "wisp.db"), { create: true });
   db.exec("CREATE TABLE schema_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)");
   for (const migration of [...MIGRATIONS].sort((a, b) => a.id - b.id).filter((m) => m.id <= 28)) {
@@ -19,7 +19,8 @@ test("a schema-28 profile gains auto_review_rounds.early, 0 on its rounds, and o
   db.run(`INSERT INTO auto_review_rounds (id, task_id, workflow_id, pr, head, round, token, state, created_at)
     VALUES ('rd1', 'told', 'wpilot', 12, 'abc', 1, 'tok', 'pass', ?)`, [AT]);
 
-  expect(migrate(db).applied).toEqual([29]);
+  // 29, then any migration added since, in order
+  expect(migrate(db).applied).toEqual(MIGRATIONS.map((m) => m.id).filter((id) => id > 28).sort((a, b) => a - b));
   expect(db.query("SELECT id, early FROM auto_review_rounds").all()).toEqual([{ id: "rd1", early: 0 }]);
   expect(migrate(db).applied).toEqual([]);
 });

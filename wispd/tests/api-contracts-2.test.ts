@@ -210,6 +210,8 @@ describe("daemon API contracts, batch 2", () => {
       "diagnostic_state",
       "ended_at",
       "exit_code",
+      // why a failed turn failed, kept after later turns; null for any other
+      "failure_detail",
       "harness",
       "id",
       "interrupt_detail",
@@ -254,6 +256,7 @@ describe("daemon API contracts, batch 2", () => {
       pid: null,
       pid_start_time: null,
       interrupt_detail: null,
+      failure_detail: null,
       model: null,
       exit_code: 0,
       usage: null,

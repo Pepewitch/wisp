@@ -244,6 +244,8 @@ export interface Turn {
   outcome_json: string | null;
   /** Wisp-originated termination reason, persisted across daemon restarts. */
   kill_detail: string | null;
+  /** Why a failed turn failed, as the task's state_detail read when it settled (migration 30). NULL otherwise and on older rows. */
+  failure_detail?: string | null;
   diagnostic_state: TurnDiagnosticState | null;
   diagnostic_bytes: number | null;
   diagnostic_first_seq: number | null;

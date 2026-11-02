@@ -403,12 +403,13 @@ export function createTurn(
   return Number(res.lastInsertRowid);
 }
 
-function finishTurnRow(id: number, status: TurnStatus, exit_code: number | null, result: string | null): void {
-  db.run(`UPDATE turns SET status = ?, exit_code = ?, result = ?, ended_at = ? WHERE id = ?`, [
+function finishTurnRow(id: number, status: TurnStatus, exit_code: number | null, result: string | null, failureDetail: string | null = null): void {
+  db.run(`UPDATE turns SET status = ?, exit_code = ?, result = ?, ended_at = ?, failure_detail = ? WHERE id = ?`, [
     status,
     exit_code,
     result,
     now(),
+    failureDetail,
     id,
   ]);
 }
@@ -440,7 +441,8 @@ export function settleTurn(
   notify = true,
 ): void {
   const seq = db.transaction((): number | null => {
-    finishTurnRow(turnId, turn.status, turn.exitCode, turn.result);
+    // a failed turn keeps its reason: the task's detail is the next turn's once it runs
+    finishTurnRow(turnId, turn.status, turn.exitCode, turn.result, turn.status === "failed" ? detail : null);
     // a subtask's report is written with the settlement it reports, never after it
     recordTurnReport(turnId, state);
     return transitionBody(taskId, state, detail, undefined, notify);

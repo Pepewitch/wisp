@@ -344,6 +344,26 @@ describe("finalizeTurn matrix (a prior audit + test gap #1)", () => {
       );
     });
 
+    test("cursor: a refused model's stderr names the cause, and the turn keeps it after the task moves on", async () => {
+      const { task, turn } = await finalize({
+        def: BUILTIN_ADAPTERS.cursor!,
+        exit: 1,
+        out: `{"type":"system","subtype":"init","session_id":"cur-1","model":"Claude Opus 5.5 300K Medium"}\n{"type":"user","message":{"role":"user","content":[{"type":"text","text":"prompt"}]},"session_id":"cur-1"}\n`,
+        err: "ActionRequiredError: Model unavailable on Free Free includes Grok 4.7, Grok 4.6, and Auto with fixed settings. Switch to an included model to continue.\n",
+      });
+      const why = "turn exited 1: ActionRequiredError: Model unavailable on Free Free includes Grok 4.7, Grok 4.6, and Auto with fixed settings. Switch to an included model to continue.";
+      expect(turn).toMatchObject({ status: "failed", result: null, failure_detail: why });
+      expect(task.state_detail).toBe(why);
+      // turn 2 overwrites the task's detail; turn 1's reason stays on turn 1
+      transition(task.id, "running", "turn 2");
+      expect(turnsFor(task.id)[0]!.failure_detail).toBe(why);
+    });
+
+    test("a done turn stores no failure detail", async () => {
+      const { turn } = await finalize({ exit: 0, out: `${RESULT_LINE}\n` });
+      expect(turn.failure_detail).toBeNull();
+    });
+
     test("a non-limit/non-transient failure is not prefixed", async () => {
       const { task } = await finalize({
         def: BUILTIN_ADAPTERS.droid!,
