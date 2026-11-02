@@ -31,12 +31,17 @@ export type WaitMode = "one" | "any" | "all";
 type WaitTask = Pick<ApiTask, "id" | "state" | "state_detail" | "background">;
 
 /**
- * Background work the task's own agent may still wake for: a lingering Claude
- * or Droid process, or a command it left running. `unknown` does not hold the
- * wait — Wisp cannot see that work, so waiting on it could never end.
+ * Background work the task's own agent will wake for: what a lingering Claude
+ * or Droid process names (a Monitor, a `fireAndForget` command, a background
+ * subagent). Wisp keeps that harness alive on purpose and reports it at once,
+ * so there is no settle window to slip through, and it holds even while the
+ * group reads `unknown` (one failed process snapshot marks every group so).
+ * A process a finished harness merely left behind, such as a dev server, has
+ * no agent to wake and never holds the wait.
  */
-function backgroundRunning(task: WaitTask): boolean {
-  return task.background?.state === "running" || task.background?.state === "stopping";
+function agentWillWake(task: WaitTask): boolean {
+  const background = task.background;
+  return background !== undefined && background.state !== "none" && background.details.some(group => (group.tasks?.length ?? 0) > 0);
 }
 
 /**
@@ -46,7 +51,7 @@ function backgroundRunning(task: WaitTask): boolean {
  */
 export function settledCode(task: WaitTask, settled: boolean): number | undefined {
   const code = WAIT_EXIT[task.state];
-  if (code === 0 && settled && backgroundRunning(task)) return undefined;
+  if (code === 0 && settled && agentWillWake(task)) return undefined;
   return code;
 }
 
@@ -76,10 +81,16 @@ export function waitOutcome(tasks: WaitTask[], mode: WaitMode, settled: boolean)
   return first === -1 ? null : { code: codes[first]!, report: [tasks[first]!] };
 }
 
-/** A note for a `done` task whose agent may still answer again. */
-function backgroundNote(task: WaitTask, settled: boolean): string | null {
-  if (settled || task.state !== "done" || !backgroundRunning(task)) return null;
-  return `${task.id} still has background work running; its agent may answer again when it finishes (${COMMAND} wait ${task.id} --settled waits for that)`;
+/** A note for a `done` task whose agent will answer again. */
+export function backgroundNote(task: WaitTask, settled: boolean): string | null {
+  if (settled || task.state !== "done" || !agentWillWake(task)) return null;
+  return `${task.id} still has background work its agent will answer again for (${COMMAND} wait ${task.id} --settled waits for that)`;
+}
+
+/** What a timed-out wait prints: every task under --all, else the ones it was waiting on. */
+export function timeoutLines(tasks: WaitTask[], mode: WaitMode, settled: boolean, timeoutSec: number): string[] {
+  const shown = mode === "all" ? tasks : tasks.filter(task => settledCode(task, settled) === undefined);
+  return shown.map(task => `${waitLine(task)}${settledCode(task, settled) === undefined ? `  (timeout after ${timeoutSec}s)` : ""}`);
 }
 
 export function parseWait(positional: string[], flags: Flags): { ids: string[]; mode: WaitMode; settled: boolean; timeoutSec: number } | string {
@@ -116,10 +127,7 @@ export async function waitCommand(positional: string[], flags: Flags): Promise<v
       process.exit(outcome.code);
     }
     if (Date.now() >= deadline) {
-      const waiting = tasks.filter(task => settledCode(task, settled) === undefined);
-      for (const task of mode === "all" ? tasks : waiting) {
-        print(`${waitLine(task)}${settledCode(task, settled) === undefined ? `  (timeout after ${timeoutSec}s)` : ""}`);
-      }
+      for (const line of timeoutLines(tasks, mode, settled, timeoutSec)) print(line);
       process.exit(3);
     }
     await Bun.sleep(Math.min(WAIT_POLL_MS, Math.max(0, deadline - Date.now())));

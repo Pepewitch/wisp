@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { parseWait, settledCode, waitLine, waitOutcome } from "../src/cli-wait";
+import { backgroundNote, parseWait, settledCode, timeoutLines, waitLine, waitOutcome } from "../src/cli-wait";
 import type { ApiTask, BackgroundWork, TaskState } from "../src/types";
 
 /**
@@ -39,10 +39,29 @@ describe("one task", () => {
     expect(waitOutcome([task("ta", "done")], "one", true)?.code).toBe(0);
   });
 
-  test("--settled does not hold needs-input or failed, nor background work Wisp cannot see", () => {
+  test("--settled does not hold needs-input or failed", () => {
     expect(settledCode(task("ta", "needs-input", running), true)).toBe(2);
     expect(settledCode(task("ta", "failed", running), true)).toBe(1);
-    expect(settledCode(task("ta", "done", { ...running, state: "unknown" }), true)).toBe(0);
+  });
+
+  test("--settled holds only on work the harness named: a process left behind, like a dev server, has no agent to wake", () => {
+    const leftBehind: BackgroundWork = { ...running, details: [{ ...running.details[0]!, tasks: undefined }] };
+    expect(settledCode(task("ta", "done", leftBehind), true)).toBe(0);
+    expect(settledCode(task("ta", "done", { ...running, details: [{ ...running.details[0]!, tasks: [] }] }), true)).toBe(0);
+    expect(backgroundNote(task("ta", "done", leftBehind), false)).toBeNull();
+    // the line still reports the process; only the wait ignores it
+    expect(waitLine(task("ta", "done", leftBehind))).toContain("background process");
+  });
+
+  test("--settled keeps holding named work through an unknown snapshot", () => {
+    expect(settledCode(task("ta", "done", { ...running, state: "unknown" }), true)).toBeUndefined();
+  });
+
+  test("the stderr note names --settled for a done task whose agent will answer again, and only then", () => {
+    expect(backgroundNote(task("ta", "done", running), false)).toContain("wait ta --settled");
+    expect(backgroundNote(task("ta", "done", running), true)).toBeNull();
+    expect(backgroundNote(task("ta", "needs-input", running), false)).toBeNull();
+    expect(backgroundNote(task("ta", "done"), false)).toBeNull();
   });
 });
 
@@ -66,6 +85,15 @@ describe("several tasks", () => {
     const outcome = waitOutcome([task("ta", "needs-input"), task("tb", "failed"), task("tc", "done")], "all", false);
     expect(outcome?.code).toBe(1);
     expect(outcome?.report.map(t => t.id)).toEqual(["ta", "tb", "tc"]);
+  });
+});
+
+describe("a timed-out wait", () => {
+  test("--all prints every task and marks the ones still waiting; one and --any print only those", () => {
+    const tasks = [task("ta", "done"), task("tb", "running")];
+    expect(timeoutLines(tasks, "all", false, 30)).toEqual(["ta  done", "tb  running  (timeout after 30s)"]);
+    expect(timeoutLines(tasks, "any", false, 30)).toEqual(["tb  running  (timeout after 30s)"]);
+    expect(timeoutLines([task("ta", "done", running)], "one", true, 5)).toEqual(["ta  done · 1 background process running  (timeout after 5s)"]);
   });
 });
 
