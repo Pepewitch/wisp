@@ -49,7 +49,7 @@ import { busyReason, forgetIdle, forgetPending, nextPrReason, observe } from "./
 import { autoReviewLook, endUnwantedReviews, supersedeStaleRounds, sweepReviews } from "./auto-review"
 import { EarlyAnswers } from "./review-now"
 import { reviewStartLook, type ReviewStart } from "./review-first"
-import { holdForReview, reserveWith, reviewFiles, reviewKey, reviewRunning, reviewToCarry } from "./review-part"
+import { heldRepeat, holdForReview, reserveWith, reviewFiles, reviewKey, reviewRunning, reviewToCarry } from "./review-part"
 import { createAndLaunchTask } from "../domain/task-create"
 import type { ModelProbeCache } from "../model-probes"
 import type { Launch } from "../verify/reviewer"
@@ -465,9 +465,6 @@ export class AutopilotRuntime {
       }
       return nothingToSend(plan, checkpoint, say)
     }
-    // only bots repeating what the agent already answered twice: the person decides, Send now sends it
-    const repeated = repeatHold({ items, deliveries: checkpoint.deliveries, ci, review, sendNow: checkpoint.sendNow === key })
-    if (repeated) return say("needs-you", repeated, WAITING_ON_YOU_MS)
     const summary = [review ? "auto-review's findings" : null, ci?.summary, items.length > 0 ? feedbackSummary(items) : null].filter(Boolean).join(" and ")
     // A push would end the round running on this head: what auto-fix holds goes once it settles,
     // unless a person says Send now. Before the cap's pause, which would strand the round.
@@ -482,6 +479,9 @@ export class AutopilotRuntime {
     // A reviewer bot still at work on this head: the whole round, CI's part too, waits for its pass.
     const passes = reviewerPasses(pr, items, { headSeenMs: headFirstSeen(checkpoint, pr, now.getTime()), nowMs: now.getTime() })
     if (passes.wait) { forgetPending(checkpoint); return say("waiting", passes.wait, MOVING_MS) }
+    // only bots repeating what the agent already answered twice: the person decides (Send now or Skip)
+    const repeated = repeatHold({ items, deliveries: checkpoint.deliveries, ci, review, sendNow: checkpoint.sendNow === key })
+    if (repeated) return heldRepeat(checkpoint, key, summary, repeated, say)
     // A short delay after the task goes idle, after the newest review words
     // (a reviewer's burst goes as one), and after a reviewer bot's check
     // ends (it may rewrite its summary a moment later): time to read what

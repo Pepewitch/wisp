@@ -58,7 +58,7 @@ export interface AutopilotCheckpoint {
   idleSince?: string
   idleTurn?: number
   /** a round ready to go once its delay passes; `afterReview`: held while an auto-review round on the head runs */
-  pending?: { key: string; summary: string; sendsAt: string; afterReview?: boolean }
+  pending?: { key: string; summary: string; sendsAt: string; afterReview?: boolean; repeats?: boolean }
   /** the owner said Send now — to this evidence key, and no other */
   sendNow?: string
   /** looks in a row that could read none of a round's logs: past a few, it is sent with links only */
@@ -191,7 +191,10 @@ export function statusOf(row: WorkflowRow | null): AutopilotStatus {
   const followingSwitch = row.state === "paused" && row.reason === CONTEXT_CHANGE_PAUSE
   const about = followingSwitch || state === "held" ? "task" : state === "paused" ? "pr" : checkpoint.about ?? "task"
   const pendingFix = row.state === "active" && params.autoFix && state !== "held" && checkpoint.pending
-    ? { summary: checkpoint.pending.summary, sendsAt: checkpoint.pending.sendsAt, ...(checkpoint.pending.afterReview ? { afterReview: true } : {}) }
+    ? {
+      summary: checkpoint.pending.summary, sendsAt: checkpoint.pending.sendsAt,
+      ...(checkpoint.pending.afterReview ? { afterReview: true } : {}), ...(checkpoint.pending.repeats ? { repeats: true } : {}),
+    }
     : null
   const by = speakerOf(checkpoint, params)
   const lastMerged = checkpoint.lastMerged ? { pr: checkpoint.lastMerged.pr, byWisp: checkpoint.lastMerged.byWisp } : null

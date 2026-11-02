@@ -147,6 +147,7 @@ export function reviewRoundsWords(rounds: number, spent?: number, budget?: numbe
 /** How a waiting auto-fix round says when it goes: after the auto-review round it is held behind, or in so long. */
 export function pendingFixWhen(fix: NonNullable<AutopilotStatus["pendingFix"]>, now: number): string {
   if (fix.afterReview) return "sends after the review"
+  if (fix.repeats) return "a bot's repeat: sent only if you send it"
   const seconds = Math.ceil((Date.parse(fix.sendsAt) - now) / 1000)
   if (!Number.isFinite(seconds) || seconds <= 0) return "sending…"
   return seconds < 60 ? `sends in ${seconds}s` : `sends in ${Math.ceil(seconds / 60)} min`

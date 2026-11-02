@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import type { PrComment, PrReview, PrThread } from "../src/autopilot/github";
-import { skipPendingFix } from "../src/autopilot/pending-fix";
+import { sendPendingFix, skipPendingFix } from "../src/autopilot/pending-fix";
 import { autopilotRow, autopilotStatus, checkpointOf, noteTurnSigning, reserveRound, setAutopilot } from "../src/autopilot/store";
 import { taskMessageRoute } from "../src/routes/task-messages";
 import { startNextQueuedMessage } from "../src/runner";
@@ -216,7 +216,27 @@ describe("auto-fix for review feedback", () => {
       state.pr = on(heads[2]!, 3);
       await pass(rt, task.id, clock);
       expect(sent()).toBe(2);
-      expect(autopilotStatus(task.id)).toMatchObject({ state: "needs-you", reason: "@pr-reviewer repeated what the agent already answered twice; not sent again (Send now sends it)" });
+      expect(autopilotStatus(task.id)).toMatchObject({
+        state: "needs-you", reason: "@pr-reviewer repeated what the agent already answered twice; not sent again (Send now sends it)",
+        pendingFix: { summary: "1 comment", repeats: true },
+      });
+      expect(state.merges).toHaveLength(0);
+      // the person sends it anyway
+      sendPendingFix(task.id, new Date(clock.now));
+      await pass(rt, task.id, clock);
+      await until(() => sent() === 3, "the round sent anyway");
+    });
+
+    test("a bot still reviewing a new head is waited for before its repeat is held", async () => {
+      const { task, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      const running = { ...reviewer, status: "IN_PROGRESS", conclusion: null };
+      const { state, github } = fakeGitHub({ pr: snapshot({ head: "c".repeat(40), comments: [summary({ editedAt: "2026-09-23T11:05:00Z" })], checks: [...snapshot().checks, running] }) });
+      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: judge().client });
+      setAutopilot(task.id, { autoFix: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, deliveries: { "comment:IC_5": 2 } });
+      await pass(rt, task.id, clock);
+      expect(autopilotStatus(task.id).state).toBe("waiting");
       expect(state.merges).toHaveLength(0);
     });
 
