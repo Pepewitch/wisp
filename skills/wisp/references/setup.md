@@ -211,7 +211,9 @@ harmless preferences.
   the per-turn diagnostic archives `diagnosticEnabled` governs;
   `attachment-uploads/` — short-lived one-shot attachment uploads, promoted
   into `tasks/` on submission; `model-probes.json` — the last successful
-  per-harness model discovery, served immediately while it refreshes. The
+  per-harness model discovery, served immediately while it refreshes (daily;
+  a probe that lists no models keeps the previous list, shows why in the
+  model picker, and is retried within minutes). The
   autopilot judge's own state (`judge-usage.json`,
   `tasks/<id>/autopilot/<row>/judge.jsonl`) is documented in
   [PR-AUTOPILOT.md](../../../docs/PR-AUTOPILOT.md).

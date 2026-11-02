@@ -4,7 +4,7 @@ import { Eye, EyeOff } from "@/components/icons"
 import { MenuAction, MenuGroup, MenuItem, MenuRadioItem } from "@/components/menu"
 import { hasCoarsePointer } from "@/hooks/useMediaQuery"
 import { MENU_ACTION } from "@/lib/menu-actions"
-import { defaultModelFor, isUsable, modelOptionsFor, unusableReason } from "@/lib/model-choice"
+import { defaultModelFor, isUsable, modelOptionsFor, staleReason, unusableReason } from "@/lib/model-choice"
 import {
   hideModel,
   isHidden,
@@ -99,7 +99,7 @@ function HarnessModels({
         isUsable(harness)
           ? revealed && hiddenHere > 0
             ? `${hiddenHere} hidden`
-            : undefined
+            : staleHint(harness)
           : unusableReason(harness)
       }
     >
@@ -224,4 +224,10 @@ export function ModelMenuFooter({
       </MenuAction>
     </>
   )
+}
+
+/** The kept list's reason, cut to the group label's width; the whole reason is its tooltip. */
+function staleHint(harness: HarnessInfo): ReactNode {
+  const reason = staleReason(harness)
+  return reason ? <span title={reason}>{reason}</span> : undefined
 }

@@ -12,6 +12,13 @@ import { isRecord } from "./validate";
 export const MODEL_PROBE_TIMEOUT_MS = 10_000;
 export const MODEL_PROBE_MAX_BYTES = 2 * 1024 * 1024;
 export const MODEL_PROBE_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/**
+ * How soon a refresh in which a discovering harness reported no models is
+ * tried again. Such an answer is usually transient (a CLI briefly signed out,
+ * offline, or slow under load), and waiting the full interval would leave the
+ * harness unpickable for a day.
+ */
+export const MODEL_PROBE_RETRY_MS = 5 * 60 * 1000;
 const MODEL_PROBE_CACHE_MAX_BYTES = 2 * 1024 * 1024;
 
 /** Production async process runner; unlike bunSpawn it never blocks the event loop. */
@@ -55,6 +62,8 @@ interface PersistedModelCache {
     adapterSignature: string;
     models: CachedModels;
   }>;
+  /** When a refresh in which a discovering harness answered nothing is due again (MODEL_PROBE_RETRY_MS), so a restart keeps the date. */
+  retryAt?: string;
 }
 
 function adapterSignature(def: AdapterDef): string {
@@ -108,6 +117,8 @@ export class ModelProbeCache {
   private readonly cachePath: string | undefined;
   private readonly refreshIntervalMs: number;
   private lastRefreshAttemptAt = 0;
+  /** A failed discovery's earlier due time; null once a refresh had no such failure. */
+  private retryAt: number | null = null;
   private readonly stopping = new AbortController();
 
   constructor(
@@ -154,9 +165,11 @@ export class ModelProbeCache {
   refresh(): Promise<void> {
     if (this.stopping.signal.aborted) return Promise.resolve();
     if (this.refreshInFlight) return this.refreshInFlight;
-    this.lastRefreshAttemptAt = this.now().getTime();
+    const attemptAt = this.now().getTime();
+    this.lastRefreshAttemptAt = attemptAt;
     let changed = false;
     let cacheUpdated = false;
+    let discoveryFailed = false;
     this.refreshInFlight = Promise.all(
       Object.entries(this.adapters).map(async ([name, def]) => {
         const previous = this.snapshot(name);
@@ -167,11 +180,20 @@ export class ModelProbeCache {
         this.entries.set(name, answer);
         if (!sameAnswer(previous, answer)) changed = true;
         if (def.modelDiscovery && next.models) cacheUpdated = true;
+        // a missing binary stays missing until someone installs it: the daily pass finds it
+        if (def.modelDiscovery && !next.models && next.modelsError !== "bin not found") discoveryFailed = true;
       }),
     )
       .then(async () => {
-        if (cacheUpdated) await this.persist();
+        // an abandoned refresh learned nothing: the retry it was meant to answer stays due
+        if (this.stopping.signal.aborted) return;
+        // the next refreshIfStale (a picker read, a restart) tries again soon, not in a day
+        const hadRetry = this.retryAt !== null;
+        this.retryAt = discoveryFailed ? attemptAt + Math.min(MODEL_PROBE_RETRY_MS, this.refreshIntervalMs) : null;
+        if (this.retryAt !== null) this.lastRefreshAttemptAt = this.retryAt - this.refreshIntervalMs;
+        // announced first: clients read the snapshot in memory, and a file write must not hold the news back
         if (changed) emit({ type: "harnesses" });
+        if (cacheUpdated || discoveryFailed || hadRetry) await this.persist();
       })
       .finally(() => {
         this.refreshInFlight = null;
@@ -196,6 +218,8 @@ export class ModelProbeCache {
           !isRecord(cached)
           || cached.adapterSignature !== adapterSignature(def)
           || !validCachedModels(cached.models)
+          // an empty list is no answer (older builds stored one): probe again at boot
+          || cached.models.list.length === 0
         ) {
           complete = false;
           continue;
@@ -204,6 +228,11 @@ export class ModelProbeCache {
         probedTimes.push(Date.parse(cached.models.probedAt));
       }
       this.lastRefreshAttemptAt = complete && probedTimes.length > 0 ? Math.min(...probedTimes) : 0;
+      const retryAt = typeof store.retryAt === "string" ? Date.parse(store.retryAt) : Number.NaN;
+      if (Number.isFinite(retryAt)) {
+        this.retryAt = retryAt;
+        this.lastRefreshAttemptAt = Math.min(this.lastRefreshAttemptAt, retryAt - this.refreshIntervalMs);
+      }
     } catch {
       // This file is only a cache. A partial or hand-edited file starts cold.
     }
@@ -219,7 +248,8 @@ export class ModelProbeCache {
       if (!def.modelDiscovery || !models) continue;
       entries[name] = { adapterSignature: adapterSignature(def), models };
     }
-    const text = JSON.stringify({ version: 1, entries }, null, 2) + "\n";
+    const store: PersistedModelCache = { version: 1, entries, ...(this.retryAt !== null ? { retryAt: new Date(this.retryAt).toISOString() } : {}) };
+    const text = JSON.stringify(store, null, 2) + "\n";
     if (Buffer.byteLength(text) > MODEL_PROBE_CACHE_MAX_BYTES) return;
     const temporary = `${this.cachePath}.${process.pid}.${crypto.randomUUID()}.tmp`;
     try {
@@ -253,6 +283,12 @@ export class ModelProbeCache {
     });
     try {
       const discovery = await Promise.race([discoverModels(def, this.spawn, controller.signal), abandoned]);
+      // A discovering harness that names no model has not answered: its notes
+      // say why. Cached as an empty list, it would hide every model it had for
+      // a whole refresh interval.
+      if (def.modelDiscovery && !discovery.models?.length) {
+        return { models: null, modelsError: discovery.notes.join("; ") || "the model probe reported no models" };
+      }
       return {
         models: {
           list: discovery.models ?? [],

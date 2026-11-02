@@ -6,6 +6,7 @@ import { BUILTIN_ADAPTERS, DROID_MODEL_PROBE_SENTINEL, type AdapterDef } from ".
 import {
   bunModelProbeSpawn,
   MODEL_PROBE_MAX_BYTES,
+  MODEL_PROBE_RETRY_MS,
   ModelProbeCache,
   type ModelProbeCacheOptions,
 } from "../src/model-probes";
@@ -268,6 +269,146 @@ describe("daemon model probe cache", () => {
       models: successful,
       modelsError: "temporarily unavailable",
     });
+  });
+
+  test("a CLI that lists no models has not answered: the last list stays, the reason shows, and it is tried again soon", async () => {
+    // what `cursor-agent models` printed on one real install, then a moment when it printed nothing usable
+    const listing = "Available models\n\nauto - Auto (default)\ncomposer-2.5 - Composer 2.5\n";
+    let stdout = listing;
+    let probes = 0;
+    const now = new Date("2026-11-01T08:00:00.000Z");
+    const path = cachePath();
+    const cache = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      now: () => now,
+      spawn: () => {
+        probes++;
+        return { exitCode: 0, stdout, stderr: "" };
+      },
+    });
+    await cache.refresh();
+    const good = cache.snapshot("cursor").models;
+    expect(good?.list).toEqual(["auto", "composer-2.5"]);
+
+    stdout = "";
+    await cache.refresh();
+    expect(cache.snapshot("cursor").models).toEqual(good);
+    expect(cache.snapshot("cursor").modelsError).toContain("printed no '<id> - <display name>' records");
+    // the empty answer never reaches the disk cache
+    expect(JSON.parse(readFileSync(path, "utf8")).entries.cursor.models.list).toEqual(["auto", "composer-2.5"]);
+
+    // not a day later: a few minutes
+    probes = 0;
+    now.setTime(now.getTime() + MODEL_PROBE_RETRY_MS - 1_000);
+    await cache.refreshIfStale();
+    expect(probes).toBe(0);
+    stdout = listing;
+    now.setTime(now.getTime() + 2_000);
+    await cache.refreshIfStale();
+    expect(probes).toBe(1);
+    expect(cache.snapshot("cursor")).toEqual({ models: expect.objectContaining({ list: ["auto", "composer-2.5"] }) });
+  });
+
+  test("a restart keeps the quick retry a failed discovery scheduled", async () => {
+    const path = cachePath();
+    const now = new Date("2026-11-01T08:00:00.000Z");
+    let stdout = "auto - Auto (default)\n";
+    const first = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      now: () => now,
+      spawn: () => ({ exitCode: 0, stdout, stderr: "" }),
+    });
+    await first.refresh();
+    now.setTime(now.getTime() + 60_000);
+    stdout = "";
+    await first.refresh();
+    expect(JSON.parse(readFileSync(path, "utf8")).retryAt).toBe(new Date(now.getTime() + MODEL_PROBE_RETRY_MS).toISOString());
+
+    // the daemon restarts after the retry is due: it probes, though its last good list is from today
+    now.setTime(now.getTime() + MODEL_PROBE_RETRY_MS + 1_000);
+    let probes = 0;
+    const restarted = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      now: () => now,
+      spawn: () => {
+        probes++;
+        return { exitCode: 0, stdout: "auto - Auto (default)\n", stderr: "" };
+      },
+    });
+    await restarted.refreshIfStale();
+    expect(probes).toBe(1);
+    // a clean refresh clears the scheduled retry from disk
+    expect(JSON.parse(readFileSync(path, "utf8")).retryAt).toBeUndefined();
+  });
+
+  test("a retry abandoned by a stopping daemon stays due after the restart", async () => {
+    const path = cachePath();
+    const now = new Date("2026-11-01T08:00:00.000Z");
+    let mode: "list" | "empty" | "hang" = "list";
+    const first = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      now: () => now,
+      timeoutMs: 60_000,
+      spawn: () => mode === "hang"
+        ? new Promise(() => undefined)
+        : { exitCode: 0, stdout: mode === "list" ? "auto - Auto (default)\n" : "", stderr: "" },
+    });
+    await first.refresh();
+    now.setTime(now.getTime() + 60_000);
+    mode = "empty";
+    await first.refresh();
+    const due = JSON.parse(readFileSync(path, "utf8")).retryAt;
+    expect(due).toBeString();
+
+    now.setTime(now.getTime() + MODEL_PROBE_RETRY_MS + 1_000);
+    mode = "hang";
+    const retrying = first.refreshIfStale();
+    await Bun.sleep(10);
+    first.stop();
+    await retrying;
+    expect(JSON.parse(readFileSync(path, "utf8")).retryAt).toBe(due);
+  });
+
+  test("a missing binary does not put the cache on the quick retry", async () => {
+    let probes = 0;
+    const now = new Date("2026-11-01T08:00:00.000Z");
+    const cache = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      now: () => now,
+      spawn: () => {
+        probes++;
+        throw new Error("Executable not found in $PATH: \"cursor-agent\"");
+      },
+    });
+    await cache.refresh();
+    expect(cache.snapshot("cursor").modelsError).toBe("bin not found");
+    now.setTime(now.getTime() + MODEL_PROBE_RETRY_MS + 1_000);
+    await cache.refreshIfStale();
+    expect(probes).toBe(1);
+  });
+
+  test("an empty list an older build persisted is probed again at boot", async () => {
+    const path = cachePath();
+    const fresh = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      spawn: () => ({ exitCode: 0, stdout: "auto - Auto (default)\n", stderr: "" }),
+    });
+    await fresh.refresh();
+    const stored = JSON.parse(readFileSync(path, "utf8"));
+    stored.entries.cursor.models = { list: [], defaultModel: null, probedAt: new Date().toISOString() };
+    writeFileSync(path, JSON.stringify(stored));
+
+    let probes = 0;
+    const restored = new ModelProbeCache({ cursor: BUILTIN_ADAPTERS.cursor }, {
+      cachePath: path,
+      spawn: () => {
+        probes++;
+        return { exitCode: 0, stdout: "auto - Auto (default)\n", stderr: "" };
+      },
+    });
+    expect(restored.snapshot("cursor").models).toBeNull();
+    await restored.refreshIfStale();
+    expect(probes).toBe(1);
+    expect(restored.snapshot("cursor").models?.list).toEqual(["auto"]);
   });
 
   test("a hung injected probe is stopped by the per-probe timeout", async () => {
