@@ -7,6 +7,7 @@ import {
   SNIFF_WINDOW_BYTES,
   turnAttachmentPath,
 } from "../attachments";
+import { afterQueuedMessageCancelled } from "../domain/queued-subtask";
 import {
   cancelQueuedTaskMessage,
   getTask,
@@ -180,6 +181,7 @@ export function taskMessageRoute(req: Request, path: string, method: string): Re
       recordAudit(task.id, "workflow-pause", actor, `${paused.id} (${paused.type}) · its message ${message.id} was cancelled`);
     }
     removeMessageAttachments(task.id, message.id);
+    afterQueuedMessageCancelled(task.id);
     return json(apiTaskMessage(cancelled));
   }
   return err("method not allowed", 405);

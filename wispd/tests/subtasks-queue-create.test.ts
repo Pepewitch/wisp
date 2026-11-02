@@ -8,7 +8,10 @@ import { describe, expect, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { createTaskRoute, taskRoute } from "../src/routes/tasks";
-import { db, getTask, turnsFor } from "../src/store";
+import { taskMessageRoute } from "../src/routes/task-messages";
+import { startNextQueuedMessage } from "../src/runner";
+import { assertTaskCapacity, reserveTaskCapacity } from "../src/task-admission";
+import { createTask, createTaskMessage, db, freeSlot, getTask, newTaskId, setTaskFields, transition, turnsFor } from "../src/store";
 
 const cfg: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000", port: 0, host: "127.0.0.1", token: "test", webhooks: [], repos: [],
@@ -99,4 +102,62 @@ describe("a queued subtask", () => {
       expect({ status: response.status, body: await response.json() }).toEqual({ status: 400, body: { error } });
     }
   });
+
+  test("a full daemon makes a queued first prompt wait, not fail; it starts once a slot frees", async () => {
+    const parent = await created({ repoPath: await repo() });
+    await until(() => getTask(parent)!.state === "done");
+    const child = queuedChild(parent, "after the daemon frees up");
+    const tight: WispConfig = { ...cfg, maxConcurrentTasks: 1 };
+    const release = reserveTaskCapacity(`tfill${child}`, tight);
+    try {
+      expect(startNextQueuedMessage(child, adapters, tight)).toBeNull();
+      expect(getTask(child)).toMatchObject({ state: "queued", state_detail: "waiting for a free task slot" });
+    } finally {
+      release();
+    }
+    startNextQueuedMessage(child, adapters, tight);
+    await until(() => getTask(child)!.state === "done");
+  }, 30_000);
+
+  test("cancelling a queued subtask's first prompt leaves it waiting for you, not queued forever", async () => {
+    const parent = await created({ repoPath: await repo() });
+    await until(() => getTask(parent)!.state === "done");
+    const child = queuedChild(parent, "never mind");
+    const path = `/api/tasks/${child}/messages/mfirst${child}`;
+    const response = await taskMessageRoute(new Request(`http://wisp.test${path}`, { method: "DELETE" }), path, "DELETE")!;
+    expect(response.status).toBe(200);
+    expect(getTask(child)).toMatchObject({ state: "needs-input", state_detail: "its first prompt was cancelled before it started; send a message to start it" });
+  }, 30_000);
+
+  test("a queued subtask's setup holds a global slot only: it never blocks a sibling under the parent's cap", () => {
+    const parent = newTaskId();
+    createTask({ id: parent, title: "parent", repo_path: "/fixture", harness: "quick", model: null, slot: freeSlot() });
+    const sub = (id: string) => createTask({
+      id, title: "child", repo_path: "/fixture", harness: "quick", model: null, slot: freeSlot(),
+      subtask: { parent_task_id: parent, subtask_kind: "explore", report_to_parent: true, base_from: "project" },
+    });
+    const settingUp = newTaskId();
+    const ready = newTaskId();
+    sub(settingUp);
+    sub(ready);
+    const release = reserveTaskCapacity(settingUp, cfg, { parentId: null });
+    try {
+      expect(() => assertTaskCapacity(cfg, ready)).not.toThrow();
+    } finally {
+      release();
+    }
+  });
 });
+
+/** A subtask already set up and queued, its first prompt waiting (as task-launch.ts leaves one). */
+function queuedChild(parent: string, prompt: string): string {
+  const id = newTaskId();
+  createTask({
+    id, title: prompt, repo_path: getTask(parent)!.repo_path, harness: "quick", model: null, slot: freeSlot(),
+    subtask: { parent_task_id: parent, subtask_kind: "explore", report_to_parent: true, base_from: "project" },
+  });
+  setTaskFields(id, { worktree_path: getTask(parent)!.worktree_path, branch: `wisp/${id}` });
+  createTaskMessage({ id: `mfirst${id}`, taskId: id, text: prompt, attachmentHash: "", reportBack: true });
+  transition(id, "queued", `waiting for a subtask slot under ${parent}`);
+  return id;
+}
