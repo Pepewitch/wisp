@@ -38,6 +38,7 @@ import {
   type ReviewRow, type SupersedeCause,
 } from "../verify/reviews"
 import { fallbackAgent, infrastructureFailure } from "../verify/fallback"
+import { planReviewerResume, resumeReviewer, REVIEWER_NETWORK_RESUMES } from "../verify/reviewer-network"
 import {
   armReviewEpoch, budgetWords, latestRound, MAX_REVIEW_ROUNDS, orphanedRounds, reviewLedger, runningRounds, staleRunningRounds, type RoundRow,
 } from "../verify/rounds"
@@ -254,8 +255,11 @@ async function startRound(look: ReviewLook, number: number, counted: boolean, ca
 async function driveRound(look: ReviewLook, round: RoundRow): Promise<RoundRow | null> {
   escalate(look, round)
   const notes: string[] = []
+  // a reviewer's network resume due sooner than the next look brings that look forward
+  let delayMs = BUSY_MS
+  const lookIn = (ms: number) => { delayMs = Math.max(1_000, Math.min(delayMs, ms)) }
   for (const review of reviewsOf(round.id)) {
-    const note = review.state === "pending" ? await launchPending(look, round, review) : review.state === "running" ? await tendRunning(look, round, review) : null
+    const note = review.state === "pending" ? await launchPending(look, round, review) : review.state === "running" ? await tendRunning(look, round, review, lookIn) : null
     if (note) notes.push(note)
   }
   const settled = settleRound(round.id, look.now)
@@ -266,7 +270,7 @@ async function driveRound(look: ReviewLook, round: RoundRow): Promise<RoundRow |
     return settled
   }
   const status = notes.length > 0 ? notes.join(" · ") : "reviewing"
-  look.say("waiting", `Auto-review ${budgetWords(round.round, look.checkpoint.reviewSpent ?? 0)}${look.early ? ` (${look.early})` : ""}: ${status}`, BUSY_MS)
+  look.say("waiting", `Auto-review ${budgetWords(round.round, look.checkpoint.reviewSpent ?? 0)}${look.early ? ` (${look.early})` : ""}: ${status}`, delayMs)
   return null
 }
 
@@ -298,10 +302,11 @@ async function launchPending(look: ReviewLook, round: RoundRow, review: ReviewRo
  * One running review: a reviewer never waits on a person. A question or a
  * turn without a verdict gets one answer from Wisp; the second time, or past
  * the tier's time limit, or a task that failed or is gone, ends it as an error
- * — unless the task failed for an infrastructure reason and its role has a
- * fallback agent, which then takes the review over, once.
+ * — unless its turn ended on the network, which is resumed first, or the task
+ * failed for an infrastructure reason and its role has a fallback agent,
+ * which then takes the review over, once.
  */
-async function tendRunning(look: ReviewLook, round: RoundRow, review: ReviewRow): Promise<string | null> {
+async function tendRunning(look: ReviewLook, round: RoundRow, review: ReviewRow, lookIn: (ms: number) => void): Promise<string | null> {
   const { now } = look
   const reviewer = review.reviewer_task_id ? getTask(review.reviewer_task_id) : null
   const end = (why: string): string => {
@@ -315,7 +320,7 @@ async function tendRunning(look: ReviewLook, round: RoundRow, review: ReviewRow)
   if (review.launched_at && now.getTime() - Date.parse(review.launched_at) > limit) return end(`ran past ${limit / 60_000} minutes`)
   switch (reviewer.state) {
     case "failed":
-      return await fallBack(look, round, review, reviewer) ?? end("had its task fail")
+      return resumeOnNetwork(look, round, review, reviewer, lookIn) ?? await fallBack(look, round, review, reviewer) ?? end("had its task fail")
     case "needs-input":
       return await nudgeReviewer(review, look.start.adapters, look.start.cfg, true) ? `${letter(review)} told to decide for itself` : end("asked again instead of deciding")
     case "done":
@@ -324,6 +329,27 @@ async function tendRunning(look: ReviewLook, round: RoundRow, review: ReviewRow)
     default:
       return `${letter(review)} reviewing`
   }
+}
+
+/** A reviewer whose turn ended on the network is told to continue before its review ends or falls back (verify/reviewer-network.ts). */
+function resumeOnNetwork(look: ReviewLook, round: RoundRow, review: ReviewRow, reviewer: Task, lookIn: (ms: number) => void): string | null {
+  const now = look.now.getTime()
+  const plan = planReviewerResume(reviewer, now)
+  if (plan.kind === "none") return null
+  const of = `${plan.resume} of ${REVIEWER_NETWORK_RESUMES}`
+  if (plan.kind === "wait") {
+    lookIn(plan.at - now)
+    return `${letter(review)} lost the network — resuming in ${Math.max(1, Math.ceil((plan.at - now) / 60_000))} min (${of})`
+  }
+  if (!look.hasSlot(look.task, "reviewer")) {
+    lookIn(MOVING_MS)
+    return `${letter(review)} lost the network — resuming once a task slot is free`
+  }
+  resumeReviewer(reviewer, plan.queued, { pr: round.pr, round: round.round }, look.start.adapters, look.start.cfg)
+  if (!plan.queued) {
+    recordWorkflow(look.row.id, "review", `Round ${round.round}: reviewer ${letter(review)} lost the network — resumed (${of})`, look.now.toISOString(), null, { pr: round.pr, sha: round.head })
+  }
+  return `${letter(review)} resumed after the network dropped (${of})`
 }
 
 /**

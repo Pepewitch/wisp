@@ -3,16 +3,18 @@
  * gives the task its `network: ` detail): a pause, not a failure. The harness
  * session and the worktree survive an outage, so the task only needs telling
  * to go on. A bounded backoff from the turn's end — 1, 2, then 4 minutes —
- * and Wisp sends it one workflow message to continue, at most three in a row.
- * A turn that ends any other way starts the count over; past the third, the
- * task waits for a person like any failed task. Never for any other failure:
- * an auth, quota or limit error, or a real one, is never retried.
+ * and Wisp sends it one workflow message to continue, at most three in a row,
+ * however the turns between them started (a workflow wake counts as part of
+ * the row). A person's message, or a turn that ends any other way, starts the
+ * count over; past the third, the task waits for a person like any failed
+ * task. Never for any other failure: an auth, quota or limit error, or a real
+ * one, is never retried.
  *
  * Only for tasks under autopilot (any of its switches on): its loop is what
  * looks at a settled task again, and its rows hold the count.
  */
 import { isNetworkDetail } from "../adapters/network"
-import { getTaskMessage, latestTurnForTask, newTaskMessageId } from "../store"
+import { getTaskMessage, latestTurnForTask, newTaskMessageId, turnsFor } from "../store"
 import type { Task, Turn } from "../types"
 import { seenWake, type WorkflowRow } from "../workflows/store"
 import { MOVING_MS } from "./cadence"
@@ -34,15 +36,31 @@ export type NetworkPlan =
   /** send resume number `resume` now, under this once-only key */
   | { kind: "resume"; resume: number; key: string }
 
+/** Message origins that are a person acting now: one starts the count over. */
+const PERSON_ORIGINS = new Set(["human", "legacy"])
+
 /**
- * How many automatic resumes in a row led to `turn`: the count stands only
- * when the last resume's message is what started it. A person's message, or
- * a turn that settled any other way since, starts the count over.
+ * How many automatic resumes in a row led to `turn`. The count stands while
+ * every turn from the last resume's on ended on the network and none after it
+ * was started by a person: a workflow wake, autopilot's own message or
+ * background work that also hit the outage keeps the run going (#416), so a
+ * long outage cannot earn a heartbeat task three fresh resumes at every wake.
+ * A person's message, or a turn that settled any other way, starts it over.
  */
 export function resumesBefore(turn: Turn, checkpoint: AutopilotCheckpoint): number {
   const last = checkpoint.network
   if (!last) return 0
-  return getTaskMessage(last.messageId)?.turn_n === turn.n ? last.resumes : 0
+  const from = getTaskMessage(last.messageId)?.turn_n
+  if (from == null || from > turn.n) return 0
+  if (from === turn.n) return last.resumes
+  for (const between of turnsFor(turn.task_id)) {
+    if (between.n < from || between.n > turn.n) continue
+    if (between.status !== "failed" || !isNetworkDetail(between.failure_detail ?? null)) return 0
+    if (between.n === from) continue
+    const source = between.source_message_id ? getTaskMessage(between.source_message_id) : null
+    if (source && PERSON_ORIGINS.has(source.origin ?? "legacy")) return 0
+  }
+  return last.resumes
 }
 
 /**

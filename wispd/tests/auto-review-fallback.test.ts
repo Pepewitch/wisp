@@ -9,7 +9,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { VerificationStatus } from "../../shared/api/auto-review";
-import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
+import { BUILTIN_ADAPTERS, validateAdapters, type AdapterDef } from "../src/adapters";
 import { sweepReviews } from "../src/autopilot/auto-review";
 import { recordKillReason, startTurn } from "../src/runner";
 import { finalizeTurn } from "../src/turn-finalize";
@@ -18,7 +18,9 @@ import { formatRound } from "../src/cli-review";
 import { formatVerification } from "../src/cli-verify";
 import { LOG_DIR, loadConfig, type RepoConfig } from "../src/config";
 import type { NewTaskInput } from "../src/domain/task-create";
-import { createTask, createTurn, db, freeSlot, getTask, newTaskId, setTaskFields, settleTurn, transition } from "../src/store";
+import { NETWORK_RESUME_MESSAGE } from "../src/autopilot/network";
+import { createTask, createTaskMessage, createTurn, db, freeSlot, getTask, latestTurnForTask, messagesFor, newTaskId, newTaskMessageId, setTaskFields, settleTurn, transition } from "../src/store";
+import { planReviewerResume, REVIEWER_NETWORK_RESUMES } from "../src/verify/reviewer-network";
 import { submitVerdict } from "../src/verify/reviewer";
 import { reviewsOf, reviewTokenFor, reviewView, substituteReview, type ReviewRow } from "../src/verify/reviews";
 import { roundsOf, roundView, type RoundRow } from "../src/verify/rounds";
@@ -45,7 +47,7 @@ function launcher() {
   return { launched, launch };
 }
 
-function setup(repo: Partial<RepoConfig> = { verifySecond: "off", verifyFallback: { harness: "standin", model: "standin-1", effort: "high" } }) {
+function setup(repo: Partial<RepoConfig> = { verifySecond: "off", verifyFallback: { harness: "standin", model: "standin-1", effort: "high" } }, adapters: Record<string, AdapterDef> = ADAPTERS) {
   const clock = { now: START + 10 * 60_000 };
   const { state, github } = fakeGitHub();
   const ctl = launcher();
@@ -53,19 +55,92 @@ function setup(repo: Partial<RepoConfig> = { verifySecond: "off", verifyFallback
   setAutopilot(task.id, { autoMerge: true, autoFix: false, autoReview: true });
   seed(task.id, clock);
   const cfg = { ...loadConfig(), repos: [{ path: "/fixture/repo", ...repo }] };
-  const rt = runtime(github, clock, ADAPTERS, cfg, undefined, { launch: ctl.launch });
+  const rt = runtime(github, clock, adapters, cfg, undefined, { launch: ctl.launch });
   return { clock, state, task, rt, ...ctl };
 }
 
 const latest = (taskId: string): RoundRow => roundsOf(taskId)[0]!;
 const roleOf = (round: RoundRow, role: "primary" | "second"): ReviewRow => reviewsOf(round.id).find((review) => review.role === role)!;
 
-/** A reviewer task whose turn failed with this detail, settled as turn-finalize.ts settles one. */
-function failAfterTurn(taskId: string, detail: string): void {
+/**
+ * A reviewer task whose turn failed with this detail, settled as
+ * turn-finalize.ts settles one. A network failure comes with its resumes
+ * already spent (verify/reviewer-network.ts), so what follows is the fallback
+ * these tests are about; `resumable` leaves them unspent.
+ */
+function failAfterTurn(taskId: string, detail: string, resumable = false): void {
+  if (detail.startsWith("network: ") && !resumable) {
+    for (let i = 0; i < REVIEWER_NETWORK_RESUMES; i++) {
+      const id = newTaskMessageId();
+      createTaskMessage({ id, taskId, text: NETWORK_RESUME_MESSAGE, attachmentHash: "", origin: "workflow", source: { by: "autopilot", kind: "network-resume", pr: 7, round: 1, rounds: null } });
+      db.run("UPDATE task_messages SET status = 'delivered' WHERE id = ?", [id]);
+    }
+  }
   const n = (db.query("SELECT COUNT(*) AS n FROM turns WHERE task_id = ?").get(taskId) as { n: number }).n + 1;
   const turnId = createTurn(taskId, n, "review", null, join(LOG_DIR, `${taskId}-${n}.log`), null);
   settleTurn(turnId, { status: "failed", exitCode: 1, result: null }, taskId, "failed", detail);
 }
+
+describe("a reviewer whose turn ended on the network (#411)", () => {
+  test("is told to continue after the backoff, before any fallback and without spending its nudge", async () => {
+    // the reviewer's harness answers whatever it is sent
+    const fake = validateAdapters({ fake: { bin: "bash", exec: ["-c", "printf 'continuing the review\\n'"], parse: { format: "text" } } }).fake!;
+    const { clock, task, rt, launched } = setup(undefined, { ...ADAPTERS, fake });
+    await pass(rt, task.id, clock);
+    const first = roleOf(latest(task.id), "primary");
+    const reviewer = first.reviewer_task_id!;
+    setTaskFields(reviewer, { worktree_path: mkdtempSync(join(tmpdir(), "wisp-reviewer-network-")) });
+    failAfterTurn(reviewer, "network: turn exited 1: getaddrinfo ENOTFOUND api.example.test", true);
+    const resumes = () => messagesFor(reviewer).filter((message) => message.text === NETWORK_RESUME_MESSAGE);
+    const ended = Date.parse(latestTurnForTask(reviewer)!.ended_at!);
+
+    clock.now = ended + 30_000;
+    await pass(rt, task.id, clock);
+    expect(resumes()).toEqual([]);
+    expect(autopilotStatus(task.id)?.reason).toContain("A lost the network — resuming in 1 min (1 of 3)");
+    // the next look is the resume's own minute, not the round's usual twenty
+    const next = (db.query("SELECT next_check_at FROM workflows WHERE task_id = ? AND type = 'pr-autopilot'").get(task.id) as { next_check_at: string }).next_check_at;
+    expect(Date.parse(next)).toBe(ended + 60_000);
+
+    clock.now = ended + 60_000;
+    await pass(rt, task.id, clock);
+    expect(resumes()).toHaveLength(1);
+    expect(JSON.parse(resumes()[0]!.source_json!)).toMatchObject({ by: "autopilot", kind: "network-resume", pr: 7, round: 1 });
+    // the same reviewer goes on: no fallback, the review still running, its one nudge unspent
+    expect(launched).toHaveLength(1);
+    expect(roleOf(latest(task.id), "primary")).toMatchObject({ id: first.id, state: "running", reviewer_task_id: reviewer, nudged: 0 });
+    expect(autopilotHistory(task.id).map((entry) => entry.detail)).toContain("Round 1: reviewer A lost the network — resumed (1 of 3)");
+    await until(() => getTask(reviewer)?.state === "done", "the resumed reviewer turn to finish");
+    expect(latestTurnForTask(reviewer)).toMatchObject({ status: "done", result: "continuing the review" });
+  });
+
+  test("backs off 1, 2, then 4 minutes, never resumes a fourth time, and never sends a second resume while one waits to start", () => {
+    const id = newTaskId();
+    createTask({ id, title: "reviewer", repo_path: "/fixture/repo", harness: "fake", model: null, slot: freeSlot() });
+    created.push(id);
+    const resume = (status: "queued" | "delivered") => {
+      const message = newTaskMessageId();
+      createTaskMessage({ id: message, taskId: id, text: NETWORK_RESUME_MESSAGE, attachmentHash: "", origin: "workflow", source: { by: "autopilot", kind: "network-resume", pr: 7, round: 1, rounds: null } });
+      if (status === "delivered") db.run("UPDATE task_messages SET status = 'delivered' WHERE id = ?", [message]);
+      return message;
+    };
+    for (const [n, backoff] of [[1, 60_000], [2, 120_000], [3, 240_000]] as const) {
+      failAfterTurn(id, "network: connection refused", true);
+      const ended = Date.parse(latestTurnForTask(id)!.ended_at!);
+      expect(planReviewerResume(getTask(id)!, ended + backoff - 1)).toEqual({ kind: "wait", resume: n, at: ended + backoff });
+      expect(planReviewerResume(getTask(id)!, ended + backoff)).toEqual({ kind: "resume", resume: n, queued: null });
+      // sent but not started yet (no free slot): that one is started again, never a second
+      const queued = resume("queued");
+      expect(planReviewerResume(getTask(id)!, ended + backoff + 60_000)).toEqual({ kind: "resume", resume: n, queued });
+      db.run("UPDATE task_messages SET status = 'delivered' WHERE id = ?", [queued]);
+    }
+    failAfterTurn(id, "network: connection refused", true);
+    expect(planReviewerResume(getTask(id)!, Date.now() + 60 * 60_000)).toEqual({ kind: "none" });
+    // another failure is never resumed
+    transition(id, "failed", "turn exited 1: Invalid API key · Please run /login");
+    expect(planReviewerResume(getTask(id)!, Date.now() + 60 * 60_000)).toEqual({ kind: "none" });
+  });
+});
 
 describe("an infrastructure failure falls back, once", () => {
   const classes: [string, (taskId: string) => void, string][] = [

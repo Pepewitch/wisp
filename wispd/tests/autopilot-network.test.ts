@@ -14,7 +14,7 @@ import { NETWORK_RESUME_MESSAGE } from "../src/autopilot/network";
 import { autopilotHistory, autopilotStatus, checkAutopilotOnTaskEvent, setAutopilot } from "../src/autopilot/store";
 import { listTasksRoute } from "../src/routes/tasks";
 import { startNextQueuedMessage } from "../src/runner";
-import { db, getTask, latestTurnForTask, messagesFor, runningTurn, setTaskFields } from "../src/store";
+import { createTaskMessage, db, getTask, latestTurnForTask, messagesFor, newTaskMessageId, runningTurn, setTaskFields } from "../src/store";
 import type { ApiTaskListItem } from "../src/types";
 import { doneTask, fakeGitHub, forgetTasks, pass, queue, runtime, seed, until } from "./autopilot-harness";
 
@@ -67,6 +67,7 @@ async function lookAfter(t: { rt: ReturnType<typeof runtime>; clock: { now: numb
 }
 
 const workflowMessages = (taskId: string) => messagesFor(taskId).filter((message) => message.origin === "workflow");
+const resumes = (taskId: string) => workflowMessages(taskId).filter((message) => message.text === NETWORK_RESUME_MESSAGE);
 const nextCheckAt = (taskId: string) =>
   Date.parse((db.query("SELECT next_check_at FROM workflows WHERE task_id = ? AND type = 'pr-autopilot'").get(taskId) as { next_check_at: string }).next_check_at);
 
@@ -159,6 +160,33 @@ describe("a turn that ended on the network, under autopilot", () => {
     expect(workflowMessages(t.task.id)).toHaveLength(3);
     await settled(t.task.id);
     expect(getTask(t.task.id)!.state).toBe("done");
+  });
+
+  test("a workflow wake whose turn drops too keeps the count: a long outage gets three resumes, not three per wake (#416)", async () => {
+    const t = await armedTask(["net"]);
+    const wake = async () => {
+      createTaskMessage({ id: newTaskMessageId(), taskId: t.task.id, text: "Heartbeat: check on the build.", attachmentHash: "", origin: "workflow" });
+      expect(startNextQueuedMessage(t.task.id, t.adapters, loadConfig())).not.toBeNull();
+      await settled(t.task.id);
+    };
+    await lookAfter(t, 60_000);
+    await settled(t.task.id);
+    // the heartbeat wakes it during the outage; that turn drops as well
+    await wake();
+    await lookAfter(t, 30_000);
+    expect(autopilotStatus(t.task.id).network).toMatchObject({ resume: 2 });
+    for (const waitMs of [120_000, 240_000]) {
+      await lookAfter(t, waitMs);
+      await settled(t.task.id);
+    }
+    expect(resumes(t.task.id)).toHaveLength(3);
+    // spent: later wakes that drop send no more resumes, and the task waits for a person
+    await wake();
+    await lookAfter(t, 60 * 60_000);
+    await wake();
+    await lookAfter(t, 60 * 60_000);
+    expect(resumes(t.task.id)).toHaveLength(3);
+    expect(autopilotStatus(t.task.id)).toMatchObject({ network: null, reason: "The task failed — waiting for you" });
   });
 
   test("a person's own message while it is paused goes at once, as always, and counts as theirs", async () => {
