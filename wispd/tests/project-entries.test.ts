@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { ProjectEntriesResponse } from "../../shared/api/project-entries";
 import { CONFIG_PATH, type WispConfig } from "../src/config";
 import { serve } from "../src/daemon";
-import { ENTRY_CAP, listProjectEntries, projectDirSegments, SCAN_CAP } from "../src/project-entries";
+import { ENTRY_CAP, LISTING_SLOTS, listProjectEntries, projectDirSegments, SCAN_CAP } from "../src/project-entries";
 import { GIT, type IgnoreGit } from "../src/project-ignore";
 
 const token = "project-entries-token";
@@ -163,7 +163,7 @@ describe("GET /api/projects/entries", () => {
     expect(body.truncated).toBe(true);
   });
 
-  test("a link into .git is neither listed nor listable; any other link is judged by its own name", async () => {
+  test("a link into .git is neither listed nor listable; a link to an ignored folder is left out", async () => {
     const { root } = makeProject();
     symlinkSync(join(root, ".git"), join(root, "gitlink"));
     symlinkSync(join(root, ".git/HEAD"), join(root, "head-link"));
@@ -172,12 +172,62 @@ describe("GET /api/projects/entries", () => {
     const names = (await listing(await entries(base, root))).entries.map((entry) => entry.name);
     expect(names).not.toContain("gitlink");
     expect(names).not.toContain("head-link");
-    // `deps` leads to the ignored node_modules, but its own name is not ignored
-    expect(names).toContain("deps");
+    // `deps` is not ignored by its own name, but it leads to the ignored
+    // node_modules, where it would list nothing
+    expect(names).not.toContain("deps");
+    expect(names).toContain("src-link");
     const refused = await entries(base, root, "gitlink");
     expect(refused.status).toBe(403);
     expect(await refused.text()).not.toContain("HEAD");
     expect((await entries(base, root, "gitlink/refs")).status).toBe(403);
+  });
+
+  test("a link into a nested repository's .git is neither listed nor listable", async () => {
+    const { root } = makeProject();
+    mkdirSync(join(root, "nested"));
+    git(join(root, "nested"), ["init", "-q"]);
+    symlinkSync(join(root, "nested/.git"), join(root, "nested-git"));
+    symlinkSync(join(root, "nested/.git/HEAD"), join(root, "nested-head"));
+    const base = await startServer([root]);
+    const names = (await listing(await entries(base, root))).entries.map((entry) => entry.name);
+    expect(names).toContain("nested");
+    expect(names).not.toContain("nested-git");
+    expect(names).not.toContain("nested-head");
+    expect((await entries(base, root, "nested-git")).status).toBe(403);
+  });
+
+  test("a git that cannot judge a link's target hides no link", async () => {
+    const { root } = makeProject();
+    symlinkSync(join(root, "node_modules"), join(root, "deps"));
+    let call = 0;
+    const flaky: IgnoreGit = {
+      // the listed folder's check answers; the link-target check from the root fails
+      checkIgnore: (cwd, paths) => (++call === 1 ? GIT.checkIgnore(cwd, paths) : Promise.resolve({ ok: false, detail: "pathspec is in submodule" })),
+      outsideRepository: async () => false,
+    };
+    const body = await listProjectEntries(root, "", "", flaky);
+    expect("entries" in body && body.entries.map((entry) => entry.name)).toContain("deps");
+  });
+
+  test("listings run a few at a time, daemon-wide", async () => {
+    const { root } = makeProject();
+    let inFlight = 0;
+    let peak = 0;
+    const slow: IgnoreGit = {
+      async checkIgnore(cwd, paths) {
+        peak = Math.max(peak, (inFlight += 1));
+        await Bun.sleep(20);
+        try {
+          return await GIT.checkIgnore(cwd, paths);
+        } finally {
+          inFlight -= 1;
+        }
+      },
+      outsideRepository: (cwd) => GIT.outsideRepository(cwd),
+    };
+    const all = await Promise.all(Array.from({ length: LISTING_SLOTS * 3 }, () => listProjectEntries(root, "src", "", slow)));
+    expect(all.every((body) => "entries" in body)).toBe(true);
+    expect(peak).toBeLessThanOrEqual(LISTING_SLOTS);
   });
 
   test("a link is ignored by its own name", async () => {

@@ -1,7 +1,8 @@
 import { opendir, realpath, stat } from "node:fs/promises";
-import { isAbsolute, join, sep } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import type { ProjectEntriesResponse, ProjectEntry } from "../../shared/api/project-entries";
 import { GIT, ignoredNames, IgnoreRulesUnreadable, type IgnoreGit } from "./project-ignore";
+import { Semaphore } from "./subprocess";
 
 /**
  * One directory of a registered project, for the composer's `@` list.
@@ -12,14 +13,25 @@ import { GIT, ignoredNames, IgnoreRulesUnreadable, type IgnoreGit } from "./proj
  * symlink inside the listing that leads out of the root is left out the same
  * way, so the list never offers a path the next request would refuse.
  *
- * `.git` is never listed or listable, by name or by a link's real path, nor
- * is anything git ignores (project-ignore.ts: one check in the repository
- * that owns the folder, submodules included; a git that cannot answer fails
- * the request), and tracked files stay listed even when a pattern matches
- * them (git's own rule). A symlink is judged by its own name. A folder git ignores can
+ * `.git` is never listed or listable, by name or by a link's real path (the
+ * root's or a nested repository's), nor is anything git ignores
+ * (project-ignore.ts: one check in the repository that owns the folder,
+ * submodules included; a git that cannot answer fails the request), and
+ * tracked files stay listed even when a pattern matches them (git's own
+ * rule). A symlink is judged by its own name, and a link to a folder git
+ * ignores is left out too, since it would list nothing. A folder git ignores can
  * still be named outright (`dir=node_modules/react`); it is only never
  * offered.
  */
+
+/**
+ * Listings at once, daemon-wide. One listing runs at most two git processes,
+ * but nothing bounded how many listings a tight client loop could start;
+ * later ones wait their turn rather than being refused, since the composer
+ * only shows the newest answer anyway.
+ */
+export const LISTING_SLOTS = 4;
+const listings = new Semaphore(LISTING_SLOTS);
 
 /** The most rows one listing serves; the composer shows a handful of them. */
 export const ENTRY_CAP = 500;
@@ -42,12 +54,26 @@ function inside(root: string, path: string): boolean {
   return path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
 }
 
+/** Whether `path`, inside `root`, sits in any repository's metadata: the root's `.git` or a nested one's. */
+function inGitMetadata(root: string, path: string): boolean {
+  return relative(root, path).split(sep).includes(".git");
+}
+
 /** Lists `dir` under `root`, which the caller has already matched to a registered project; `filter` keeps names containing it. */
-export async function listProjectEntries(
+export function listProjectEntries(
   root: string,
   dir: string,
   filter = "",
   ignoreGit: IgnoreGit = GIT,
+): Promise<ProjectEntriesResponse | EntriesRefusal> {
+  return listings.run(() => listEntries(root, dir, filter, ignoreGit));
+}
+
+async function listEntries(
+  root: string,
+  dir: string,
+  filter: string,
+  ignoreGit: IgnoreGit,
 ): Promise<ProjectEntriesResponse | EntriesRefusal> {
   const segments = projectDirSegments(dir);
   if (!Array.isArray(segments)) return segments;
@@ -67,7 +93,7 @@ export async function listProjectEntries(
   }
   if (!inside(realRoot, realDir)) return { status: 403, error: "dir resolves outside the project" };
   // a link to .git passes the containment check above: refuse it by where it lands
-  if (inside(join(realRoot, ".git"), realDir)) return { status: 403, error: "dir resolves into .git" };
+  if (inGitMetadata(realRoot, realDir)) return { status: 403, error: "dir resolves into .git" };
 
   const scanned = await scanDirectory(realRoot, realDir, filter.toLowerCase());
   let ignored: Set<string>;
@@ -78,8 +104,10 @@ export async function listProjectEntries(
     if (e instanceof IgnoreRulesUnreadable) return { status: 500, error: e.message };
     throw e;
   }
-  const kept = scanned.entries
-    .filter((entry) => !ignored.has(entry.asked))
+  const listed = scanned.entries.filter((entry) => !ignored.has(entry.asked));
+  const hidden = await ignoredLinkTargets(realRoot, listed, ignoreGit);
+  const kept = listed
+    .filter((entry) => !hidden.has(entry))
     .map(({ name, kind }): ProjectEntry => ({ name, kind }))
     .sort(compareEntries);
   return {
@@ -95,8 +123,27 @@ export async function listProjectEntries(
  * A scanned row, and the name git is asked about in the listed folder (see
  * project-ignore.ts): a folder with the trailing `/` that `dir/` patterns
  * need; a symlink by its own name, as the file git sees, whatever it leads to.
+ * A link to a folder also keeps where it leads, relative to the root.
  */
-type ScannedEntry = ProjectEntry & { asked: string };
+type ScannedEntry = ProjectEntry & { asked: string; target?: string };
+
+/**
+ * The links to folders whose target git ignores (`deps -> node_modules`):
+ * offered, they would open onto a listing with nothing in it. One batched
+ * check from the root, and only when the listing has such links. Best effort:
+ * a git that cannot answer (a target inside a submodule, say) hides none, and
+ * the listing stands as the link's own name judged it.
+ */
+async function ignoredLinkTargets(realRoot: string, entries: ScannedEntry[], ignoreGit: IgnoreGit): Promise<Set<ScannedEntry>> {
+  const links = entries.filter((entry) => entry.target !== undefined && entry.target !== "");
+  if (links.length === 0) return new Set();
+  try {
+    const ignored = await ignoredNames(realRoot, links.map((entry) => `${entry.target}/`), ignoreGit);
+    return new Set(links.filter((entry) => ignored.has(`${entry.target}/`)));
+  } catch {
+    return new Set();
+  }
+}
 
 function compareEntries(a: ProjectEntry, b: ProjectEntry): number {
   if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
@@ -143,11 +190,12 @@ function direntEntry(name: string, kind: ProjectEntry["kind"] | null): ScannedEn
 async function linkEntry(realRoot: string, path: string, name: string): Promise<ScannedEntry | null> {
   try {
     const target = await realpath(path);
-    if (!inside(realRoot, target) || inside(join(realRoot, ".git"), target)) return null;
+    if (!inside(realRoot, target) || inGitMetadata(realRoot, target)) return null;
     const info = await stat(target);
     const kind = info.isDirectory() ? "dir" : info.isFile() ? "file" : null;
     // listed as what it leads to; judged by git as itself
-    return kind ? { name, kind, asked: name } : null;
+    if (!kind) return null;
+    return kind === "dir" ? { name, kind, asked: name, target: relative(realRoot, target).split(sep).join("/") } : { name, kind, asked: name };
   } catch {
     return null;
   }
