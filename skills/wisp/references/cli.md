@@ -292,7 +292,8 @@ a Claude Monitor, or a Droid `fireAndForget` command or background subagent
 watching CI. Wisp keeps that harness alive and wakes the agent when the work
 finishes. The printed line then says `done · 1 background process running`,
 and a note on stderr points at `--settled`. With `--settled`, a done task ends
-the wait only once that work is gone. A process a finished harness merely left
+the wait only once that work is gone and Wisp has let the harness go, a few
+seconds later. A process a finished harness merely left
 behind, such as a dev server, has no agent to wake: the line still reports it,
 but it never holds the wait.
 

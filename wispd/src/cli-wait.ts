@@ -40,7 +40,7 @@ type WaitTask = Pick<ApiTask, "id" | "state" | "state_detail" | "background">;
  * snapshot marks every group so). A process a finished harness merely left
  * behind, such as a dev server, has no `tasks`, no agent to wake, and never
  * holds the wait. A kept harness with nothing left closes itself within
- * seconds.
+ * seconds, or after about 45 s when Droid's completion message was missed.
  */
 function agentWillWake(task: WaitTask): boolean {
   const background = task.background;
