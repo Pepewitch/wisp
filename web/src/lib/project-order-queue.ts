@@ -1,5 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query"
 
+import { STALE_ORDER } from "../../../shared/api/projects"
 import { moveProject, reorderRepos } from "@/lib/projects"
 import type { ConnectionQueryKeys } from "@/lib/query"
 import { ApiError, type DaemonTransport } from "@/lib/transport"
@@ -110,14 +111,15 @@ export class ProjectOrderQueue {
     if (queued) return this.#send(this.#shown() ?? queued)
     this.#inFlight = false
     const saved = this.#state.pending
-    const before = this.#client.getQueryState(this.#reposKey)?.dataUpdatedAt ?? 0
+    // a count, not a timestamp: two reads can land within the same millisecond
+    const before = this.#client.getQueryState(this.#reposKey)?.dataUpdateCount ?? 0
     // "all": with the sidebar unmounted (another connection showing) the
     // read still lands before `pending` clears, so coming back shows no stale order
     await this.#client.invalidateQueries({ queryKey: this.#reposKey, refetchType: "all" })
     // a move made while the list was being read owns `pending` now
     if (this.#inFlight || this.#state.pending !== saved) return
     // a failed read resolves too, and leaves the pre-save list in the cache
-    if ((this.#client.getQueryState(this.#reposKey)?.dataUpdatedAt ?? 0) > before) this.#clear(saved)
+    if ((this.#client.getQueryState(this.#reposKey)?.dataUpdateCount ?? 0) > before) this.#clear(saved)
     else this.#clearOnNextRead(saved)
   }
 
@@ -148,12 +150,10 @@ export class ProjectOrderQueue {
   }
 }
 
-/** How the daemon's own 409 for this save begins (routes/projects.ts STALE_ORDER): a project was added or removed. */
-const STALE_ORDER = "The project list changed since it was loaded."
-
 function refusal(error: unknown): string {
-  // Only the daemon's membership refusal gets this copy; any other 409 (a
-  // Desktop proxy's, which names itself in `code`) says what it means.
+  // Only the daemon's membership refusal (STALE_ORDER, then its detail) gets
+  // this copy; any other 409 (a Desktop proxy's, which names itself in
+  // `code`) says what it means.
   if (error instanceof ApiError && error.status === 409 && error.code === null && error.message.startsWith(STALE_ORDER)) {
     return "the project list changed while it was being saved (a project was added or removed), so the new order was not kept. Move it again."
   }
