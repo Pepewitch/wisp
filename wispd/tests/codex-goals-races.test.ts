@@ -122,6 +122,29 @@ describe("Codex Goal continuations, in every order", () => {
     expect(h.process.phase).toBe("closing");
   });
 
+  test("one read carrying turn/start's answer, the whole turn, and the goal's next turn loses none of them", async () => {
+    const h = await booted();
+    h.feed(goal("active"), said("turn-1", "one"), completed("turn-1"));
+    h.settles.shift()!();
+    await tick();
+    const mine = { turnId: 52, turn: 2, sink: recorder() };
+    const adopting = h.process.adopt(mine, "next step", [], "m4");
+    const start = await request(h.sink, "turn/start", 2);
+    // handled in one go, before the answer's promise resolves
+    h.feed(
+      { id: start.id, result: { turn: { id: "turn-2" } } },
+      started("turn-2"), said("turn-2", "two"), completed("turn-2"),
+      started("turn-3"), said("turn-3", "three"), goal("complete"), completed("turn-3"),
+    );
+    await adopting;
+    expect(texts(mine.sink)).toEqual(["two"]);
+    // turn 2 settles, then the goal's own turn 3 opens with its words
+    h.settles.shift()!();
+    await tick();
+    expect(h.woke).toHaveLength(1);
+    expect(texts(h.woke[0]!.sink as never)).toEqual(["three"]);
+  });
+
   test("its own turn/started arriving before turn/start's answer is the message's turn", async () => {
     const h = await booted();
     h.feed(goal("active"), said("turn-1", "one"), completed("turn-1"));

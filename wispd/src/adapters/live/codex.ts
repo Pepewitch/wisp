@@ -270,10 +270,14 @@ export class CodexLiveDriver {
   private readonly previousLastCall: Record<string, number> | null;
   /** Usage updates that arrived before the turn's id was known; `adoptTurn` sorts them. */
   private heldUsage: Record<string, any>[] = [];
-  /** A turn/start Wisp sent after its turn ended is awaiting its answer: a turn/started now may be that one. */
-  private starting = false;
-  /** Completions that came while it awaited (one stdout read can carry a whole quick turn): judged once its id is known. */
-  private deferredCompletions: Record<string, any>[] = [];
+  /**
+   * A turn/start Wisp sent after its turn ended is awaiting its answer. One
+   * stdout read can carry that answer, the whole turn it started, and the
+   * goal's next turn after it, all handled before the answer's promise
+   * resolves: every notification meanwhile waits here, and is handled in
+   * order once the answer has named the turn.
+   */
+  private starting: Record<string, unknown>[] | null = null;
   /** The thread's goal as last reported; null when it has none or none was reported. */
   private goalValue: CodexGoal | null = null;
   /** The last report handed to `onUsage`, serialized, so an unchanged re-send writes nothing. */
@@ -417,26 +421,24 @@ export class CodexLiveDriver {
     const tier = speedTier(this.options.def, this.options.fast);
     if (tier) params.serviceTier = tier;
     this.reopen();
-    this.starting = true;
-    this.deferredCompletions = [];
+    this.starting = [];
     let turn: Record<string, any>;
     try {
       turn = record(record(await this.call("turn/start", params)).turn);
     } catch (error) {
+      // refused: the caller hands the message back and lets the process go
+      this.starting = null;
       this.terminal = true;
       throw error;
-    } finally {
-      this.starting = false;
     }
-    const deferred = this.deferredCompletions;
-    this.deferredCompletions = [];
+    const waiting = this.starting;
+    this.starting = null;
     if (typeof turn.id !== "string" || !turn.id) {
       this.terminal = true;
       throw new Error("Codex started without returning a turn id");
     }
     this.adoptTurn(turn.id);
-    // only this turn's own completion counts; another turn's is not ours to settle
-    for (const params of deferred) if (str(record(params.turn).id) === turn.id) this.turnCompleted(params);
+    for (const frame of waiting) this.handle(frame as RpcFrame);
   }
 
   async send(messageId: string, input: CodexLiveInput[]): Promise<void> {
@@ -522,6 +524,10 @@ export class CodexLiveDriver {
   handle(frame: RpcFrame): void {
     if (this.peer.handle(frame)) return;
     if (typeof frame.method !== "string") return;
+    if (this.starting && frame.id === undefined) {
+      this.starting.push(frame as Record<string, unknown>);
+      return;
+    }
     const params = record(frame.params);
     switch (frame.method) {
       case "item/started":
@@ -563,7 +569,7 @@ export class CodexLiveDriver {
 
   private turnStarted(params: Record<string, any>): void {
     const turnId = str(record(params.turn).id);
-    if (!turnId || str(params.threadId) !== this.threadId || this.starting) return;
+    if (!turnId || str(params.threadId) !== this.threadId) return;
     if (this.terminal && turnId !== this.turnId) {
       // Ours ended, and the app-server went on by itself (an active Goal):
       // everything from here is that turn's, recorded or not.
@@ -585,11 +591,6 @@ export class CodexLiveDriver {
 
   private turnCompleted(params: Record<string, any>): void {
     if (this.terminal) return;
-    // while a turn/start is unanswered, a parent completion is not yet known to be ours
-    if (this.starting && str(params.threadId) === this.threadId) {
-      this.deferredCompletions.push(params);
-      return;
-    }
     const turn = record(params.turn);
     const threadId = str(params.threadId);
     if (threadId && this.threadId && threadId !== this.threadId) {

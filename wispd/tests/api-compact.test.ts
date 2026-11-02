@@ -3,6 +3,7 @@ import { rmSync, writeFileSync } from "node:fs";
 import { ADAPTERS_PATH, CONFIG_PATH, type WispConfig } from "../src/config";
 import { serve } from "../src/daemon";
 import { taskAudit } from "../src/task-audit";
+import { forgetLiveProcess, registerLiveProcess, type LingeringLiveProcess } from "../src/live-input";
 import { createTask, createTurn, freeSlot, getTask, messagesFor, newTaskId, setTaskContextFields, setTaskFields, transition } from "../src/store";
 
 /**
@@ -185,6 +186,27 @@ describe("POST /api/tasks/:id/compact (A5)", () => {
     res = await api(base, `/api/tasks/${runningId}/compact`);
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("turn 1 is still running — compaction waits for it");
+  });
+
+  test("a harness still alive past its answer (background work, a Codex goal) holds compaction back", async () => {
+    let opens = 0;
+    const base = await startServer({
+      compactOpenRpc: () => {
+        opens += 1;
+        return { call: () => Promise.resolve({}), close() {} };
+      },
+    });
+    const id = compactTask();
+    const lingering = { phase: "lingering", turnId: 1 } as unknown as LingeringLiveProcess;
+    registerLiveProcess(id, lingering);
+    try {
+      const res = await api(base, `/api/tasks/${id}/compact`);
+      expect(res.status).toBe(409);
+      expect((await res.json()).error).toBe("the harness is still running for the last turn's background work or goal — compaction waits for it");
+      expect(opens).toBe(0);
+    } finally {
+      forgetLiveProcess(id, lingering);
+    }
   });
 
   test("a session-less task is told the truth: 409, nothing spawned", async () => {
