@@ -77,29 +77,24 @@ interface SettledTurn {
   source_message_id: string | null;
 }
 
-/** Whether the parent, or autopilot, started this turn: those report through other means or not at all. */
+/**
+ * Whether the parent, or autopilot, started this turn: those report through
+ * other means or not at all, unless the parent marked its message to report
+ * back (`wisp send --report`). A marked message never steers
+ * (task-submit.ts deliverToRunningTurn), so it is always the one that started
+ * the turn answering it; the child's own later turns carry no mark, so the
+ * loop breaker still holds for them.
+ */
 function startedByParentOrAutopilot(turn: SettledTurn, parentId: string): boolean {
   if (!turn.source_message_id) return false;
-  const message = db.query(`SELECT m.actor, w.type AS workflow_type FROM task_messages m
-    LEFT JOIN workflows w ON w.id = m.workflow_id WHERE m.id = ?`).get(turn.source_message_id) as { actor: string | null; workflow_type: string | null } | null;
-  if (!message) return false;
+  const message = db.query(`SELECT m.actor, m.report_back, w.type AS workflow_type FROM task_messages m
+    LEFT JOIN workflows w ON w.id = m.workflow_id WHERE m.id = ?`).get(turn.source_message_id) as
+    { actor: string | null; report_back: number | null; workflow_type: string | null } | null;
+  if (!message || message.report_back === 1) return false;
   // the loop breaker: a child turn the parent's own message started reports nothing back
   if (message.actor === `agent:${parentId}`) return true;
   // autopilot's turns (a fix round, a network resume, a review bounce) report through their PR event
   return message.workflow_type === "pr-autopilot";
-}
-
-/**
- * Whether the parent asked this turn to report back (`wisp send --report`):
- * a marked message started it. A marked message never steers
- * (task-submit.ts deliverToRunningTurn), so it always starts the turn that
- * answers it. The mark is the parent's, once: the child's own later turns
- * carry none, so the loop breaker still holds for them.
- */
-function reportRequested(turn: SettledTurn): boolean {
-  return Boolean(db.query(`SELECT 1 FROM task_messages
-    WHERE task_id = ? AND turn_n = ? AND status = 'delivered' AND delivery = 'started' AND report_back = 1 LIMIT 1`)
-    .get(turn.task_id, turn.n));
 }
 
 /** Whether this child task reports to a parent at all: what `wisp send --report` needs. */
@@ -111,13 +106,13 @@ export function reportsToParent(taskId: string): boolean {
  * A settled turn's report, inside settleTurn's transaction. Done (including
  * one that ends needing input) and failed turns report; interrupted turns,
  * background follow-ups, and turns the parent or autopilot started do not,
- * unless the parent asked that turn to report back.
+ * unless the parent's message asked to report back.
  */
 export function recordTurnReport(turnId: number, state: string): void {
   const turn = db.query("SELECT task_id, n, status, origin, result, source_message_id FROM turns WHERE id = ?").get(turnId) as SettledTurn | null;
   if (!turn || (turn.status !== "done" && turn.status !== "failed") || turn.origin === "background") return;
   const child = reportingChild(turn.task_id);
-  if (!child || (startedByParentOrAutopilot(turn, child.parent_task_id) && !reportRequested(turn))) return;
+  if (!child || startedByParentOrAutopilot(turn, child.parent_task_id)) return;
   const outcome = turn.status === "failed" ? "failed" : state === "needs-input" ? "needs input" : "done";
   record(child, `turn:${turn.n}`, { kind: "turn", turn: turn.n, outcome }, turn.result);
 }

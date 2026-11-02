@@ -55,16 +55,24 @@ export function sendTaskBodyError(body: SendTaskBody, reportsToParent: () => boo
   if (body.when !== undefined && (typeof body.when !== "string" || !SEND_WHEN.includes(body.when))) {
     return err(`when must be one of ${SEND_WHEN.join(", ")}`, 400);
   }
-  if (body.report !== undefined && typeof body.report !== "boolean") {
-    return err(`report must be a boolean, got ${typeName(body.report)}`, 400);
-  }
-  if (body.report === true && !reportsToParent()) return err("report needs a subtask that reports to its parent", 400);
+  const report = reportBodyError(body, reportsToParent);
+  if (report) return report;
   if (
     body.clientMessageId !== undefined &&
     (typeof body.clientMessageId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(body.clientMessageId))
   ) {
     return err("clientMessageId must be 8-80 letters, numbers, '_' or '-'", 400);
   }
+  return null;
+}
+
+/** `report` (wisp send --report): a boolean, for a subtask that reports to its parent, never with "now". */
+function reportBodyError(body: SendTaskBody, reportsToParent: () => boolean): Response | null {
+  if (body.report === undefined) return null;
+  if (typeof body.report !== "boolean") return err(`report must be a boolean, got ${typeName(body.report)}`, 400);
+  if (body.report && !reportsToParent()) return err("report needs a subtask that reports to its parent", 400);
+  // a report message never steers, so "now" could only stop the running turn
+  if (body.report && body.when === "now") return err("report cannot be sent with when: now; it waits for the running turn", 400);
   return null;
 }
 

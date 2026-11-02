@@ -108,6 +108,8 @@ describe("the subtask API", () => {
     const parent = await parentTask();
     const refused = await call(`/api/tasks/${parent}/send`, "POST", { message: "and?", report: true });
     expect({ status: refused.status, body: await refused.json() }).toEqual({ status: 400, body: { error: "report needs a subtask that reports to its parent" } });
+    const now = await call(`/api/tasks/${parent}/send`, "POST", { message: "and?", report: true, when: "now" });
+    expect(now.status).toBe(400);
     const bad = await call(`/api/tasks/${parent}/send`, "POST", { message: "and?", report: "yes" });
     expect({ status: bad.status, body: await bad.json() }).toEqual({ status: 400, body: { error: "report must be a boolean, got string" } });
     const child = await (await create({ parentTaskId: parent, report: true })).json() as { id: string };

@@ -56,10 +56,9 @@ message never steers: it waits for the child's running turn to end, starts the
 next one, and that turn reports back once when it ends (an interrupted turn
 still reports nothing). The child's own later turns stay quiet, so the loop
 rule still holds. `--report` is refused for a task that does not report to a
-parent. Without it, block on
-the answer with `wisp wait <child> --timeout <s>` and then read
-`wisp result <child>`. Turns autopilot starts (auto-fix rounds) don't report
-either; their PR events do.
+parent, and together with `--when now`. Without it, block on the answer with
+`wisp wait <child> --timeout <s>` and then read `wisp result <child>`. Turns
+autopilot starts (auto-fix rounds) don't report either; their PR events do.
 
 A report that a child's PR "needs a decision" names why; `wisp pr <child>`
 shows it. `round-cap` means auto-review spent its three rejections or auto-fix
