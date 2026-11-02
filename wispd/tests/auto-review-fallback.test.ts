@@ -20,7 +20,7 @@ import { LOG_DIR, loadConfig, type RepoConfig } from "../src/config";
 import type { NewTaskInput } from "../src/domain/task-create";
 import { NETWORK_RESUME_MESSAGE } from "../src/autopilot/network";
 import { createTask, createTaskMessage, createTurn, db, freeSlot, getTask, latestTurnForTask, messagesFor, newTaskId, newTaskMessageId, setTaskFields, settleTurn, transition } from "../src/store";
-import { REVIEWER_NETWORK_RESUMES } from "../src/verify/reviewer-network";
+import { planReviewerResume, REVIEWER_NETWORK_RESUMES } from "../src/verify/reviewer-network";
 import { submitVerdict } from "../src/verify/reviewer";
 import { reviewsOf, reviewTokenFor, reviewView, substituteReview, type ReviewRow } from "../src/verify/reviews";
 import { roundsOf, roundView, type RoundRow } from "../src/verify/rounds";
@@ -112,6 +112,33 @@ describe("a reviewer whose turn ended on the network (#411)", () => {
     expect(autopilotHistory(task.id).map((entry) => entry.detail)).toContain("Round 1: reviewer A lost the network — resumed (1 of 3)");
     await until(() => getTask(reviewer)?.state === "done", "the resumed reviewer turn to finish");
     expect(latestTurnForTask(reviewer)).toMatchObject({ status: "done", result: "continuing the review" });
+  });
+
+  test("backs off 1, 2, then 4 minutes, never resumes a fourth time, and never sends a second resume while one waits to start", () => {
+    const id = newTaskId();
+    createTask({ id, title: "reviewer", repo_path: "/fixture/repo", harness: "fake", model: null, slot: freeSlot() });
+    created.push(id);
+    const resume = (status: "queued" | "delivered") => {
+      const message = newTaskMessageId();
+      createTaskMessage({ id: message, taskId: id, text: NETWORK_RESUME_MESSAGE, attachmentHash: "", origin: "workflow", source: { by: "autopilot", kind: "network-resume", pr: 7, round: 1, rounds: null } });
+      if (status === "delivered") db.run("UPDATE task_messages SET status = 'delivered' WHERE id = ?", [message]);
+      return message;
+    };
+    for (const [n, backoff] of [[1, 60_000], [2, 120_000], [3, 240_000]] as const) {
+      failAfterTurn(id, "network: connection refused", true);
+      const ended = Date.parse(latestTurnForTask(id)!.ended_at!);
+      expect(planReviewerResume(getTask(id)!, ended + backoff - 1)).toEqual({ kind: "wait", resume: n, at: ended + backoff });
+      expect(planReviewerResume(getTask(id)!, ended + backoff)).toEqual({ kind: "resume", resume: n, queued: null });
+      // sent but not started yet (no free slot): that one is started again, never a second
+      const queued = resume("queued");
+      expect(planReviewerResume(getTask(id)!, ended + backoff + 60_000)).toEqual({ kind: "resume", resume: n, queued });
+      db.run("UPDATE task_messages SET status = 'delivered' WHERE id = ?", [queued]);
+    }
+    failAfterTurn(id, "network: connection refused", true);
+    expect(planReviewerResume(getTask(id)!, Date.now() + 60 * 60_000)).toEqual({ kind: "none" });
+    // another failure is never resumed
+    transition(id, "failed", "turn exited 1: Invalid API key · Please run /login");
+    expect(planReviewerResume(getTask(id)!, Date.now() + 60 * 60_000)).toEqual({ kind: "none" });
   });
 });
 
