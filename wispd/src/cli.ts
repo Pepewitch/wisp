@@ -28,6 +28,7 @@ import { createEventFormatter, loadAdapters, rawOnThrow, type UsageSummary } fro
 import { formatBytes } from "./attachments";
 import { readAttachmentFlags } from "./cli-attach";
 import { searchCommand } from "./cli-search";
+import { waitCommand } from "./cli-wait";
 import { limitsCommand } from "./cli-limits";
 import { sendCommand, taskMessageSummary } from "./cli-send";
 import { exportDiagnosticLog, followHumanLog } from "./cli-stream";
@@ -36,29 +37,11 @@ import { loadConfig, MAX_CONFIGURED_PORT, MIN_CONFIGURED_PORT, rotateToken } fro
 import { bunSpawn } from "./doctor";
 import { acquireHomeOwnership, HomeBusyError } from "./home-lock";
 import { modelsReport } from "./models";
-import { backgroundSummary, displayStateWord, STATE_ICON, type ApiTask, type ApiTaskListItem, type ApiTurn, type TaskDetail, type TaskState } from "./types";
+import { backgroundSummary, displayStateWord, STATE_ICON, type ApiTask, type ApiTaskListItem, type ApiTurn, type TaskDetail } from "./types";
 import { BUILD_INFO, versionLine } from "./version";
 import { sourceLine } from "../../shared/turn-source";
 
 const COMMAND = wispCommand();
-
-/**
- * `wisp wait` exit codes, one per settled state. 'creating'/'running' are
- * in-flight and 'stuck' is reversible (the harness may still be alive and
- * simply quiet), so none of them end the wait — only these three do.
- *
- * `needs-input` now covers two situations, and 2 is right for both: a turn
- * that ENDED asking for something, and a turn SUSPENDED inside a questionnaire
- * the harness is blocked on. The wait's promise is "block until the task is
- * finished or wants you", and a blocked harness wants you as much as a
- * finished one does. A `wisp send` after either resumes the task correctly —
- * the suspended case steers, which answers the open questionnaire on the way
- * through (see adapters/live/droid.ts).
- */
-const WAIT_EXIT: Partial<Record<TaskState, number>> = { done: 0, failed: 1, "needs-input": 2 };
-const WAIT_POLL_MS = 2000;
-/** ~a day: long enough to be "block until it settles", finite so a wedged wait still exits 3. */
-const WAIT_DEFAULT_TIMEOUT_SEC = 86_400;
 
 /**
  * A turn's usage, one compact line (Theme B): `41.2k in · 2.1k out · 24.8m
@@ -240,35 +223,6 @@ async function logCommand(positional: string[], flags: Flags): Promise<void> {
       return;
     }
     if (data.out === "") await Bun.sleep(1000);
-  }
-}
-
-async function waitCommand(positional: string[], flags: Flags): Promise<void> {
-  const id = positional[0];
-  if (!id) {
-    printError(`usage: ${COMMAND} wait <task> [--timeout <sec>]`);
-    process.exit(1);
-  }
-  const rawTimeout = flags.timeout;
-  const timeoutSec = rawTimeout === undefined ? WAIT_DEFAULT_TIMEOUT_SEC : Number(rawTimeout);
-  if (typeof rawTimeout === "boolean" || !Number.isFinite(timeoutSec) || timeoutSec <= 0) {
-    printError(`--timeout must be a positive number of seconds (got: ${String(rawTimeout)})`);
-    process.exit(1);
-  }
-  const deadline = Date.now() + timeoutSec * 1000;
-  for (;;) {
-    const task = (await api(`/api/tasks/${id}`)) as ApiTask;
-    const line = `${task.id}  ${task.state}${task.state_detail ? ` — ${task.state_detail}` : ""}`;
-    const code = WAIT_EXIT[task.state];
-    if (code !== undefined) {
-      print(line);
-      process.exit(code);
-    }
-    if (Date.now() >= deadline) {
-      print(`${line}  (timeout after ${timeoutSec}s)`);
-      process.exit(3);
-    }
-    await Bun.sleep(Math.min(WAIT_POLL_MS, Math.max(0, deadline - Date.now())));
   }
 }
 

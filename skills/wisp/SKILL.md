@@ -29,6 +29,8 @@ file outside the repository and pass it as `"$(cat <file>)"`.
     wisp doctor                                 # daemon and harnesses healthy?
     wisp new <repo> "prompt" --harness droid    # prints the task id
     wisp wait <id> --timeout 300                # 0 done · 2 needs-input · 1 failed or error · 3 timed out
+                                                # several ids: --all (default) or --any (first to settle)
+                                                # --settled: also wait for background work the agent will answer for
     wisp result <id>                            # the agent's answer
     wisp send <id> "message"                    # steer or continue (optional)
     wisp archive <id>                           # only after the work has landed
@@ -59,10 +61,12 @@ Details: [integrating.md](references/integrating.md#auto-merge-auto-fix-and-auto
 Take one snapshot, act on what needs you, and stop; the next check starts
 again from `wisp ls`. Inside a Wisp task, `$WISP_TASK_ID` is your own task:
 leave it alone. Never poll `wisp ls` or tail `wisp log` to wait: `wisp wait`
-blocks without spending tokens. Give it a `--timeout` shorter than your own
-command time limit (without one it waits about a day). Exit 3 means the wait
-timed out, not that the task failed; on exit 1 the printed line says whether
-the task failed or the CLI hit an error, such as an unreachable daemon.
+blocks without spending tokens, and `wisp wait --any <id> <id>…` returns as
+soon as the first of several tasks settles. Give it a `--timeout` shorter
+than your own command time limit (without one it waits about a day). Exit 3
+means the wait timed out, not that the task failed; on exit 1 the printed line
+says whether the task failed or the CLI hit an error, such as an unreachable
+daemon.
 Report what you found or do other work rather than re-waiting in a loop.
 
 Inside a task, `wisp new "<prompt>" --subtask` starts a child that reports

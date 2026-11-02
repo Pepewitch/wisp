@@ -272,13 +272,30 @@ and indexed agent prose. Results name the matched field and include a snippet.
 In the UI, `⌘F` searches the current task and `⌘⇧F` searches across tasks.
 
 ```
-wisp wait <task> [--timeout <sec>]
+wisp wait <task>… [--any|--all] [--settled] [--timeout <sec>]
 ```
 
 Blocks until the task settles: exit 0 done, 2 needs-input, 1 failed, 3 on
 timeout (default ≈ 1 day). Waits through `stuck`. It polls every 2 seconds.
 Exit 1 also reports a CLI error: a bad `--timeout`, an unknown task, or a poll
 that cannot reach the daemon, so run the wait again after a daemon restart.
+
+With several tasks, `--all` (the default) waits for every one, prints a line
+per task and exits with the most serious code: failed, then needs-input, then
+done. On a timeout it prints every task, marking the ones still waiting.
+`--any` ends on the first task that settles and prints only that one; drop the
+id you handled before you wait on the rest again, or the same task returns at
+once.
+
+A `done` task can still have background work its agent will answer again for:
+a Claude Monitor, or a Droid `fireAndForget` command or background subagent
+watching CI. Wisp keeps that harness alive and wakes the agent when the work
+finishes. The printed line then says `done · 1 background process running`,
+and a note on stderr points at `--settled`. With `--settled`, a done task ends
+the wait only once that work is gone and Wisp has let the harness go, a few
+seconds later. A process a finished harness merely left
+behind, such as a dev server, has no agent to wake: the line still reports it,
+but it never holds the wait.
 
 ```
 wisp send <task> "message" [--model <m>] [--effort <level>] [--harness <h> --fresh-context] [--when now|next-turn] [--attach <path>]…
