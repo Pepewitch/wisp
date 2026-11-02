@@ -304,6 +304,44 @@ describe("reordering projects by touch", () => {
     document.body.removeEventListener("touchmove", outside)
   })
 
+  it("a drag cancelled with the finger still down gives its moves back, and its release still makes no click", () => {
+    mount(order())
+    for (const cancel of [() => fireEvent.blur(window), () => fireEvent.keyDown(window, { key: "Escape" })]) {
+      toggle("alpha").dispatchEvent(new Event("touchstart", { bubbles: true }))
+      touchDown("alpha")
+      hold()
+      expect(header("alpha")).toHaveAttribute("data-dragging")
+      act(() => cancel())
+      expect(header("alpha")).not.toHaveAttribute("data-dragging")
+      const scroll = new Event("touchmove", { bubbles: true, cancelable: true })
+      toggle("alpha").dispatchEvent(scroll)
+      expect(scroll.defaultPrevented).toBe(false)
+      release(10)
+      const end = new Event("touchend", { bubbles: true, cancelable: true })
+      toggle("alpha").dispatchEvent(end)
+      expect(end.defaultPrevented).toBe(true)
+    }
+  })
+
+  it("measures the first line after the lifted project folds, not before", () => {
+    // Until the lift commits, a section above stays open and pushes every
+    // header 100px down; once it has, they sit at their folded places.
+    vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(function (this: HTMLElement) {
+      const headers = [...document.querySelectorAll("[data-project-header]")]
+      const own = this.matches("[data-project-header]") ? this : this.matches("section") ? this.querySelector("[data-project-header]") : null
+      const index = own ? headers.indexOf(own) : -1
+      const open = document.querySelector("[data-dragging]") === null ? 100 : 0
+      const top = index < 0 ? 0 : index * 40 + open
+      return { top, bottom: top + 28, height: 28, left: 0, right: 240, width: 240, x: 0, y: top, toJSON: () => ({}) } as DOMRect
+    })
+    mount(order())
+    touchDown("beta", 90)
+    hold()
+    // above gamma (folded top 80): the line sits in the gap over it, at 80 - 4
+    expect(dropLine()).toHaveStyle({ top: "76px" })
+    release(90)
+  })
+
   it("Android's long-press context menu is held back while a finger is down", () => {
     mount(order())
 
