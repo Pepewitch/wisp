@@ -482,7 +482,7 @@ wisp project ls
 wisp project show <path>
 wisp project set <path> [--name <n>] [--setup <cmd>] [--archive <cmd>] [--base <ref>]
                  [--copy <glob>]… [--clear-setup] [--clear-archive] [--clear-base]
-                 [--clear-copy]
+                 [--clear-copy] [--review-start ready|checks]
 ```
 
 The project registry feeds the web UI's pickers and per-project automation.

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import type { PrComment, PrReview, PrThread } from "../src/autopilot/github";
-import { skipPendingFix } from "../src/autopilot/pending-fix";
+import { sendPendingFix, skipPendingFix } from "../src/autopilot/pending-fix";
 import { autopilotRow, autopilotStatus, checkpointOf, noteTurnSigning, reserveRound, setAutopilot } from "../src/autopilot/store";
 import { taskMessageRoute } from "../src/routes/task-messages";
 import { startNextQueuedMessage } from "../src/runner";
@@ -187,6 +187,57 @@ describe("auto-fix for review feedback", () => {
       state.pr = { ...state.pr, reviews: [{ id: "PRR_9", author: "pr-reviewer", association: "NONE", bot: true, state: "APPROVED", body: "", commit: HEAD, submittedAt: "2026-09-23T12:01:00Z", editedAt: null, url: "https://gh/r/9" }] };
       await pass(rt, task.id, clock);
       expect(state.merges).toHaveLength(1);
+    });
+
+    test("a summary rewritten for every head goes to the agent twice, then waits for you (#476)", async () => {
+      const { task, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      const heads = ["a", "b", "c"].map((letter) => letter.repeat(40));
+      const on = (head: string, edit: number) => snapshot({
+        head, comments: [summary({ editedAt: `2026-09-23T11:0${edit}:00Z`, body: `${summaryBody}\n\n(${head.slice(0, 7)})` })], checks: [...snapshot().checks, reviewer],
+      });
+      const { state, github } = fakeGitHub({ pr: on(heads[0]!, 1) });
+      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: judge().client });
+      setAutopilot(task.id, { autoFix: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1 });
+      const sent = () => (checkpointOf(autopilotRow(task.id)!).rounds ?? 0);
+      for (const [index, head] of heads.slice(0, 2).entries()) {
+        state.pr = on(head, index + 1);
+        await pass(rt, task.id, clock);
+        // past the short delay a new burst waits before it is sent
+        clock.now += 5 * 60_000;
+        await pass(rt, task.id, clock);
+        await until(() => sent() === index + 1, `round ${index + 1}`);
+        await until(() => getTask(task.id)?.state === "done", `round ${index + 1} to settle`);
+        clock.now += 10 * 60_000;
+      }
+      expect(checkpointOf(autopilotRow(task.id)!).deliveries).toEqual({ "comment:IC_5": 2 });
+      // the agent answered it twice: the third rewrite is the person's to judge
+      state.pr = on(heads[2]!, 3);
+      await pass(rt, task.id, clock);
+      expect(sent()).toBe(2);
+      expect(autopilotStatus(task.id)).toMatchObject({
+        state: "needs-you", reason: "@pr-reviewer repeated what the agent already answered twice; not sent again (Send now sends it)",
+        pendingFix: { summary: "1 comment", repeats: true },
+      });
+      expect(state.merges).toHaveLength(0);
+      // the person sends it anyway
+      sendPendingFix(task.id, new Date(clock.now));
+      await pass(rt, task.id, clock);
+      await until(() => sent() === 3, "the round sent anyway");
+    });
+
+    test("a bot still reviewing a new head is waited for before its repeat is held", async () => {
+      const { task, adapters } = reviewTask();
+      const clock = { now: START + 10 * 60_000 };
+      const running = { ...reviewer, status: "IN_PROGRESS", conclusion: null };
+      const { state, github } = fakeGitHub({ pr: snapshot({ head: "c".repeat(40), comments: [summary({ editedAt: "2026-09-23T11:05:00Z" })], checks: [...snapshot().checks, running] }) });
+      const rt = runtime(github, clock, adapters, undefined, undefined, { judge: judge().client });
+      setAutopilot(task.id, { autoFix: true });
+      seed(task.id, clock, { idleSince: new Date(START).toISOString(), idleTurn: 1, deliveries: { "comment:IC_5": 2 } });
+      await pass(rt, task.id, clock);
+      expect(autopilotStatus(task.id).state).toBe("waiting");
+      expect(state.merges).toHaveLength(0);
     });
 
     test("an edited summary is the bot's next pass", async () => {

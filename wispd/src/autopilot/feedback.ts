@@ -467,6 +467,78 @@ export function withDelivered(ledger: Readonly<Record<string, string>> | undefin
   return Object.fromEntries(Object.entries(merged).slice(-500))
 }
 
+/** A round's items, recorded as sent: the fingerprint each went out with, and one more send each. */
+export function withSent(
+  ledgers: { delivered?: Readonly<Record<string, string>>; deliveries?: Readonly<Record<string, number>> },
+  items: FeedbackItem[],
+): { delivered: Record<string, string>; deliveries: Record<string, number> } {
+  return {
+    delivered: withDelivered(ledgers.delivered, Object.fromEntries(items.map((item) => [item.id, item.fingerprint]))),
+    deliveries: withDeliveries(ledgers.deliveries, items.map((item) => item.id)),
+  }
+}
+
+/** How many times each review item has been sent, item id → count (the repeat hold below). */
+export function withDeliveries(ledger: Readonly<Record<string, number>> | undefined, ids: string[]): Record<string, number> {
+  const merged = { ...ledger }
+  for (const id of ids) {
+    const sent = (merged[id] ?? 0) + 1
+    delete merged[id]
+    merged[id] = sent
+  }
+  return Object.fromEntries(Object.entries(merged).slice(-500))
+}
+
+/** The words that make the item news are a bot's. */
+function byBot(item: FeedbackItem): boolean {
+  if (item.kind === "comment") return item.comment.bot
+  if (item.kind === "review") return item.review.bot
+  return item.fresh.length > 0 && item.fresh.every((comment) => comment.bot)
+}
+
+/** How many sends of the same item make another one a repeat to ask the person about. */
+export const REPEAT_LIMIT = 2
+
+/**
+ * A round that would only resend what bots already said twice: the same
+ * items (a bot's sticky summary rewritten for each new head, mostly), which
+ * the agent has answered twice already. Measured on real PRs after the
+ * combined message (#476): every such round ended with the agent changing
+ * nothing, and holding them lost no round that fixed anything. Empty when
+ * any item is new, a person's, or sent fewer times.
+ */
+export function botRepeats(items: FeedbackItem[], deliveries: Readonly<Record<string, number>> | undefined): FeedbackItem[] {
+  if (items.length === 0) return []
+  return items.every((item) => byBot(item) && (deliveries?.[item.id] ?? 0) >= REPEAT_LIMIT) ? items : []
+}
+
+/** Who wrote an item's newest words, as `@login`. */
+function itemAuthor(item: FeedbackItem): string {
+  const author = item.kind === "comment" ? item.comment.author : item.kind === "review" ? item.review.author : item.fresh.at(-1)?.author
+  return `@${author ?? "ghost"}`
+}
+
+/**
+ * Why a round of only bot repeats is not sent (botRepeats), or null. It still
+ * blocks merging: the judge read those words as asking for changes, and open
+ * threads stay open.
+ */
+export function repeatHold(round: {
+  items: FeedbackItem[]
+  deliveries: Readonly<Record<string, number>> | undefined
+  /** CI evidence or auto-review findings go too: the round is sent */
+  ci: unknown
+  review: unknown
+  /** a person said Send now for exactly this */
+  sendNow: boolean
+}): string | null {
+  if (round.ci || round.review || round.sendNow) return null
+  const repeats = botRepeats(round.items, round.deliveries)
+  if (repeats.length === 0) return null
+  const bots = [...new Set(repeats.map(itemAuthor))].slice(0, 2).join(" and ")
+  return `${bots} repeated what the agent already answered twice; not sent again (Send now sends it)`
+}
+
 const count = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
 
 export function feedbackSummary(items: FeedbackItem[]): string {

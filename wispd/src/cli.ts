@@ -320,7 +320,7 @@ async function setProject(path: string | undefined, flags: Flags): Promise<void>
   if (!path) {
     printError(
       `usage: ${COMMAND} project set <path> [--name <name>] [--setup <cmd>] [--archive <cmd>] [--base <ref>] [--copy <glob>]… ` +
-        `[--clear-setup] [--clear-archive] [--clear-base] [--clear-copy]`,
+        `[--clear-setup] [--clear-archive] [--clear-base] [--clear-copy] [--review-start ready|checks]`,
     );
     process.exit(1);
   }
@@ -354,6 +354,15 @@ async function setProject(path: string | undefined, flags: Flags): Promise<void>
   }
   if (Array.isArray(flags.copy)) body.copyFiles = flags.copy;
   if (flags["clear-copy"] === true) body.copyFiles = [];
+  const start = flags["review-start"];
+  if (start !== undefined) {
+    if (start !== "ready" && start !== "checks") {
+      printError("--review-start must be ready (while CI runs, the default) or checks (after they pass)");
+      process.exit(1);
+    }
+    // "ready" is the default, which config.json never stores
+    body.reviewStart = start === "ready" ? null : start;
+  }
   const project = (await api("/api/projects", "POST", body)) as { name: string | null; path: string };
   print(`project ${project.name ? `'${project.name}' ` : ""}updated: ${project.path}`);
 }

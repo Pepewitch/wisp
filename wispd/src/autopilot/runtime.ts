@@ -36,9 +36,7 @@ import { BUSY_MS, MOVING_MS, WAITING_ON_YOU_MS } from "./cadence"
 import { whileMerging } from "./merging"
 import { publishedWork } from "./published"
 import { MAX_ROUNDS, roundMessage, writeEvidence, type RoundContent } from "./evidence"
-import {
-  approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, relayedBlocks, reviewerPasses, withDelivered, type FeedbackItem,
-} from "./feedback"
+import { approvalCandidates, feedbackItems, feedbackKey, feedbackSummary, isMarked, judgeCandidates, markerOf, pairedChecks, relayedBlocks, repeatHold, reviewerPasses, withSent, type FeedbackItem } from "./feedback"
 import { JUDGE_FAILURE_LIMIT, jevClient, jevKey, judgedHead, judgeLook, needsChanges, writeJudgeLog, type Judged, type JudgeClient, type JudgeLook } from "./judge"
 import { headFirstSeen, headSince } from "./heads"
 import { planFix, type FixPlan } from "./fix"
@@ -51,7 +49,7 @@ import { busyReason, forgetIdle, forgetPending, nextPrReason, observe } from "./
 import { autoReviewLook, endUnwantedReviews, supersedeStaleRounds, sweepReviews } from "./auto-review"
 import { EarlyAnswers } from "./review-now"
 import { reviewStartLook, type ReviewStart } from "./review-first"
-import { holdForReview, reserveWith, reviewFiles, reviewKey, reviewRunning, reviewToCarry } from "./review-part"
+import { heldRepeat, holdForReview, reserveWith, reviewFiles, reviewKey, reviewRunning, reviewToCarry } from "./review-part"
 import { createAndLaunchTask } from "../domain/task-create"
 import type { ModelProbeCache } from "../model-probes"
 import type { Launch } from "../verify/reviewer"
@@ -481,6 +479,9 @@ export class AutopilotRuntime {
     // A reviewer bot still at work on this head: the whole round, CI's part too, waits for its pass.
     const passes = reviewerPasses(pr, items, { headSeenMs: headFirstSeen(checkpoint, pr, now.getTime()), nowMs: now.getTime() })
     if (passes.wait) { forgetPending(checkpoint); return say("waiting", passes.wait, MOVING_MS) }
+    // only bots repeating what the agent already answered twice: the person decides (Send now or Skip)
+    const repeated = repeatHold({ items, deliveries: checkpoint.deliveries, ci, review, sendNow: checkpoint.sendNow === key })
+    if (repeated) return heldRepeat(checkpoint, key, summary, repeated, say)
     // A short delay after the task goes idle, after the newest review words
     // (a reviewer's burst goes as one), and after a reviewer bot's check
     // ends (it may rewrite its summary a moment later): time to read what
@@ -598,7 +599,7 @@ export class AutopilotRuntime {
     // In the round's own checkpoint, so a withdrawn round's cancel rolls both back.
     const next: AutopilotCheckpoint = {
       ...checkpoint, rounds: round, lastRoundAt: this.now().toISOString(), done: undefined, greenHead: undefined, greenAt: undefined,
-      delivered: withDelivered(checkpoint.delivered, Object.fromEntries(content.items.map((item) => [item.id, item.fingerprint]))),
+      ...withSent(checkpoint, content.items),
       sentCi: content.ci ? [...(checkpoint.sentCi ?? []).slice(-20), content.ci.key] : checkpoint.sentCi,
       reviewsSent: content.review ? withReviewsSent(checkpoint.reviewsSent, [content.review.id]) : checkpoint.reviewsSent,
     }

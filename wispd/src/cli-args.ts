@@ -17,6 +17,8 @@ for (const flag of ["parent", "kind", "subtasks"]) VALUE_FLAGS.add(flag);
 REPEAT_FLAGS.add("allow-port");
 // wisp send --when now|next-turn
 VALUE_FLAGS.add("when");
+// wisp project set --review-start ready|checks
+VALUE_FLAGS.add("review-start");
 
 export function parseArgs(args: string[]): Parsed {
   const positional: string[] = [];

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CONFIG_PATH, type WispConfig } from "../src/config";
@@ -188,6 +188,19 @@ describe("wisp project show / set", () => {
     out = await run(["project", "show", path]);
     expect(out.stdout).toContain("setup: -\n");
     expect(out.stdout).toContain("copy: -\n");
+  });
+
+  test("set --review-start picks when auto-review rounds start; anything else is refused", async () => {
+    await startDaemon();
+    const path = makeProject();
+    const saved = () => (JSON.parse(readFileSync(CONFIG_PATH, "utf8")) as WispConfig).repos.find((repo) => typeof repo === "object" && repo.path === path);
+    expect((await run(["project", "set", path, "--review-start", "checks"])).exitCode).toBe(0);
+    expect(saved()).toMatchObject({ reviewStart: "checks" });
+    const bad = await run(["project", "set", path, "--review-start", "soon"]);
+    expect(bad.exitCode).toBe(1);
+    expect(bad.stderr).toContain("--review-start must be ready");
+    expect((await run(["project", "set", path, "--review-start", "ready"])).exitCode).toBe(0);
+    expect(saved()).not.toHaveProperty("reviewStart");
   });
 
   test("show on an unknown project names the path and exits nonzero", async () => {

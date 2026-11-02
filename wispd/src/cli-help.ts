@@ -110,6 +110,7 @@ const COMMAND_USAGE = {
   ${COMMAND} project show <path>                     print a project's settings (setup/archive scripts, copy globs)
   ${COMMAND} project set <path> [--name <name>] [--setup <cmd>] [--archive <cmd>] [--base <ref>] [--copy <glob>]…
                                                [--clear-setup] [--clear-archive] [--clear-base] [--clear-copy]
+                                               [--review-start ready|checks]
                                                     set or clear the fields the web gear dialog edits;
                                                     --copy repeats and the flags REPLACE the stored
                                                     glob list (each glob is appended at task setup)`,

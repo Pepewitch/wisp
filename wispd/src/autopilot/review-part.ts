@@ -12,7 +12,7 @@ import type { Task } from "../types"
 import { budgetWords, latestRound, type RoundRow } from "../verify/rounds"
 import type { WorkflowRow } from "../workflows/store"
 import { bounceImages, reviewFindingsLines, spentNow, writeReviewFeedback } from "./auto-review"
-import { BUSY_MS } from "./cadence"
+import { BUSY_MS, WAITING_ON_YOU_MS } from "./cadence"
 import { autoFixAtCap } from "./fix-plan"
 import type { PrSnapshot } from "./github"
 import { unsentRejection } from "./review-first"
@@ -44,6 +44,15 @@ export function holdForReview(
   const sendsAt = checkpoint.pending?.key === key ? checkpoint.pending.sendsAt : now.toISOString()
   checkpoint.pending = { key, summary, sendsAt, afterReview: true }
   return say("waiting", `Auto-fix will send after the review: ${summary}`, BUSY_MS)
+}
+
+/** A bot's repeat held for the person: kept as the pending round, so Send now and Skip act on it, with no countdown. */
+export function heldRepeat(
+  checkpoint: AutopilotCheckpoint, key: string, summary: string, reason: string, say: (state: AutopilotState, reason: string, delayMs: number) => null,
+): null {
+  const sendsAt = checkpoint.pending?.key === key ? checkpoint.pending.sendsAt : new Date().toISOString()
+  checkpoint.pending = { key, summary, sendsAt, repeats: true }
+  return say("needs-you", reason, WAITING_ON_YOU_MS)
 }
 
 export interface ReviewFiles {

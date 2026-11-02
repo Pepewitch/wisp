@@ -115,8 +115,9 @@ is matched by both its old and its new path. Within one PR a tier only goes up.
    waits for every required check to pass**, whatever the round says.
 
    A project can keep the older order instead: Project settings → Auto-review
-   starts → *After checks pass*, saved as `repos[].reviewStart: "checks"` in
-   `config.json` (`"ready"`, the default, is never written). Rounds then wait
+   starts → *After checks pass*, or `wisp project set <path> --review-start
+   checks`, saved as `repos[].reviewStart: "checks"` in `config.json`
+   (`"ready"`, the default, is never written). Rounds then wait
    for the PR's checks the way the merge gate does, and no reviewer is spent on
    a red or running head.
 

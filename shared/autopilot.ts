@@ -59,7 +59,8 @@ export interface AutopilotStatus {
    * `afterReview`: held while an auto-review round on the head runs; it goes
    * out once that round settles, not at `sendsAt` (absent from an older daemon)
    */
-  pendingFix: { summary: string; sendsAt: string; afterReview?: boolean } | null
+  /** afterReview: it waits for the review round; repeats: a bot's repeat held for you, sent only by Send now */
+  pendingFix: { summary: string; sendsAt: string; afterReview?: boolean; repeats?: boolean } | null
   /** auto-fix rounds sent to the agent for the bound PR */
   fixRounds: number
   /** the highest auto-review round number on the bound PR: rounds are numbered on, whatever became of them (absent from an older daemon) */

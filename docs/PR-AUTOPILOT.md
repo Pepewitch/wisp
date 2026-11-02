@@ -265,6 +265,15 @@ too, are listed as context, without their logs.
   agent's turn ends without a push and the check is still red, Wisp says so
   and waits for you instead of repeating itself. After five rounds on one PR
   it pauses; **Resume** gives it five more.
+- **A bot's repeats go to you.** Some reviewer bots rewrite one summary comment
+  for every new head, repeating a finding the agent has already answered (often
+  one it declines, such as a request to edit docs the repository says not to
+  touch). Once the same bot item has been sent twice, a round with nothing
+  else in it (no other review item, no red check, no auto-review findings) is
+  not sent a third time: auto-fix says it needs you instead. It still blocks the
+  merge, through the review judge or the open thread; reply on the PR, resolve
+  it, or press **Send now** to send it anyway. A person's words are never held
+  this way.
 - **Never mid-turn**, and a user message queued first still goes first.
 
 With both switches on, auto-fix acts first: nothing merges while a check is
