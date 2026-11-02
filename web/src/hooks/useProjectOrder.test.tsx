@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest"
 
 import { useRepos } from "./queries"
 import { useProjectOrder } from "./useProjectOrder"
+import { STALE_ORDER } from "../../../shared/api/projects"
 import { shownRepos, type ProjectMove } from "@/lib/project-order-queue"
 import { reorderRepos } from "@/lib/projects"
 import { createConnectionQueryKeys } from "@/lib/query"
@@ -105,8 +106,12 @@ function mount(daemons: ReturnType<typeof fakeDaemon>[], enabled = true) {
   return { result, client, shown, cached, move, answerReads, switchTo }
 }
 
-const refetch = (client: QueryClient, connectionId = "a") =>
-  settle(() => void client.invalidateQueries({ queryKey: createConnectionQueryKeys(connectionId).repos }))
+/** Read the list again, as a project event does; resolves once the read has reached the daemon, so answering it cannot miss it. */
+async function refetch(client: QueryClient, daemon: ReturnType<typeof fakeDaemon>, connectionId = "a"): Promise<void> {
+  const waiting = daemon.gets.length
+  await settle(() => void client.invalidateQueries({ queryKey: createConnectionQueryKeys(connectionId).repos }))
+  await vi.waitFor(() => expect(daemon.gets.length).toBeGreaterThan(waiting))
+}
 
 describe("useProjectOrder", () => {
   it("offers nothing when the daemon cannot save an order", () => {
@@ -133,6 +138,24 @@ describe("useProjectOrder", () => {
     expect(cached()).toEqual(["/src/gamma", "/src/alpha", "/src/beta"])
     expect(shown()).toEqual(["/src/gamma", "/src/alpha", "/src/beta"])
     expect(result.current.order!.error).toBeNull()
+  })
+
+  it("a read that fails after the save keeps the shown order until a later read succeeds", async () => {
+    const daemon = fakeDaemon("a")
+    const { result, client, shown, cached, move, answerReads } = mount([daemon])
+
+    await move("/src/gamma", { to: 0 })
+    await settle(() => daemon.puts[0]!.resolve())
+    await settle(() => daemon.gets.splice(0).forEach((get) => get.reject(new Error("offline"))))
+    // the cache still holds the list from before the save; the daemon has the new order
+    expect(cached()).toEqual(["/src/alpha", "/src/beta", "/src/gamma"])
+    expect(result.current.order!.pending).not.toBeNull()
+    expect(shown()).toEqual(["/src/gamma", "/src/alpha", "/src/beta"])
+
+    await refetch(client, daemon)
+    await answerReads()
+    expect(result.current.order!.pending).toBeNull()
+    expect(shown()).toEqual(["/src/gamma", "/src/alpha", "/src/beta"])
   })
 
   it("two moves in one frame build on each other", async () => {
@@ -176,14 +199,14 @@ describe("useProjectOrder", () => {
     const { client, shown, cached, move, answerReads } = mount([daemon])
 
     // one read already out when the move happens, as an SSE event's refetch would be
-    await refetch(client)
+    await refetch(client, daemon)
     expect(daemon.gets).toHaveLength(1)
     await move("/src/beta", { to: 0 })
     await answerReads()
     expect(shown()).toEqual(["/src/beta", "/src/alpha", "/src/gamma"])
 
     // and one started after it, answered while the save is still out
-    await refetch(client)
+    await refetch(client, daemon)
     await answerReads()
     expect(cached()).toEqual(["/src/alpha", "/src/beta", "/src/gamma"])
     expect(shown()).toEqual(["/src/beta", "/src/alpha", "/src/gamma"])
@@ -203,9 +226,10 @@ describe("useProjectOrder", () => {
 
     // another client adds delta and removes beta; the project event's refetch lands
     daemon.server = [repo("/src/alpha"), repo("/src/gamma"), repo("/src/delta"), repo("/elsewhere/history", false)]
-    await refetch(client)
+    await refetch(client, daemon)
     await answerReads()
-    expect(shown()).toEqual(["/src/gamma", "/src/alpha", "/src/delta"])
+    // TanStack notifies the hook on a batched timer of its own, which one settle can beat
+    await vi.waitFor(() => expect(shown()).toEqual(["/src/gamma", "/src/alpha", "/src/delta"]))
 
     await settle(() => daemon.puts[0]!.resolve())
     expect(daemon.sent()[1]).toEqual(["/src/gamma", "/src/alpha", "/src/delta"])
@@ -221,7 +245,7 @@ describe("useProjectOrder", () => {
     await move("/src/gamma", { to: 0 })
     await move("/src/alpha", { to: 0 })
     expect(shown()).toEqual(["/src/alpha", "/src/gamma", "/src/beta"])
-    await settle(() => daemon.puts[0]!.reject(new ApiError("The project list changed since it was loaded.", 409)))
+    await settle(() => daemon.puts[0]!.reject(new ApiError(`${STALE_ORDER} (missing: /src/beta)`, 409)))
 
     expect(result.current.order!.pending).toBeNull()
     expect(shown()).toEqual(["/src/alpha", "/src/beta", "/src/gamma"])
@@ -234,6 +258,29 @@ describe("useProjectOrder", () => {
 
     await settle(() => result.current.order!.onDismissError())
     expect(result.current.order!.error).toBeNull()
+  })
+
+  it("a 409 that is not the daemon's membership refusal says what it means", async () => {
+    const daemon = fakeDaemon("a")
+    const { result, move } = mount([daemon])
+
+    await move("/src/gamma", { to: 0 })
+    await settle(() => daemon.puts[0]!.reject(new ApiError("The daemon behind this connection changed.", 409, "identity-changed")))
+
+    expect(result.current.order!.error).toBe("Could not save the project order: The daemon behind this connection changed.")
+  })
+
+  it("a proxy 409 that repeats the daemon's sentence, or a daemon 409 with other words, says what it said", async () => {
+    for (const error of [
+      new ApiError(`${STALE_ORDER} (missing: /src/beta)`, 409, "stale-route"),
+      new ApiError("another daemon conflict", 409),
+    ]) {
+      const daemon = fakeDaemon("a")
+      const { result, move } = mount([daemon])
+      await move("/src/gamma", { to: 0 })
+      await settle(() => daemon.puts[0]!.reject(error))
+      expect(result.current.order!.error).toBe(`Could not save the project order: ${error.message}`)
+    }
   })
 
   it("any other refusal says what the daemon said", async () => {

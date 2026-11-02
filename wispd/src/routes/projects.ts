@@ -16,6 +16,7 @@ import { matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
 import { archiveTaskRows } from "../domain/archive";
 import { requestActor } from "../task-audit";
 import { err, json, jsonObjectBody } from "./http";
+import { STALE_ORDER } from "../../../shared/api/projects";
 
 export type RepoEntry = string | RepoConfig;
 
@@ -414,7 +415,6 @@ export function copyPreviewRoute(req: Request): Promise<Response> {
 }
 
 /** The refusal the sidebar shows when its drag was based on a list that has since changed. */
-const STALE_ORDER = "The project list changed since it was loaded. Reload and try again."
 
 /** A refusal names a few paths, never every one a body could carry. */
 function firstFew(paths: string[]): string {
