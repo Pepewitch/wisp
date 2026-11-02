@@ -988,3 +988,17 @@ describe("Why a turn failed", () => {
     expect(screen.getByText("turn exited 1: ActionRequiredError: Model unavailable on Free")).toBeInTheDocument()
   })
 })
+
+describe("Why the latest turn failed", () => {
+  it("shows the task's newer reason when the task failed again without a new turn", () => {
+    const task = pagedTask([1])
+    task.state = "failed"
+    task.state_detail = "queued message could not start: worktree is gone"
+    task.turns[0] = { ...task.turns[0]!, status: "failed", result: null, failure_detail: "turn exited 1: X" }
+    render(<Conversation task={task} stream={initialStreamState} />, {
+      wrapper: runtimeWrapper(fakeDaemonTransport("failed-again-reason")),
+    })
+    expect(screen.getByText("queued message could not start: worktree is gone")).toBeInTheDocument()
+    expect(screen.queryByText("turn exited 1: X")).toBeNull()
+  })
+})

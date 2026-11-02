@@ -273,8 +273,11 @@ export function Conversation({
                   // own last words often are the conclusion — droid, for one,
                   // pattern-matches its final message and exits 1 on a hit, so the
                   // real result ends up here and nowhere else.
-                  // The turn keeps its own reason once a later turn runs.
-                  failure={turn.failure_detail ?? (i === task.turns.length - 1 && task.state === "failed" ? task.state_detail : null)}
+                  // The latest turn of a failed task shows the task's current
+                  // reason, which can be newer (a queued message that could not
+                  // start fails the task without a turn); an earlier turn keeps
+                  // its own once a later turn runs.
+                  failure={i === task.turns.length - 1 && task.state === "failed" ? task.state_detail : turn.failure_detail ?? null}
                   archived={task.archived && !task.attachmentsRetained}
                   // a handed-over prose hit lives in a timeline nobody opened
                   revealActivity={find.revealTurn === turn.n}
