@@ -10,11 +10,15 @@ const ACKNOWLEDGEMENT_MAX_CHARS = 200;
 
 export interface DroidAnswerState {
   answer: string;
-  /** Names of the tools called since the last assistant text. */
-  tools: string[];
+  /** Whether any tool was called since the last assistant text. */
+  tools: boolean;
+  /** Whether every tool called since the last assistant text was a bookkeeping tool. */
+  bookkeeping: boolean;
   /** The last assistant text, when it only acknowledged bookkeeping. */
   acknowledgement: string | null;
 }
+
+const EMPTY: DroidAnswerState = { answer: "", tools: false, bookkeeping: true, acknowledgement: null };
 
 /**
  * A Droid turn's answer, followed message by message: an assistant text
@@ -22,24 +26,25 @@ export interface DroidAnswerState {
  * tool called since the previous text was a bookkeeping tool and the text is
  * short. Shared by the live driver (live/droid.ts) and the plain
  * `droid exec -o stream-json` parse (outcome.ts), so both report the same
- * result. The message itself still reaches the transcript unchanged.
+ * result. The message itself still reaches the transcript unchanged. Only
+ * the turn's own messages and tools count: a subagent's are not its answer.
  */
 export class DroidAnswer {
-  private state: DroidAnswerState = { answer: "", tools: [], acknowledgement: null };
+  private state: DroidAnswerState = { ...EMPTY };
 
   get answer(): string {
     return this.state.answer;
   }
 
   text(text: string): void {
-    const { answer, tools } = this.state;
-    const acknowledges = answer.trim() !== "" && tools.length > 0 && tools.every((name) => BOOKKEEPING_TOOLS.has(name))
-      && text.trim().length <= ACKNOWLEDGEMENT_MAX_CHARS;
-    this.state = acknowledges ? { answer, tools: [], acknowledgement: text } : { answer: text, tools: [], acknowledgement: null };
+    const { answer, tools, bookkeeping } = this.state;
+    const acknowledges = answer.trim() !== "" && tools && bookkeeping && text.trim().length <= ACKNOWLEDGEMENT_MAX_CHARS;
+    this.state = acknowledges ? { ...EMPTY, answer, acknowledgement: text } : { ...EMPTY, answer: text };
   }
 
   tool(name: string): void {
-    this.state.tools.push(name);
+    this.state.tools = true;
+    this.state.bookkeeping &&= BOOKKEEPING_TOOLS.has(name);
   }
 
   /**
@@ -52,14 +57,14 @@ export class DroidAnswer {
   }
 
   reset(): void {
-    this.state = { answer: "", tools: [], acknowledgement: null };
+    this.state = { ...EMPTY };
   }
 
   checkpoint(): DroidAnswerState {
-    return { ...this.state, tools: [...this.state.tools] };
+    return { ...this.state };
   }
 
   restore(state: DroidAnswerState | undefined): void {
-    this.state = state ? { ...state, tools: [...state.tools] } : { answer: "", tools: [], acknowledgement: null };
+    this.state = state && typeof state.tools === "boolean" ? { ...state } : { ...EMPTY };
   }
 }

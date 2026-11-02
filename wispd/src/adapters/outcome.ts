@@ -558,6 +558,8 @@ export class IncrementalOutcomeReducer {
   }
 
   private pushDroidAnswer(event: Record<string, any>): void {
+    // a subagent's messages and tools are its own, not the turn's answer
+    if (event.parent_tool_use_id != null) return;
     if (event.type === "message" && event.role === "assistant" && typeof event.text === "string") this.droidAnswer.text(this.factString(event.text));
     else if (event.type === "tool_call") this.droidAnswer.tool(String(event.toolName));
   }

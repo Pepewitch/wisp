@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { BUILTIN_ADAPTERS, parseOutput, type AdapterDef } from "../src/adapters";
+import { BUILTIN_ADAPTERS, createIncrementalOutcomeReducer, parseOutput, type AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { startTurn } from "../src/runner";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
@@ -136,5 +136,24 @@ describe("Droid turn result", () => {
     // a short last message after real work is still the answer
     const worked = stream.replace('"toolName":"TodoWrite"', '"toolName":"Edit"');
     expect(parseOutput(plain, worked).result).toBe(acknowledgement);
+  });
+
+  test("a subagent's messages and tools are not the turn's answer, and the answer's state stays small", () => {
+    const { liveInput: _live, ...plain } = BUILTIN_ADAPTERS.droid!;
+    const child = "call-task";
+    const stream = [
+      { type: "tool_call", id: child, toolName: "Task", parameters: {} },
+      { type: "message", role: "assistant", id: "child-1", text: "The child's own findings.", parent_tool_use_id: child },
+      { type: "tool_call", id: "child-todo", toolName: "TodoWrite", parameters: {}, parent_tool_use_id: child },
+      { type: "message", role: "assistant", id: "parent-1", text: "Done." },
+      { type: "completion", finalText: "Done.", isError: false },
+    ].map((event) => JSON.stringify(event)).join("\n");
+    expect(parseOutput(plain, stream).result).toBe("Done.");
+
+    // many tool calls with no prose between them: the checkpoint holds flags, not their names
+    const reducer = createIncrementalOutcomeReducer(plain)!;
+    reducer.pushStdoutLine(JSON.stringify({ type: "message", role: "assistant", id: "a", text: "Answer." }));
+    for (let i = 0; i < 10_000; i++) reducer.pushStdoutLine(JSON.stringify({ type: "tool_call", id: `t${i}`, toolName: "TodoWrite".repeat(50), parameters: {} }));
+    expect(JSON.stringify(reducer.checkpoint().droidAnswer).length).toBeLessThan(200);
   });
 });
