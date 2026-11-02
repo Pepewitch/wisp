@@ -231,7 +231,10 @@ test("a cursor image renamed over, or relinked, after its read is refused", () =
     run({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path }, result: { success: { path } } }, completedAtMs: String(readAt) } });
   }
   expect(outputs(f.turnId)).toEqual([]);
-  expect(notes.filter((note) => note.includes("changed after the step read it"))).toHaveLength(2);
+  expect(notes).toEqual([
+    "· Image output unavailable: the image file changed after the step read it",
+    "· Image output unavailable: the image path goes through a link, which can change after the step read it",
+  ]);
 });
 
 test("a cursor image whose folder was swapped, or whose parent link was retargeted, after its read is refused", () => {
@@ -256,7 +259,36 @@ test("a cursor image whose folder was swapped, or whose parent link was retarget
     run({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path }, result: { success: { path } } }, completedAtMs: String(readAt) } });
   }
   expect(outputs(f.turnId)).toEqual([]);
-  expect(notes.filter((note) => note.includes("changed after the step read it"))).toHaveLength(2);
+  expect(notes).toEqual([
+    "· Image output unavailable: the image file changed after the step read it",
+    "· Image output unavailable: the image path goes through a link, which can change after the step read it",
+  ]);
+});
+
+test("a cursor image read through a link is refused, even when only the link's target folder was replaced", () => {
+  const f = fixture();
+  for (const dir of ["active", "spare", "chain-active", "chain-spare"]) {
+    mkdirSync(join(f.worktree, dir), { recursive: true });
+    writeFileSync(join(f.worktree, dir, "frame.png"), samplePng());
+  }
+  symlinkSync(join(f.worktree, "active"), join(f.worktree, "alias"));
+  symlinkSync(join(f.worktree, "chain-active"), join(f.worktree, "middle"));
+  symlinkSync(join(f.worktree, "middle"), join(f.worktree, "outer"));
+  const past = new Date(Date.now() - 3_600_000);
+  for (const dir of ["spare", "chain-spare"]) utimesSync(join(f.worktree, dir, "frame.png"), past, past);
+  const readAt = Date.now() + 1;
+  Bun.sleepSync(20);
+  // the folder an unchanged link names replaced, and the second link of a chain retargeted
+  renameSync(join(f.worktree, "active"), join(f.worktree, "old-active"));
+  renameSync(join(f.worktree, "spare"), join(f.worktree, "active"));
+  rmSync(join(f.worktree, "middle"));
+  symlinkSync(join(f.worktree, "chain-spare"), join(f.worktree, "middle"));
+  const { run, notes } = capture("cursor", f.turnId);
+  for (const [call, path] of [["call-alias", join(f.worktree, "alias", "frame.png")], ["call-chain", join(f.worktree, "outer", "frame.png")]] as const) {
+    run({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path }, result: { success: { path } } }, completedAtMs: String(readAt) } });
+  }
+  expect(outputs(f.turnId)).toEqual([]);
+  expect(notes).toEqual(Array(2).fill("· Image output unavailable: the image path goes through a link, which can change after the step read it"));
 });
 
 test("an opencode turn's images are read from its log when it ends; a cursor turn that ended unseen gets none", async () => {
