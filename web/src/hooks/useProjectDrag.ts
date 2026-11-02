@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react"
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react"
 
 import type { ProjectMove } from "@/lib/project-order-queue"
 
@@ -84,8 +84,14 @@ export function useProjectDrag({
   useEffect(() => {
     latest.current = { paths, onReorder }
   }, [paths, onReorder])
-  /** the touch under way lifted a row; outlives the press, since pointerup comes before touchend */
-  const lifted = useRef(false)
+  /**
+   * What the touch under way did with a row: lifted it (its moves are the
+   * drag's), or lifted it and let go (the drag ended, by release or by a
+   * cancel with the finger still down: its moves are the page's again, but
+   * its touchend still makes no click). Outlives the press, since pointerup
+   * comes before touchend; the next touchstart clears it.
+   */
+  const lifted = useRef<"no" | "dragging" | "released">("no")
 
   // A lifted row owns its finger. Its touchmoves are defaulted, so the browser
   // never turns them into a scroll (which would cancel the pointer), and kept
@@ -96,15 +102,15 @@ export function useProjectDrag({
     const list = listRef.current
     if (!list || !canReorder) return
     const start = () => {
-      lifted.current = false
+      lifted.current = "no"
     }
     const move = (event: TouchEvent) => {
-      if (!lifted.current) return
+      if (lifted.current !== "dragging") return
       if (event.cancelable) event.preventDefault()
       event.stopPropagation()
     }
     const finish = (event: TouchEvent) => {
-      if (lifted.current && event.cancelable) event.preventDefault()
+      if (lifted.current !== "no" && event.cancelable) event.preventDefault()
     }
     list.addEventListener("touchstart", start, { passive: true })
     list.addEventListener("touchmove", move, { passive: false })
@@ -120,6 +126,7 @@ export function useProjectDrag({
     detach.current?.()
     detach.current = null
     press.current = null
+    if (lifted.current === "dragging") lifted.current = "released"
     setDragging(null)
     setLineTop(null)
   }, [])
@@ -162,13 +169,20 @@ export function useProjectDrag({
       window.getSelection()?.removeAllRanges()
       setDragging(current.path)
       if (current.touch) {
-        lifted.current = true
+        lifted.current = "dragging"
         if ("vibrate" in navigator) navigator.vibrate(10)
-        measure(current.lastY)
       }
     },
-    [measure]
+    []
   )
+
+  // The first line is measured once the lift has committed: the lifted
+  // project's tasks fold away with it, which moves every header below. A
+  // finger that holds still has no move to measure it again.
+  useLayoutEffect(() => {
+    const current = press.current
+    if (dragging !== null && current?.started && !current.cancelled) measure(current.lastY)
+  }, [dragging, measure])
 
   const onPointerDown = useCallback(
     (path: string, event: ReactPointerEvent) => {
@@ -224,6 +238,7 @@ export function useProjectDrag({
         e.preventDefault()
         e.stopPropagation()
         current.cancelled = true
+        if (lifted.current === "dragging") lifted.current = "released"
         delete document.body.dataset.projectDrag
         setDragging(null)
         setLineTop(null)
