@@ -292,8 +292,11 @@ above, unproductive rounds spend too). Round numbers keep counting every round
 the PR has had, so the status reads "round 4 · 1 of 3 rejections used". After
 three rejections auto-review pauses ("Auto-review did not pass after 3 rounds");
 **Resume** gives it three more. Switching auto-review off and on again also
-gives three more from where it was. A new PR after a merge starts at round 1
-again. Expect up to two reviewer tasks a round. A task from before this rule
+gives three more. While another switch (auto-merge or auto-fix) stays on, the
+task keeps its workflow and the numbering goes on from where it was; with
+every switch off the workflow ends, and the next one starts again from round
+1. Either way the budget is three fresh rejections. A new PR after a merge
+starts at round 1 again. Expect up to two reviewer tasks a round. A task from before this rule
 recounts on upgrade: one still running gains back what pushed-over and passed
 rounds had spent, and one already paused stays paused until Resume.
 
