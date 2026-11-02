@@ -2,7 +2,7 @@ import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import type { AdapterDef } from "../src/adapters";
+import { BUILTIN_ADAPTERS, createIncrementalOutcomeReducer, parseOutput, type AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { startTurn } from "../src/runner";
 import { createTask, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
@@ -115,5 +115,45 @@ describe("Droid turn result", () => {
     expect(logged.find((event) => event.type === "tool_call")).toMatchObject({ toolName: "TodoWrite" });
     expect(logged.find((event) => event.type === "tool_result")).toMatchObject({ value: "TODO List Updated" });
     expect(logged.find((event) => event.type === "completion")).toMatchObject({ finalText: answer, isError: false });
+  });
+
+  test("the same stream from a Droid without live input keeps the answer too", () => {
+    const [answer, acknowledgement] = recordedMessages();
+    // what `droid exec -o stream-json` prints for it: its own finalText is the last message
+    const events = readFileSync(FIXTURE, "utf8").trim().split("\n")
+      .map((line) => JSON.parse(line).params.notification)
+      .filter((notification) => notification.type === "create_message")
+      .flatMap((notification) => notification.message.content.map((block: Record<string, any>) =>
+        block.type === "text" ? { type: "message", role: "assistant", id: notification.message.id, text: block.text }
+          : { type: "tool_call", id: block.id, toolName: block.name, parameters: block.input }));
+    const stream = [
+      { type: "system", subtype: "init", session_id: "droid-exec-session", model: "sample-model" },
+      ...events,
+      { type: "completion", finalText: acknowledgement, session_id: "droid-exec-session", isError: false },
+    ].map((event) => JSON.stringify(event)).join("\n");
+    const { liveInput: _live, ...plain } = BUILTIN_ADAPTERS.droid!;
+    expect(parseOutput(plain, stream).result).toBe(answer);
+    // a short last message after real work is still the answer
+    const worked = stream.replace('"toolName":"TodoWrite"', '"toolName":"Edit"');
+    expect(parseOutput(plain, worked).result).toBe(acknowledgement);
+  });
+
+  test("a subagent's messages and tools are not the turn's answer, and the answer's state stays small", () => {
+    const { liveInput: _live, ...plain } = BUILTIN_ADAPTERS.droid!;
+    const child = "call-task";
+    const stream = [
+      { type: "tool_call", id: child, toolName: "Task", parameters: {} },
+      { type: "message", role: "assistant", id: "child-1", text: "The child's own findings.", parent_tool_use_id: child },
+      { type: "tool_call", id: "child-todo", toolName: "TodoWrite", parameters: {}, parent_tool_use_id: child },
+      { type: "message", role: "assistant", id: "parent-1", text: "Done." },
+      { type: "completion", finalText: "Done.", isError: false },
+    ].map((event) => JSON.stringify(event)).join("\n");
+    expect(parseOutput(plain, stream).result).toBe("Done.");
+
+    // many tool calls with no prose between them: the checkpoint holds flags, not their names
+    const reducer = createIncrementalOutcomeReducer(plain)!;
+    reducer.pushStdoutLine(JSON.stringify({ type: "message", role: "assistant", id: "a", text: "Answer." }));
+    for (let i = 0; i < 10_000; i++) reducer.pushStdoutLine(JSON.stringify({ type: "tool_call", id: `t${i}`, toolName: "TodoWrite".repeat(50), parameters: {} }));
+    expect(JSON.stringify(reducer.checkpoint().droidAnswer).length).toBeLessThan(200);
   });
 });
