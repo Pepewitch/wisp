@@ -499,7 +499,7 @@ describe("Tier-1 dispatch", () => {
     fireEvent.click(screen.getByTestId("slash-tokens"))
 
     expect(await screen.findByText(
-      "No turn has reported token usage yet. Usage arrives after a turn settles.",
+      "No turn has reported token usage yet. Usage appears as turns report it.",
     )).toBeInTheDocument()
   })
 

@@ -414,11 +414,17 @@ export class CodexLiveDriver {
     }
     this.threadTotal = total;
     this.lastUsage = snakeUsage(tokenUsage.last);
-    const report = this.usageReport();
+    // After the terminal the turn's completion report is the record; and a
+    // failed write must never throw into the frame pump or boot.
+    const report = this.terminal ? null : this.usageReport();
     const serialized = report ? JSON.stringify(report) : null;
     if (report && serialized !== this.reportedUsage) {
-      this.reportedUsage = serialized;
-      this.options.onUsage?.(report);
+      try {
+        this.options.onUsage?.(report);
+        this.reportedUsage = serialized;
+      } catch {
+        // the next changed (or re-sent) update writes it again
+      }
     }
   }
 
