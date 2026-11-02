@@ -2,20 +2,93 @@
 
 This ledger separates release evidence from the version label. The 0.8 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.8.5 is the current release; earlier 0.8 records are retained
+coverage. 0.8.6 is the current release; earlier 0.8 records are retained
 below. The 0.7 records remain in
 [the 0.7 ledger](../v0.7/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
 recorded for 0.5 under
 [Still unqualified or outside scope](../v0.5/QUALIFICATION.md#still-unqualified-or-outside-scope)
-still apply to 0.8.5.
+still apply to 0.8.6.
+
+## 0.8.6 publication
+
+**Published and promoted on 2026-11-02.**
+[Wisp 0.8.6](https://github.com/Pepewitch/wisp/releases/tag/v0.8.6) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 11:41:04 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`a5bf91412cb52f312793b28f3f643db525a7af7f`](https://github.com/Pepewitch/wisp/commit/a5bf91412cb52f312793b28f3f643db525a7af7f),
+landed through [PR #514](https://github.com/Pepewitch/wisp/pull/514). It carries
+`wisp wait` for tasks to settle ([#496](https://github.com/Pepewitch/wisp/pull/496)),
+subtasks that queue at their parent's running cap
+([#508](https://github.com/Pepewitch/wisp/pull/508)), Cursor's model list
+restored when a model check lists nothing
+([#503](https://github.com/Pepewitch/wisp/pull/503)), and the other changes
+listed in the release notes since 0.8.5.
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/41437567897)
+published the release. Its `publish` job then failed after publication: "verify
+anonymous public downloads" failed and "install the published Formula the way a
+user does" was skipped. The failure was Apple's: the step's last check,
+`xcrun stapler validate` on the downloaded Desktop app, lost its connection to
+Apple's CloudKit ticket service ("The network connection was lost", Error 68),
+the same transient drop that hit 0.7.0 and 0.7.1. Every check before it in that
+step passed on the anonymous downloads: the seven checksums, the daemon app's
+signature, entitlements, staple and Gatekeeper assessment, the Desktop updater
+signature, and the rejection of an altered archive. Promoting was safe because
+the remaining Desktop checks then passed by hand on the published bytes (below). Promotion, which that failure skipped, finished in a separate
+[recovery run](https://github.com/Pepewitch/wisp/actions/runs/41438916186). The
+gates before publication passed; the post-publication checks did not:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, supply-chain, update-verifier, and public-promotion dry-run checks passed; the exact-main [release candidate](https://github.com/Pepewitch/wisp/actions/runs/41437266595) also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |
+| Public assets | All ten assets matched all three checksum sets before publication; the release workflow's check of the anonymous public downloads of clean tagged commit `a5bf914` failed after publication, so this record does not claim it |
+| Homebrew installability | The Formula and Cask were audited offline before publication; the release workflow's install of the published Formula the way a user does was skipped after publication, so this record does not claim it |
+
+Promotion completed at 11:45:31 UTC with Homebrew tap commit
+[`ddab9f4f3cc017badbccbfe36456228d542b5f60`](https://github.com/Pepewitch/homebrew-tap/commit/ddab9f4f3cc017badbccbfe36456228d542b5f60).
+The Formula, Cask, daemon update channel, and Desktop update channel all serve
+0.8.6.
+
+0.8.6 adds database migrations 30 and 31, so a 0.8.5 daemon cannot reopen a
+profile that 0.8.6 has opened. No PNG asset or brand-generator input changed
+since 0.8.5, so the PNG assets were not re-rendered. This is a fully automated
+publication: no maintainer qualification — fresh-install or upgrade receipts, a
+Desktop updater journey across this version, the token-spending harness probes,
+or the paid evaluator panel — was performed, and this record does not claim
+them. The published assets and release body remain immutable; this ledger
+records the completed outcome separately.
+
+The local release gate, `bun run release:check 0.8.6`, never passed. It failed
+twice in its `check` gate, each time on one `tests/install-script.test.ts` test
+timing out at 5 s (a different test each run) on a machine at load 29–39 from
+other agents. The file passed on its own (4 of 4), and the owner explicitly
+authorized publishing without the local gate. `bun run smoke` and `bun run
+build`, which that gate had not reached, then passed by hand on the merged
+release commit `a5bf914`, and the release PR's CI passed on the same tree.
+
+The failed "verify anonymous public downloads" step did not finish its
+Desktop checks: the staple validation and the Gatekeeper assessment of the
+downloaded Desktop app. Both were run by hand on a maintainer Mac against an
+anonymous download of `wisp-desktop-v0.8.6-darwin-arm64.tar.gz`: its SHA-256
+matched `SHA256SUMS-desktop-darwin-arm64`, `codesign --verify --deep --strict`
+passed, `xcrun stapler validate` passed, and `spctl --assess` accepted it as
+"Notarized Developer ID". The skipped "install the published Formula the way a
+user does" was not run by hand, so no install of the published Formula is
+claimed; the closeout's anonymous check above shows only that the tap serves
+0.8.6. No headline change was run live against the published daemon.
 
 ## 0.8.5 publication
 
 **Published and promoted on 2026-10-31.**
-[Wisp 0.8.5](https://github.com/Pepewitch/wisp/releases/tag/v0.8.5) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.8.5](https://github.com/Pepewitch/wisp/releases/tag/v0.8.5) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 10:01:09 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`c7dfe960ac106be8dc1e741ec72d7e61b5386558`](https://github.com/Pepewitch/wisp/commit/c7dfe960ac106be8dc1e741ec72d7e61b5386558),
@@ -46,8 +119,8 @@ after that commit's release checks passed:
 
 Promotion completed at 10:03:11 UTC with Homebrew tap commit
 [`7ce9e6697675ced9fc01ef5095ae9962c2b3fd1a`](https://github.com/Pepewitch/homebrew-tap/commit/7ce9e6697675ced9fc01ef5095ae9962c2b3fd1a).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.8.5.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.8.5 until 0.8.6 was promoted.
 
 0.8.5 adds no database migration. No PNG asset or brand-generator input changed
 since 0.8.4, so the PNG assets were not re-rendered. This is a fully automated
