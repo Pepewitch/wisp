@@ -15,7 +15,7 @@ import {
 import type { WispConfig } from "../config";
 import { homeIsDraining } from "../home-lifetime";
 import { startTurn, taskEnv } from "../runner";
-import { db, getTask, setTaskFields, transition, turnsFor } from "../store";
+import { createTaskMessage, db, getTask, newTaskMessageId, setTaskFields, transition, turnsFor } from "../store";
 import { recordSetupFailure } from "../subtask-reports";
 import { taskMode, type Task } from "../types";
 import { createWorktree, localWorktree, runSetup } from "../worktree";
@@ -35,6 +35,12 @@ export async function launchTask(
   cfg: WispConfig,
   attachments: DecodedAttachment[] = [],
   base?: string | PinnedBase,
+  /**
+   * `wisp new --subtask --queue`: the first prompt waits in the task's message
+   * queue for a slot under its parent's running cap instead of starting at
+   * once. Marked to report back, as a first turn always does.
+   */
+  queued?: { actor: string | null },
 ): Promise<void> {
   try {
     const mode = taskMode(task);
@@ -81,6 +87,15 @@ export async function launchTask(
     // never start a child in a worktree teardown is already removing.
     const fresh = getTask(task.id);
     if (!fresh || fresh.archived || homeIsDraining()) return;
+    if (queued) {
+      createTaskMessage({ id: newTaskMessageId(), taskId: task.id, text: prompt, attachmentHash: "", actor: queued.actor, reportBack: true });
+      // Not started from here: setup still holds this task's reservation,
+      // which a start would take as its own slot past the parent's cap. The
+      // creation's release drains the parent's queue next, and that starts it
+      // at once if a slot is free.
+      transition(task.id, "queued", fresh.parent_task_id ? `waiting for a subtask slot under ${fresh.parent_task_id}` : "waiting for a slot");
+      return;
+    }
     const stored = attachments.length > 0 ? writeTurnAttachments(task.id, fresh.turn_count + 1, attachments) : [];
     startTurn(fresh, prompt, def, cfg, stored, undefined, adapters);
   } catch (e) {

@@ -68,6 +68,8 @@ export interface NewTaskInput {
   prepare?: (task: Task) => void;
   /** who asked, for the task audit */
   actor: TaskAuditActor;
+  /** a subtask that waits for its parent's running cap instead of being refused (task-launch.ts) */
+  queue?: boolean;
 }
 
 /**
@@ -187,10 +189,13 @@ async function placement(input: NewTaskInput, cfg: WispConfig, sub: ResolvedSubt
   return { ...input, repoPath: checkout, base: base.base };
 }
 
-/** Admission for the new task: the global limit, and its parent's running cap unless it is Wisp's reviewer. */
-function capacityRefusal(cfg: WispConfig, sub: ResolvedSubtask | null): NewTaskRefusal | null {
+/**
+ * Admission for the new task: the global limit, and its parent's running cap
+ * unless it is Wisp's reviewer, or it was asked to queue for that cap.
+ */
+function capacityRefusal(cfg: WispConfig, sub: ResolvedSubtask | null, queue: boolean): NewTaskRefusal | null {
   try {
-    assertTaskCapacity(cfg, undefined, { parentId: sub && !sub.reviewer ? sub.parent.id : null });
+    assertTaskCapacity(cfg, undefined, { parentId: sub && !sub.reviewer && !queue ? sub.parent.id : null });
     return null;
   } catch (error) {
     if (error instanceof SubtaskCapError) return refuse("subtask-cap", error.message);
@@ -257,7 +262,7 @@ export async function createAndLaunchTask(
     // A removal can begin while attachment decoding and defaults are resolved.
     // Check again at the last point before the row exists.
     if (isProjectRemovalInProgress(repoPath)) return refuse("conflict", `project is being removed from Wisp: ${resolve(repoPath)}`);
-    const full = capacityRefusal(cfg, sub);
+    const full = capacityRefusal(cfg, sub, input.queue === true);
     if (full) return full;
     let task: Task | null;
     try {
@@ -272,13 +277,14 @@ export async function createAndLaunchTask(
     recordAudit(task.id, "create", input.actor, `${harness}${model ? ` ${model}` : ""}, ${input.mode}`);
     armRequestedAutopilot(task.id, input.autopilot, input.actor);
     input.prepare?.(task);
-    const release = reserveTaskCapacity(task.id, cfg);
+    // a queued subtask's setup takes a global slot, never its parent's: its turn waits for that
+    const release = reserveTaskCapacity(task.id, cfg, input.queue ? { parentId: null } : {});
     handedOff = true;
     const prompt = firstTurnPrompt(input, sub);
     const created = task;
     void backgroundPass(
       `launch of task ${task.id}`,
-      () => launchTask(created, prompt, def, adapters, cfg, attachments, input.base).finally(() => {
+      () => launchTask(created, prompt, def, adapters, cfg, attachments, input.base, input.queue ? { actor: input.actor } : undefined).finally(() => {
         release();
         // a creation slot freed, or setup failed: a sibling waiting on the parent's cap may start
         drainSubtaskQueues(created.parent_task_id, adapters, cfg);

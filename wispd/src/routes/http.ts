@@ -8,6 +8,7 @@ import { safeString } from "../text";
 import { typeName } from "../validate";
 import { backgroundWork, BACKGROUND_SETTLE_MS } from "../task-processes";
 import { turnInput } from "../live-input";
+import { queuePosition } from "../subtasks";
 
 /**
  * SQLite stores archived as 0/1; the public API exposes a boolean (a prior audit).
@@ -30,7 +31,7 @@ function subtaskFields(t: Task): Pick<ApiTask, "parent_task_id" | "subtask_kind"
 
 export function apiTask(t: Task): ApiTask {
   const { brief_enabled: _brief, brief_generation: _generation, input_seq: _seq, input_rev: _rev, ...row } = t;
-  return { ...row, ...subtaskFields(t), archived: t.archived !== 0, fast: t.fast !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), turn_input: t.archived ? null : turnInput(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
+  return { ...row, ...subtaskFields(t), ...(t.state === "queued" ? { queue_position: queuePosition(t) } : {}), archived: t.archived !== 0, fast: t.fast !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), turn_input: t.archived ? null : turnInput(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
 }
 
 export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {

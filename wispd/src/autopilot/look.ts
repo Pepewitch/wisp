@@ -15,6 +15,7 @@ export function busyReason(task: Task): string {
     case "failed": return "The task failed — waiting for you"
     case "stuck": return "The task is stuck — waiting for you"
     case "creating": return "Waiting for the task to start"
+    case "queued": return "Waiting for a subtask slot to start"
     case "running": return "Waiting for the task to finish"
     default: return backgroundWork(task.id).state !== "none" ? "Waiting for the task's background work" : "Waiting for the task to finish"
   }

@@ -21,7 +21,7 @@ const COMMAND = wispCommand();
 const COMMAND_USAGE = {
   serve: `  ${COMMAND} serve                                   run the daemon`,
   new: `  ${COMMAND} new [repo] "prompt" --harness <h> [--model <m>] [--effort <level>] [--fast] [--local] [--base <ref>] [--auto-merge] [--auto-fix] [--auto-review] [--attach <path>]…
-          [--subtask | --parent <task> [--report]] [--kind review|explore|continue]
+          [--subtask | --parent <task> [--report]] [--kind review|explore|continue] [--queue]
                                                        create a task (repo defaults to cwd;
                                                        model/effort fall back to config.json harnessDefaults,
                                                        then Wisp's default model for the harness;
@@ -38,7 +38,9 @@ const COMMAND_USAGE = {
                                                        --subtask makes this task's child (reporting back to it),
                                                        --parent <task> another task's (--report to report);
                                                        --kind: review starts at the parent's PR head, explore
-                                                       (default) at the project's base, continue at its tip)`,
+                                                       (default) at the project's base, continue at its tip;
+                                                       --queue: when the parent's running cap is full, the subtask
+                                                       is created anyway and starts once a sibling finishes)`,
   ls: `  ${COMMAND} ls [-a|--all] [--json]                    list your tasks, subtasks under their parent (alias: list; -a includes archived)`,
   show: `  ${COMMAND} show <task>                             task detail: turns, attachments, diffstat, parent and subtasks`,
   result: `  ${COMMAND} result <task> [turn]                    the agent's full answer for a turn (default: latest)`,

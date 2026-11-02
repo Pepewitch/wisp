@@ -18,7 +18,7 @@ import type { AutopilotStatus } from "../autopilot";
  * Every task state. The CLI's STATE_ICON and the web's state maps are
  * Record<TaskState, …>, so adding a state fails to compile until each carries it.
  */
-export const TASK_STATES = ["creating", "running", "done", "needs-input", "stuck", "failed"] as const;
+export const TASK_STATES = ["creating", "queued", "running", "done", "needs-input", "stuck", "failed"] as const;
 export type TaskState = (typeof TASK_STATES)[number];
 
 /**
@@ -232,6 +232,8 @@ export interface ApiTask {
   base_sha: string | null;
   /** Who turned auto-merge on: `person`, `parent:<id>` or `agent:<id>`; null when it is off or was armed before this was recorded. */
   merge_granted_by: string | null;
+  /** A `queued` subtask's place among its parent's queued children, 1 = next to start; absent for any other task. */
+  queue_position?: number;
 }
 
 /** GET /api/tasks/:id/subtasks: one child, archived ones included. */

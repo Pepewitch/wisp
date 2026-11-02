@@ -10,6 +10,8 @@ import type { ApiTask, ConversationDetail, TaskState, TurnStatus } from "./types
  */
 export const STATE_DOT: Record<TaskState, string> = {
   creating: "bg-state-creating",
+  // waiting its turn: the same quiet dot as a task still being set up
+  queued: "bg-state-creating",
   running: "bg-state-running",
   done: "bg-state-done",
   "needs-input": "bg-state-needs-input",
@@ -23,6 +25,7 @@ export const STATE_DOT: Record<TaskState, string> = {
  */
 export const STATE_LABEL: Record<TaskState, string> = {
   creating: "Creating",
+  queued: "Queued",
   running: "Running",
   done: "Done",
   "needs-input": "Needs input",
@@ -36,6 +39,7 @@ export const STATE_LABEL: Record<TaskState, string> = {
  */
 export const STATE_TEXT: Record<TaskState, string> = {
   creating: "text-muted-foreground",
+  queued: "text-muted-foreground",
   running: "text-muted-foreground",
   done: "text-muted-foreground",
   "needs-input": "text-state-needs-input",

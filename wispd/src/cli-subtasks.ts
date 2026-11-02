@@ -18,6 +18,8 @@ export interface SubtaskFields {
   parentTaskId: string;
   subtaskKind?: string;
   report: boolean;
+  /** wait for the parent's running cap instead of being refused */
+  queue?: true;
 }
 
 /**
@@ -33,7 +35,7 @@ export function subtaskFlags(flags: Flags, env: Record<string, string | undefine
   const parent = flags.parent;
   const named = flags.subtask === true || parent !== undefined;
   if (!named) {
-    if (flags.report !== undefined || flags.kind !== undefined) fail("--report and --kind need --subtask or --parent <id>");
+    if (flags.report !== undefined || flags.kind !== undefined || flags.queue !== undefined) fail("--report, --kind and --queue need --subtask or --parent <id>");
     return null;
   }
   if (flags.subtask === true && parent !== undefined) fail("use --subtask (this task is the parent) or --parent <id>, not both");
@@ -48,6 +50,7 @@ export function subtaskFlags(flags: Flags, env: Record<string, string | undefine
     parentTaskId,
     ...(typeof flags.kind === "string" ? { subtaskKind: flags.kind } : {}),
     report: flags.subtask === true || flags.report === true,
+    ...(flags.queue === true ? { queue: true } : {}),
   };
 }
 

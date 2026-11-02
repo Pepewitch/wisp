@@ -65,7 +65,8 @@ describe("wisp new and wisp archive with subtask flags", () => {
       [["new", "--subtask", "x", "--harness", "claude"], {}, "--subtask works inside a Wisp task"],
       [["new", "--subtask", "--parent", "tabcde", "x", "--harness", "claude"], { WISP_TASK_ID: "tself" }, "not both"],
       [["new", "--parent", "tabcde", "--kind", "sideways", "x", "--harness", "claude"], {}, "--kind must be one of review, explore, continue"],
-      [["new", "--report", "x", "--harness", "claude"], {}, "--report and --kind need --subtask or --parent"],
+      [["new", "--report", "x", "--harness", "claude"], {}, "--report, --kind and --queue need --subtask or --parent"],
+      [["new", "--queue", "x", "--harness", "claude"], {}, "--report, --kind and --queue need --subtask or --parent"],
       [["archive", "tabcde", "--subtasks", "everything"], {}, "--subtasks takes archive or force"],
       [["archive", "tabcde", "--subtasks"], {}, "--subtasks takes archive or force"],
     ];
