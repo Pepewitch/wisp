@@ -68,8 +68,9 @@ export function startLoggedImageCapture(
   return {
     async finish() {
       if (timer) clearInterval(timer);
-      // the rest, a bounded slice at a time, letting the event loop run between
-      while (log.read(POLL_BYTES)) await Bun.sleep(0);
+      // the rest as it stands now (a process left behind may still append), a bounded slice at a time
+      const end = log.size();
+      while (log.read(POLL_BYTES, end)) await Bun.sleep(0);
       log.end();
       if (notes.length === 0) return;
       try {
@@ -103,8 +104,17 @@ class LogLines {
     }
   }
 
-  /** Read up to `budget` new bytes. True when it stopped at the budget, with more to read. */
-  read(budget: number): boolean {
+  /** The file's size now, or the offset when it cannot be read. */
+  size(): number {
+    try {
+      return statSync(this.path).size;
+    } catch {
+      return this.offset;
+    }
+  }
+
+  /** Read up to `budget` new bytes, never past `end`. True when it stopped at the budget, with more to read. */
+  read(budget: number, end = Infinity): boolean {
     let fd: number;
     try {
       fd = openSync(this.path, "r");
@@ -116,7 +126,7 @@ class LogLines {
       if ((this.inode !== null && info.ino !== this.inode) || info.size < this.offset) this.restart();
       this.inode = info.ino;
       const buffer = Buffer.alloc(READ_CHUNK);
-      let left = budget;
+      let left = Math.min(budget, end - this.offset);
       while (left > 0) {
         const read = readSync(fd, buffer, 0, Math.min(READ_CHUNK, left), this.offset);
         if (read <= 0) return false;
@@ -125,7 +135,7 @@ class LogLines {
         this.lastByte = buffer[read - 1]!;
         this.take(this.decoder.decode(buffer.subarray(0, read), { stream: true }));
       }
-      return true;
+      return this.offset < end;
     } finally {
       closeSync(fd);
     }

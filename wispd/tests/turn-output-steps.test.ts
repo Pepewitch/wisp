@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { outputImageNote, outputImageNoteId, type OutputImage } from "../../shared/api/outputs";
 import { samplePng } from "../scripts/harness/image-output-probe";
@@ -185,11 +185,53 @@ test("a followed cursor log refuses a file written after its read, and survives 
   expect(outputs(f.turnId).map((image) => image.name)).toContain("after-rotation.png");
 });
 
-test("a huge newline-free log is read in bounded slices and captures nothing", async () => {
+test("a huge newline-free log is read in bounded slices, letting the event loop run, and captures nothing", async () => {
   const f = fixture();
   writeFileSync(f.log, "z".repeat(20 * 1024 * 1024));
-  await startLoggedImageCapture(BUILTIN_ADAPTERS.opencode!, f.turnId, f.log, "ended")!.finish();
+  let ran = false;
+  const finishing = startLoggedImageCapture(BUILTIN_ADAPTERS.opencode!, f.turnId, f.log, "ended")!.finish();
+  setTimeout(() => { ran = true; }, 0);
+  await finishing;
+  // an unbounded read would finish before any timer could run
+  expect(ran).toBe(true);
   expect(outputs(f.turnId)).toEqual([]);
+});
+
+test("finish reads the log as it stood, not what a process left behind keeps appending", async () => {
+  const f = fixture();
+  writeFileSync(f.log, "x".repeat(1024 * 1024));
+  const chunk = "y".repeat(2 * 1024 * 1024);
+  const writer = setInterval(() => appendFileSync(f.log, chunk), 1);
+  try {
+    const done = startLoggedImageCapture(BUILTIN_ADAPTERS.opencode!, f.turnId, f.log, "ended")!.finish().then(() => "finished");
+    expect(await Promise.race([done, Bun.sleep(5_000).then(() => "still reading")])).toBe("finished");
+  } finally {
+    clearInterval(writer);
+  }
+});
+
+test("a cursor image renamed over, or relinked, after its read is refused", () => {
+  const f = fixture();
+  const original = join(f.worktree, "a.png");
+  const older = join(f.worktree, "older.png");
+  const target = join(f.worktree, "t.png");
+  const link = join(f.worktree, "link.png");
+  for (const file of [original, older, target]) writeFileSync(file, samplePng());
+  symlinkSync(target, link);
+  const past = new Date(Date.now() - 3_600_000);
+  utimesSync(older, past, past);
+  const readAt = Date.now() + 1;
+  Bun.sleepSync(20);
+  // an older file renamed over the path, and the link pointed at another file
+  renameSync(older, original);
+  rmSync(link);
+  symlinkSync(original, link);
+  const { run, notes } = capture("cursor", f.turnId);
+  for (const [call, path] of [["call-renamed", original], ["call-relinked", link]] as const) {
+    run({ type: "tool_call", subtype: "completed", call_id: call, tool_call: { readToolCall: { args: { path }, result: { success: { path } } }, completedAtMs: String(readAt) } });
+  }
+  expect(outputs(f.turnId)).toEqual([]);
+  expect(notes.filter((note) => note.includes("changed after the step read it"))).toHaveLength(2);
 });
 
 test("an opencode turn's images are read from its log when it ends; a cursor turn that ended unseen gets none", async () => {
