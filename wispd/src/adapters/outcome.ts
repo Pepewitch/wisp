@@ -42,6 +42,18 @@ export interface OutcomeCheckpointV1 {
   context?: ContextPoint | null;
   /** Droid's answer across its messages (droid-answer.ts); absent in checkpoints written before it existed. */
   droidAnswer?: DroidAnswerState;
+  /**
+   * The main agent's latest batch of tool calls: the model response that
+   * made them (`message.id`) and their ids. Absent in checkpoints written
+   * before it existed.
+   */
+  lastToolBatch?: { message: string | null; ids: string[] } | null;
+  /**
+   * Whether the last result's needs-input entries still hold the turn: false
+   * when every one names a tool call the agent went past. Absent (or null)
+   * means the plain rule, any entry at all.
+   */
+  needsInputHeld?: boolean | null;
   firstStderr: string | null;
   stderrTail: string[];
 }
@@ -108,6 +120,8 @@ export class IncrementalOutcomeReducer {
   private opencodeMessage: string | null = null;
   private opencodeSteps: unknown[] = [];
   private context: ContextPoint | null = null;
+  private lastToolBatch: { message: string | null; ids: string[] } | null = null;
+  private needsInputHeld: boolean | null = null;
   private firstStderr: string | null = null;
   private stderrTail: string[] = [];
 
@@ -186,6 +200,7 @@ export class IncrementalOutcomeReducer {
     else if (this.kind === "opencode-json") this.pushOpencode(event);
     else this.pushMapped(event);
     if (this.def.events === "droid-stream-json") this.pushDroidAnswer(event);
+    if (this.kind === "mapped-json") this.pushToolUse(event);
     this.pushErrorEvent(event);
     return this.earlySession !== knownSession || this.earlyModel !== knownModel || this.earlySkills !== knownSkills;
   }
@@ -263,12 +278,11 @@ export class IncrementalOutcomeReducer {
     const result = typeof text === "string" ? text : text != null ? JSON.stringify(text) : null;
     const rawSession = this.def.parse.session ? event[this.def.parse.session] : null;
     const rawModel = this.def.parse.model ? event[this.def.parse.model] : null;
-    const needsInputField = this.def.parse.needsInput;
     const rawUsage = this.summedUsage() ? this.usage : this.def.parse.usage ? event[this.def.parse.usage] : null;
     return {
       result,
       session: typeof rawSession === "string" ? rawSession : null,
-      needsInput: needsInputField ? Array.isArray(event[needsInputField]) && event[needsInputField].length > 0 : false,
+      needsInput: this.mappedNeedsInput(event),
       isError: event.isError === true || event.is_error === true,
       model: typeof rawModel === "string" ? rawModel : this.earlyModel,
       usage: isRecord(rawUsage) ? rawUsage : null,
@@ -333,6 +347,8 @@ export class IncrementalOutcomeReducer {
       opencodeSteps: [...this.opencodeSteps],
       context: this.context,
       droidAnswer: this.droidAnswer.checkpoint(),
+      lastToolBatch: this.lastToolBatch ? { message: this.lastToolBatch.message, ids: [...this.lastToolBatch.ids] } : null,
+      needsInputHeld: this.needsInputHeld,
       firstStderr: this.firstStderr,
       stderrTail: [...this.stderrTail],
     };
@@ -369,6 +385,8 @@ export class IncrementalOutcomeReducer {
     this.opencodeSteps = [...(checkpoint.opencodeSteps ?? [])];
     this.context = checkpoint.context ?? null;
     this.droidAnswer.restore(checkpoint.droidAnswer);
+    this.lastToolBatch = checkpoint.lastToolBatch ? { message: checkpoint.lastToolBatch.message, ids: [...checkpoint.lastToolBatch.ids] } : null;
+    this.needsInputHeld = checkpoint.needsInputHeld ?? null;
     this.firstStderr = checkpoint.firstStderr;
     this.stderrTail = checkpoint.stderrTail.slice(-3);
   }
@@ -495,6 +513,7 @@ export class IncrementalOutcomeReducer {
         "is_error",
       ]);
       this.settled = true;
+      this.needsInputHeld = this.heldByEntries(event);
       // A claude turn emits a result per model cycle (a background task's
       // notification, a retry after a connection error), each reporting only
       // its own cycle; the turn's usage is all of them. See addUsageBlobs.
@@ -503,6 +522,55 @@ export class IncrementalOutcomeReducer {
         this.usage = this.factValue(isRecord(this.usage) ? addUsageBlobs(this.usage, usage) : usage);
       }
     }
+  }
+
+  /** The mapped kind's needs-input: any entry in the declared field, unless every one names a tool call the agent went past. */
+  private mappedNeedsInput(event: Record<string, unknown>): boolean {
+    const field = this.def.parse.needsInput;
+    const entries = field ? event[field] : undefined;
+    return Array.isArray(entries) && entries.length > 0 && this.needsInputHeld !== false;
+  }
+
+  /**
+   * The main agent's latest batch of tool calls (claude's stream-json). One
+   * model response may make several calls, each written as its own
+   * `assistant` event under the same `message.id`, so they gather into one
+   * batch until a response with another id makes a call. A subagent's events
+   * (`parent_tool_use_id`) are not the main agent's: a background subagent
+   * still working must not move the batch past the main agent's question.
+   */
+  private pushToolUse(event: Record<string, any>): void {
+    if (event.type !== "assistant" || event.parent_tool_use_id || !Array.isArray(event.message?.content)) return;
+    const ids = (event.message.content as unknown[]).flatMap((part) =>
+      isRecord(part) && part.type === "tool_use" && typeof part.id === "string" ? [this.factString(part.id)] : []);
+    if (ids.length === 0) return;
+    // a batch is bounded like every fact the reducer keeps; no real response makes 64 calls
+    const message = typeof event.message.id === "string" ? event.message.id : null;
+    const batch = this.lastToolBatch;
+    if (batch && message !== null && batch.message === message) batch.ids.push(...ids.slice(0, 64 - batch.ids.length));
+    else this.lastToolBatch = { message, ids: ids.slice(0, 64) };
+  }
+
+  /**
+   * Whether a result's needs-input entries still hold the turn for the
+   * person. Claude lists every tool call a permission check denied during
+   * the turn in `permission_denials`, even one the agent then worked around.
+   * A denial in the main agent's last batch of calls may be what it stopped
+   * to ask about, so it holds; one the agent went past, making another batch
+   * of calls after it, does not, and the finished turn reads done. That
+   * accepts one miss: an agent that checks something after a denial and only
+   * then asks reads done, its question still in its answer, and so does one
+   * whose denied call was inside a subagent of its last batch. Entries that name
+   * no tool call, or a stream with no call of the main agent, keep the plain
+   * rule (null).
+   */
+  private heldByEntries(event: Record<string, any>): boolean | null {
+    const field = this.def.parse.needsInput;
+    const entries: unknown = field ? event[field] : undefined;
+    if (!Array.isArray(entries) || entries.length === 0 || this.lastToolBatch === null) return null;
+    const ids = entries.map((entry) => (isRecord(entry) && typeof entry.tool_use_id === "string" ? entry.tool_use_id : null));
+    if (ids.some((id) => id === null)) return null;
+    return ids.some((id) => this.lastToolBatch!.ids.includes(id!));
   }
 
   private pushErrorEvent(event: Record<string, any>): void {
