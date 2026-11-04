@@ -17,7 +17,8 @@ import {
 import { emit } from "./events";
 import { getTask, runningTurn } from "./store";
 import { clearHarnessBackground, setHarnessBackground } from "./task-processes";
-import { deliveredMessage, nativeImageAttachments } from "./turn-input";
+import { reportFraming } from "./subtask-reports";
+import { deliveredMessage, nativeImageAttachments, withWispSection } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
 import type { Task, TaskMessage, TurnInput, TurnInputMode } from "./types";
 
@@ -663,6 +664,11 @@ function frameDropNote(recorder: LiveOutputSink): (chars: number) => void {
  * csv attached mid-turn would reach a live harness as bytes nobody mentioned.
  */
 export function steerText(def: AdapterDef, message: TaskMessage, files: StoredAttachment[]): string {
+  // a subtask report steered mid-turn is framed from its rows, as one that starts a turn is (runner.ts)
+  if (message.origin === "subtask") {
+    const framed = reportFraming(message.id);
+    return withWispSection(framed.lines, framed.words);
+  }
   return deliveredMessage(def, files, message.text, message.origin);
 }
 
