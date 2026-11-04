@@ -19,7 +19,8 @@ import {
   type LiveOutputSink,
   type LiveTurn,
 } from "./live-input";
-import { transition } from "./store";
+import { db, transition } from "./store";
+import { recordQuestionReport, settleQuestionReport } from "./subtask-reports";
 import { clearHarnessBackground, setHarnessBackground } from "./task-processes";
 import { nativeImageAttachments } from "./turn-input";
 
@@ -110,12 +111,16 @@ export class DroidLiveProcess implements LingeringLiveProcess {
       // It also takes the task out of stuck-detection's reach, which skips
       // anything that is not running or already stuck — a turn idling on a
       // question is neither quiet nor broken, it is waiting on purpose.
-      onWaiting: (waiting) =>
+      // the report and the state change it reports commit together (subtask-reports.ts)
+      onWaiting: (waiting, question) => db.transaction(() => {
+        if (question) recordQuestionReport(this.taskId, this.current.turn, question.id, question.questions);
         transition(
           this.taskId,
           waiting ? "needs-input" : "running",
           waiting ? `turn ${this.current.turn} is asking you` : `turn ${this.current.turn}`,
-        ),
+        );
+      })(),
+      onQuestionSettled: (id, phase) => settleQuestionReport(this.taskId, id, phase),
     });
     this.ready = this.driver.ready;
     this.open(this.current);

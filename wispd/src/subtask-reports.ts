@@ -1,8 +1,9 @@
 /**
  * What a subtask reports to its parent, recorded in the same transaction as
  * the change that causes it: a turn settling (store.ts settleTurn), a turn
- * going quiet (stuck.ts), setup failing before any turn (domain/task-launch),
- * and its PR's events (autopilot). Delivery is subtask-delivery.ts.
+ * going quiet (stuck.ts), a live turn stopping on a question (live-droid.ts),
+ * setup failing before any turn (domain/task-launch), and its PR's events
+ * (autopilot). Delivery is subtask-delivery.ts.
  *
  * Only the database handle is imported: store.ts calls in here, so anything
  * more would be an import cycle.
@@ -16,7 +17,7 @@ import { wispCommand } from "./command";
 import { db } from "./store-database";
 
 /** What the parent is told; never the reason text of a hold, which can carry gh or CI output. */
-export type ReportKind = "turn" | "stuck" | "setup-failed" | "round" | "merged" | "closed" | "needs-you";
+export type ReportKind = "turn" | "stuck" | "question" | "setup-failed" | "round" | "merged" | "closed" | "needs-you";
 
 export interface ReportFacts {
   kind: ReportKind;
@@ -28,6 +29,10 @@ export interface ReportFacts {
   round?: number;
   /** needs-you: a fixed reason class (round-cap, recipe, conflict, merge-failed, provider-auto-merge, merge-rights, …) */
   class?: string;
+  /** question: the harness's id for it */
+  questionId?: string;
+  /** question: released before the parent read it */
+  settled?: "answered" | "cancelled";
 }
 
 /** A turn's own words in a report: enough to act on, and the rest one `wisp result` away. */
@@ -110,6 +115,11 @@ export function reportsToParent(taskId: string): boolean {
  */
 export function recordTurnReport(turnId: number, state: string): void {
   const turn = db.query("SELECT task_id, n, status, origin, result, source_message_id FROM turns WHERE id = ?").get(turnId) as SettledTurn | null;
+  // a question its parent has not read yet cannot outlive the turn that asked it (a daemon restart, a dead channel)
+  if (turn) {
+    db.run(`UPDATE subtask_reports SET state = 'dropped', reason = 'question withdrawn', updated_at = ?
+      WHERE child_task_id = ? AND kind = 'question' AND state = 'pending' AND event_key LIKE ?`, [stamp(), turn.task_id, `question:${turn.n}:%`]);
+  }
   if (!turn || (turn.status !== "done" && turn.status !== "failed") || turn.origin === "background") return;
   const child = reportingChild(turn.task_id);
   if (!child || startedByParentOrAutopilot(turn, child.parent_task_id)) return;
@@ -121,6 +131,46 @@ export function recordTurnReport(turnId: number, state: string): void {
 export function recordStuckReport(childId: string, turn: number): void {
   const child = reportingChild(childId);
   if (child) record(child, `stuck:${turn}`, { kind: "stuck", turn }, null);
+}
+
+/** One question as a live harness poses it mid-turn (adapters/live/droid.ts DroidQuestion). */
+export interface AskedQuestion {
+  topic: string | null;
+  question: string;
+  multiSelect: boolean;
+  options: string[];
+}
+
+/**
+ * A live turn stopped on a question (#518): the turn is still running, so no
+ * settled-turn report comes, and stuck detection skips a turn waiting on
+ * purpose. Without this the child waits for an answer nobody knows it needs.
+ * Once per question; its text and options are the body, so the parent can
+ * answer with `wisp send`, which steers into the turn and answers it.
+ */
+export function recordQuestionReport(childId: string, turn: number, questionId: string, questions: AskedQuestion[]): void {
+  const child = reportingChild(childId);
+  if (!child) return;
+  const body = questions.map((q) => [
+    `${q.topic ? `${q.topic}: ` : ""}${q.question}${q.multiSelect ? " (choose any)" : ""}`,
+    ...q.options.map((option, at) => `  ${at + 1}. ${option}`),
+  ].join("\n")).join("\n\n");
+  record(child, `question:${turn}:${questionId}`, { kind: "question", turn, questionId }, body);
+}
+
+/**
+ * The question was released (answered from its card or by a `wisp send`,
+ * superseded, or stopped) before the parent read its report: a pending report
+ * is dropped, and one already queued in a message says so when it is framed,
+ * so the parent is never told a child still waits that does not.
+ */
+export function settleQuestionReport(childId: string, questionId: string, phase: "answered" | "cancelled"): void {
+  const match = "child_task_id = ? AND kind = 'question' AND json_valid(facts_json) AND json_extract(facts_json, '$.questionId') = ?";
+  const at = stamp();
+  db.run(`UPDATE subtask_reports SET state = 'dropped', reason = ?, updated_at = ? WHERE ${match} AND state = 'pending'`,
+    [phase === "answered" ? "question answered" : "question withdrawn", at, childId, questionId]);
+  db.run(`UPDATE subtask_reports SET facts_json = json_set(facts_json, '$.settled', ?), updated_at = ? WHERE ${match} AND state = 'queued'`,
+    [phase, at, childId, questionId]);
 }
 
 /** Setup failed before any turn existed: without this, an orchestrator would wait on a child that never started. */
@@ -156,6 +206,9 @@ function factLine(index: number, row: DeliveredRow): string {
   const what: Record<ReportKind, string> = {
     turn: `finished turn ${facts.turn}: ${facts.outcome}`,
     stuck: `has gone quiet in turn ${facts.turn}`,
+    question: facts.settled
+      ? `asked a question in turn ${facts.turn}, since ${facts.settled === "answered" ? "answered" : "withdrawn"}; it no longer waits for an answer`
+      : `is asking a question in turn ${facts.turn} and waits for the answer; answer with \`${wispCommand()} send ${row.child_task_id} "…"\``,
     "setup-failed": "failed during setup, before its first turn",
     round: `${pr} review round ${facts.round} on ${short(facts.head)} settled: ${facts.outcome}; read it with \`${wispCommand()} review show ${row.child_task_id}\``,
     merged: `${pr} merged at ${short(facts.head)}`,

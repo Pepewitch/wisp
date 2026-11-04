@@ -1,6 +1,6 @@
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
@@ -9,7 +9,8 @@ import { answerQuestionResponse } from "../src/routes/task-answer";
 import { taskAudit } from "../src/task-audit";
 import { conversationDetail } from "../src/routes/task-conversation";
 import { hasRunningTurn, interruptTurn, startTurn } from "../src/runner";
-import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
+import { createTask, createTurn, db, freeSlot, getTask, newTaskId, setTaskFields, settleTurn, turnsFor } from "../src/store";
+import { reportFraming } from "../src/subtask-reports";
 import { nudgeReviewer } from "../src/verify/reviewer";
 import type { ReviewRow } from "../src/verify/reviews";
 
@@ -118,6 +119,99 @@ if (request.method === "droid.initialize_session") {
   };
   return def;
 }
+
+/** A Droid stand-in that asks two questions under different ids, and the first one twice, then waits. */
+function twoQuestionDroid(dir: string): AdapterDef {
+  const harnessPath = join(dir, "fake-droid-two");
+  writeFileSync(harnessPath, `#!/usr/bin/env bun
+import { createInterface } from "node:readline";
+const frame = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+const ask = (id, toolCallId, question) => frame({ jsonrpc: "2.0", type: "request", id, method: "droid.ask_user",
+  params: { toolCallId, questions: [{ index: 1, topic: null, question, options: ["Yes", "No"] }] } });
+for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
+  const request = JSON.parse(line);
+  if (request.method === "droid.initialize_session") frame({ jsonrpc: "2.0", id: request.id, result: { sessionId: "droid-two" } });
+  else if (request.method === "droid.add_user_message") {
+    frame({ jsonrpc: "2.0", id: request.id, result: {} });
+    ask("q1", "ask-1", "First?");
+    ask("q2", "ask-2", "Second?");
+    ask("q1-again", "ask-1", "First?");
+  }
+}
+`);
+  chmodSync(harnessPath, 0o755);
+  return { ...fakeDroid(dir, join(dir, "unused.json")), bin: harnessPath };
+}
+
+const questionRows = (childId: string) => db.query("SELECT event_key, facts_json, body, state, reason FROM subtask_reports WHERE child_task_id = ? ORDER BY rowid")
+  .all(childId) as { event_key: string; facts_json: string; body: string; state: string; reason: string | null }[];
+
+function reportingChild() {
+  const parent = makeTask();
+  const child = makeTask();
+  db.run("UPDATE tasks SET parent_task_id = ?, report_to_parent = 1, subtask_kind = 'explore' WHERE id = ?", [parent.id, child.id]);
+  return { parent, child: getTask(child.id)! };
+}
+
+describe("a reporting subtask's live question (#518)", () => {
+  test("reaches its parent as a report, once, with the question and its options", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-droid-askuser-report-"));
+    const { child } = reportingChild();
+    const unrelated = makeTask();
+    startTurn(child, "ask me", fakeDroid(dir, join(dir, "answers.json")), cfg);
+    startTurn(unrelated, "ask me", fakeDroid(mkdtempSync(join(tmpdir(), "wisp-droid-askuser-other-")), join(dir, "other.json")), cfg);
+    await until(() => getTask(child.id)?.state === "needs-input" && getTask(unrelated.id)?.state === "needs-input");
+
+    // the turn is still running, so no settled-turn report: only the question's, and none for a task that reports to nobody
+    expect(questionRows(child.id)).toEqual([{
+      event_key: "question:1:ask-1", facts_json: JSON.stringify({ kind: "question", turn: 1, questionId: "ask-1" }),
+      body: "Travel: Where to?\n  1. Japan\n  2. Italy", state: "pending", reason: null,
+    }]);
+    expect(questionRows(unrelated.id)).toEqual([]);
+    // queued in a message: the parent is told how to answer it
+    db.run("UPDATE subtask_reports SET state = 'queued', message_id = 'msquestion' WHERE child_task_id = ?", [child.id]);
+    const framed = reportFraming("msquestion");
+    expect(framed.lines[1]).toContain(`subtask ${child.id} (explore) is asking a question in turn 1 and waits for the answer; answer with`);
+    expect(framed.lines[1]).toContain(`send ${child.id} "…"`);
+    expect(framed.words).toContain("Travel: Where to?");
+    // answered from its card before the parent read it: the parent is not told it still waits
+    await activeLiveInput(child.id)!.answer!("ask-1", [{ index: 1, answer: "Japan" }]);
+    expect(reportFraming("msquestion").lines[1]).toContain("asked a question in turn 1, since answered; it no longer waits for an answer");
+    for (const id of [child.id, unrelated.id]) {
+      await interruptTurn(id);
+      await until(() => hasRunningTurn(id) === null);
+    }
+  });
+
+  test("a pending report is dropped once its question is answered; each question reports once", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-droid-askuser-two-"));
+    const { child } = reportingChild();
+    startTurn(child, "ask me", twoQuestionDroid(dir), cfg);
+    await until(() => questionRows(child.id).length === 2 && activeLiveInput(child.id)?.question?.("ask-2") != null);
+    await Bun.sleep(100);
+    // two questions, two reports; asked again under the same id, still one
+    expect(questionRows(child.id).map((row) => [row.event_key, row.state])).toEqual([["question:1:ask-1", "pending"], ["question:1:ask-2", "pending"]]);
+    await activeLiveInput(child.id)!.answer!("ask-1", [{ index: 1, answer: "Yes" }]);
+    expect(questionRows(child.id).map((row) => [row.event_key, row.state, row.reason])).toEqual([
+      ["question:1:ask-1", "dropped", "question answered"], ["question:1:ask-2", "pending", null],
+    ]);
+    // stopped with the other still open: withdrawn
+    await interruptTurn(child.id);
+    await until(() => hasRunningTurn(child.id) === null);
+    expect(questionRows(child.id).map((row) => [row.state, row.reason])).toEqual([["dropped", "question answered"], ["dropped", "question withdrawn"]]);
+  });
+
+  test("a question left pending when its turn settles is withdrawn with it", () => {
+    const { child } = reportingChild();
+    db.run(`INSERT INTO subtask_reports (id, child_task_id, parent_task_id, kind, event_key, facts_json, body, state, created_at, updated_at)
+      VALUES ('srleft', ?, ?, 'question', 'question:1:ask-9', '{"kind":"question","turn":1,"questionId":"ask-9"}', 'Left?', 'pending', ?, ?)`,
+      [child.id, child.parent_task_id!, new Date().toISOString(), new Date().toISOString()]);
+    // what a daemon restart finds: the live process gone, its turn settled without releasing the question
+    const turnId = createTurn(child.id, 1, "ask me", null, join(dirname(child.worktree_path!), `${child.id}-1.log`), null);
+    settleTurn(turnId, { status: "failed", exitCode: null, result: null }, child.id, "failed", "turn killed: daemon restarted");
+    expect(questionRows(child.id).find((row) => row.event_key === "question:1:ask-9")).toMatchObject({ state: "dropped", reason: "question withdrawn" });
+  });
+});
 
 describe("Droid live AskUser and interrupt", () => {
   test("AskUser suspends the turn, and answering it in-protocol resumes the same turn", async () => {
