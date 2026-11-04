@@ -1,6 +1,6 @@
 import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
@@ -9,7 +9,7 @@ import { answerQuestionResponse } from "../src/routes/task-answer";
 import { taskAudit } from "../src/task-audit";
 import { conversationDetail } from "../src/routes/task-conversation";
 import { hasRunningTurn, interruptTurn, startTurn } from "../src/runner";
-import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
+import { createTask, createTurn, db, freeSlot, getTask, newTaskId, setTaskFields, settleTurn, turnsFor } from "../src/store";
 import { reportFraming } from "../src/subtask-reports";
 import { nudgeReviewer } from "../src/verify/reviewer";
 import type { ReviewRow } from "../src/verify/reviews";
@@ -199,6 +199,17 @@ describe("a reporting subtask's live question (#518)", () => {
     await interruptTurn(child.id);
     await until(() => hasRunningTurn(child.id) === null);
     expect(questionRows(child.id).map((row) => [row.state, row.reason])).toEqual([["dropped", "question answered"], ["dropped", "question withdrawn"]]);
+  });
+
+  test("a question left pending when its turn settles is withdrawn with it", () => {
+    const { child } = reportingChild();
+    db.run(`INSERT INTO subtask_reports (id, child_task_id, parent_task_id, kind, event_key, facts_json, body, state, created_at, updated_at)
+      VALUES ('srleft', ?, ?, 'question', 'question:1:ask-9', '{"kind":"question","turn":1,"questionId":"ask-9"}', 'Left?', 'pending', ?, ?)`,
+      [child.id, child.parent_task_id!, new Date().toISOString(), new Date().toISOString()]);
+    // what a daemon restart finds: the live process gone, its turn settled without releasing the question
+    const turnId = createTurn(child.id, 1, "ask me", null, join(dirname(child.worktree_path!), `${child.id}-1.log`), null);
+    settleTurn(turnId, { status: "failed", exitCode: null, result: null }, child.id, "failed", "turn killed: daemon restarted");
+    expect(questionRows(child.id).find((row) => row.event_key === "question:1:ask-9")).toMatchObject({ state: "dropped", reason: "question withdrawn" });
   });
 });
 

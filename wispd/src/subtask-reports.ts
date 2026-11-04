@@ -115,6 +115,11 @@ export function reportsToParent(taskId: string): boolean {
  */
 export function recordTurnReport(turnId: number, state: string): void {
   const turn = db.query("SELECT task_id, n, status, origin, result, source_message_id FROM turns WHERE id = ?").get(turnId) as SettledTurn | null;
+  // a question its parent has not read yet cannot outlive the turn that asked it (a daemon restart, a dead channel)
+  if (turn) {
+    db.run(`UPDATE subtask_reports SET state = 'dropped', reason = 'question withdrawn', updated_at = ?
+      WHERE child_task_id = ? AND kind = 'question' AND state = 'pending' AND event_key LIKE ?`, [stamp(), turn.task_id, `question:${turn.n}:%`]);
+  }
   if (!turn || (turn.status !== "done" && turn.status !== "failed") || turn.origin === "background") return;
   const child = reportingChild(turn.task_id);
   if (!child || startedByParentOrAutopilot(turn, child.parent_task_id)) return;
