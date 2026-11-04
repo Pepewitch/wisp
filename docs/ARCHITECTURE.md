@@ -289,10 +289,11 @@ characters.
 **Delivery** (`subtask-delivery.ts`) is a daemon service. A report waits while
 the parent runs a turn, needs input, is held after a Stop, has queued work,
 or the daemon has no free slot. Background work holds it for about 5
-minutes, counted from the later of the oldest waiting report and the parent's
-last turn end (the next 30-second pass then starts it): a parent that always
-keeps something running, such as a background `wisp wait` for its subtasks,
-still gets its reports, the way it gets the person's messages. It never interrupts or steers
+minutes after the later of the oldest waiting report and the parent's last
+turn end, and never more than about 10 minutes after that report (the next
+30-second pass then starts it): a parent that always keeps something running,
+such as a background `wisp wait` for its subtasks, still gets its reports, the
+way it gets the person's messages. It never interrupts or steers
 the parent and never fails it. Reports that arrive within about 3 seconds
 become one message (origin `subtask`, sender `system`), started by id once the
 parent is free. A pass runs after anything about the parent or a child

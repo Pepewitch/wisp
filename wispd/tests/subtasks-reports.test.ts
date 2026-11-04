@@ -182,6 +182,13 @@ describe("delivering subtask reports", () => {
       // the clock is the parent's waiting on background work alone: a turn that ended just now holds it again
       db.run("UPDATE turns SET ended_at = ? WHERE id = ?", [new Date().toISOString(), turn.id]);
       expect(reportBefore(getTask(parent.id)!, { source_seq: Number.MAX_SAFE_INTEGER })).toBeNull();
+      // but not past ten minutes of the report's age, however often turns end
+      const older = new Date(Date.now() - 10 * 60_000 - 1_000).toISOString();
+      db.run("UPDATE subtask_reports SET created_at = ? WHERE parent_task_id = ?", [older, parent.id]);
+      db.run("UPDATE task_messages SET created_at = ? WHERE id = ?", [older, report!.id]);
+      expect(reportBefore(getTask(parent.id)!, { source_seq: Number.MAX_SAFE_INTEGER })).toBe(report!.id);
+      db.run("UPDATE subtask_reports SET created_at = ? WHERE parent_task_id = ?", [past, parent.id]);
+      db.run("UPDATE task_messages SET created_at = ? WHERE id = ?", [past, report!.id]);
       db.run("UPDATE turns SET ended_at = ? WHERE id = ?", [past, turn.id]);
       // a newer report does not restart it: the oldest waiting one counts
       recordPrEvent(child.id, "closed:3:def", { kind: "closed", pr: 3, head: "def" });
