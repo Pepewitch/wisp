@@ -69,12 +69,14 @@ The task's branches are its own `wisp/<id>-…` branch, whatever its worktree
 has checked out, and any branch on `origin` its work was pushed under with
 another name (`git push origin HEAD:fix/…`, to follow a repository's naming).
 Wisp finds that last kind from the remote-tracking refs the push updated, and
-claims a branch only when its tip is the task's own commit: on the task
-branch's first-parent line since it forked, and on no other task's branch. A
-branch the task merged in (a colleague's, a sibling task's) is never its own.
-A PR from a pushed name is preferred like one from the task's own branch. If
-the forge deletes that branch after a merge and a later fetch prunes it, the
-merged PR is no longer found this way.
+claims a branch only on direct evidence the task made its tip: the task
+branch's reflog shows it reaching that commit by a commit made on it, a
+cherry-pick, a merge that made a commit, or a rebase no other branch on origin
+also holds. A branch the task merged in, fast-forwarded or reset onto (a
+colleague's, a sibling task's) is never its own. A PR from a pushed name is
+preferred after one from the task's own branch. If the forge deletes that
+branch after a merge and a later fetch prunes it, or the reflog has expired,
+the PR is no longer found this way.
 
 **After a merge, both switches stay on for the task's next PR.** Wisp then
 adopts a PR you open from this task after the merged one was opened — the

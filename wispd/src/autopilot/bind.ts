@@ -31,9 +31,12 @@ export function choosePull(
   const own = pulls
     .filter((pull) => !pull.isCrossRepository && viewer !== "" && pull.author === viewer && Date.parse(pull.createdAt) >= created && pull.number > afterPr)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.number - b.number)
-  const named = (pull: OpenPullRequest) =>
-    pull.headRefName === task.branch || pull.headRefName.startsWith(`wisp/${task.id}-`) || pushed.includes(pull.headRefName)
-  return own.find((pull) => named(pull) && allowedBases.has(pull.baseRefName)) ??
+  // the task's own branch names first, then the names its work was pushed under
+  const ownName = (pull: OpenPullRequest) => pull.headRefName === task.branch || pull.headRefName.startsWith(`wisp/${task.id}-`)
+  const pushedName = (pull: OpenPullRequest) => pushed.includes(pull.headRefName)
+  const named = (pull: OpenPullRequest) => ownName(pull) || pushedName(pull)
+  return own.find((pull) => ownName(pull) && allowedBases.has(pull.baseRefName)) ??
+    own.find((pull) => pushedName(pull) && allowedBases.has(pull.baseRefName)) ??
     own.find((pull) => allowedBases.has(pull.baseRefName)) ?? own.find(named) ?? own[0] ?? null
 }
 

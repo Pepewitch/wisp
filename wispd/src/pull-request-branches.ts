@@ -45,22 +45,35 @@ async function currentTaskBranch(
 export const PUSHED_NAME_LIMIT = 2;
 
 /**
+ * How the task branch reached a tip, from its reflog subject: a commit made
+ * on it (`commit:`, `commit (amend):`, `commit (merge):`), a cherry-pick, a
+ * merge that made a commit, or a rebase. A fast-forward, a reset or the
+ * branch's creation brought someone else's commit, never the task's own.
+ */
+function arrival(subject: string): "own" | "rebase" | null {
+  if (/^(commit|cherry-pick)\b/.test(subject)) return "own";
+  if (/^(merge|pull)\b[^:]*: Merge made by/.test(subject)) return "own";
+  if (/^rebase( -i)? \(finish\): refs\/heads\//.test(subject)) return "rebase";
+  return null;
+}
+
+/**
  * Branches on origin that hold this task's own work under another name: the
  * agent pushed with `git push origin HEAD:<name>` to follow a repository's
  * branch naming, so the pull request's head is `<name>` and no local branch
- * carries it. Read from the remote-tracking refs the push itself updated, and
- * claimed only when the branch's tip is the task's own commit:
- *
- *  - on the task branch's first-parent chain since the commit it forked from,
- *    so a branch that came in by a merge (the base, a colleague's branch, a
- *    sibling task's) is not the task's;
- *  - and held by no other task's local `wisp/` branch, so a task that
- *    fast-forwarded onto a sibling's work does not claim the sibling's push.
+ * carries it. Read from the remote-tracking refs the push itself updated,
+ * and claimed only on direct evidence the task made that tip: the task
+ * branch's reflog shows the branch reaching it by a commit made on it (or a
+ * cherry-pick, or a merge that made a commit), or by a rebase whose result no
+ * other branch on origin also holds. A branch the task fast-forwarded or
+ * reset onto (a sibling task's push, a colleague's branch) is never claimed,
+ * whatever has happened to that branch since.
  *
  * Newest first, at most PUSHED_NAME_LIMIT. Empty for a task with no recorded
- * fork point (a local task), and whenever git cannot answer. A forge that
- * deletes the head after a merge, followed by a pruning fetch, removes the
- * ref, and the merged PR is no longer found this way.
+ * fork point (a local task), when the reflog is missing or has expired, and
+ * whenever git cannot answer. A forge that deletes the head after a merge,
+ * followed by a pruning fetch, removes the ref, and the merged PR is no
+ * longer found this way.
  */
 async function pushedUnderOtherNames(
   task: Task,
@@ -82,18 +95,27 @@ async function pushedUnderOtherNames(
     .map((line) => line.trim().split(" "))
     .filter((parts): parts is [string, string] => parts.length === 2 && parts[1] !== "HEAD" && parts[1] !== "");
   if (candidates.length === 0) return [];
-  const chain = await git(["rev-list", "--first-parent", `^${base}`, `refs/heads/${branch}`]);
-  if (chain === null) return [];
-  const own = new Set(chain.split("\n").map((line) => line.trim()).filter(Boolean));
+  const reflog = await git(["reflog", "show", "--format=%H %gs", `refs/heads/${branch}`]);
+  if (reflog === null) return [];
+  const made = new Map<string, "own" | "rebase">();
+  for (const line of reflog.split("\n")) {
+    const at = line.indexOf(" ");
+    const how = at > 0 ? arrival(line.slice(at + 1)) : null;
+    // an own commit wins over a rebase that later landed on the same tip
+    if (how && made.get(line.slice(0, at)) !== "own") made.set(line.slice(0, at), how);
+  }
   const names: string[] = [];
   for (const [tip, name] of candidates) {
     if (names.length >= PUSHED_NAME_LIMIT) break;
-    if (!own.has(tip)) continue;
-    const holders = await git(["for-each-ref", "--format=%(refname:short)", `--contains=${tip}`, "refs/heads/wisp/"]);
-    if (holders === null) continue;
-    const sibling = holders.split("\n").map((line) => line.trim())
-      .some((holder) => holder !== "" && holder !== branch && !holder.startsWith(`wisp/${task.id}-`));
-    if (!sibling) names.push(name);
+    const how = made.get(tip);
+    if (!how) continue;
+    if (how === "rebase") {
+      // a rebase with nothing of the task's to replay lands on the other branch's own tip
+      const holders = await git(["for-each-ref", "--format=%(refname:lstrip=3)", `--contains=${tip}`, "refs/remotes/origin/"]);
+      const others = (holders ?? "").split("\n").map((line) => line.trim()).filter((holder) => holder !== "" && holder !== "HEAD" && holder !== name);
+      if (holders === null || others.length > 0) continue;
+    }
+    names.push(name);
   }
   return names;
 }

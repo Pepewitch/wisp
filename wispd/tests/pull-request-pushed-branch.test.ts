@@ -82,6 +82,58 @@ describe("a task's branch pushed under another name", () => {
     expect(await branches(task(repo, base, { base_commit: null }))).toEqual(["wisp/tpb01-keen-stork"]);
   });
 
+  test("never claims a branch the task fast-forwarded onto, even once the sibling's local branch is gone", async () => {
+    const { repo, base } = world();
+    git(repo, "checkout", "-q", "-b", "wisp/taaaa-a", base);
+    commit(repo, "A's change");
+    git(repo, "push", "-q", "origin", "HEAD:fix/a");
+    git(repo, "checkout", "-q", "-b", "colleague", base);
+    commit(repo, "a colleague's change");
+    git(repo, "push", "-q", "origin", "HEAD:feat/colleague");
+    git(repo, "checkout", "-q", "wisp/tpb01-keen-stork");
+    // task A is archived: its local branch goes
+    git(repo, "branch", "-q", "-D", "wisp/taaaa-a", "colleague");
+    git(repo, "merge", "-q", "--ff-only", "origin/fix/a");
+    commit(repo, "B's change");
+    git(repo, "push", "-q", "origin", "HEAD:fix/b");
+    expect(await branches(task(repo, base))).toEqual(["wisp/tpb01-keen-stork", "fix/b"]);
+    // a second task that fast-forwards onto a colleague's branch and builds on it
+    git(repo, "checkout", "-q", "-b", "wisp/tpc02-other", base);
+    git(repo, "merge", "-q", "--ff-only", "origin/feat/colleague");
+    commit(repo, "C's change");
+    git(repo, "push", "-q", "origin", "HEAD:fix/c");
+    expect(await branches(task(repo, base, { id: "tpc02", branch: "wisp/tpc02-other" }))).toEqual(["wisp/tpc02-other", "fix/c"]);
+  });
+
+  test("keeps the task's push while a review subtask's branch sits at the same tip", async () => {
+    const { repo, base } = world();
+    commit(repo, "the parent's change");
+    git(repo, "push", "-q", "origin", "HEAD:fix/p");
+    git(repo, "branch", "-q", "wisp/trev01-review", "HEAD");
+    expect(await branches(task(repo, base))).toEqual(["wisp/tpb01-keen-stork", "fix/p"]);
+  });
+
+  test("a rebase of the task's own work counts; a rebase with nothing of its own onto another branch does not", async () => {
+    const { repo, base } = world();
+    commit(repo, "the task's change");
+    // main moves on, and the task rebases onto it before pushing
+    git(repo, "checkout", "-q", "main");
+    commit(repo, "main moves");
+    git(repo, "push", "-q", "origin", "main");
+    git(repo, "checkout", "-q", "wisp/tpb01-keen-stork");
+    git(repo, "rebase", "-q", "origin/main");
+    git(repo, "push", "-q", "origin", "HEAD:fix/rebased");
+    expect(await branches(task(repo, base))).toEqual(["wisp/tpb01-keen-stork", "fix/rebased"]);
+    // another task with nothing of its own rebases onto a sibling's push, and pushes that
+    git(repo, "checkout", "-q", "-b", "wisp/tsib01-s", base);
+    commit(repo, "the sibling's change");
+    git(repo, "push", "-q", "origin", "HEAD:fix/sibling");
+    git(repo, "checkout", "-q", "-b", "wisp/tpd03-d", base);
+    git(repo, "rebase", "-q", "origin/fix/sibling");
+    git(repo, "push", "-q", "origin", "HEAD:fix/d");
+    expect(await branches(task(repo, base, { id: "tpd03", branch: "wisp/tpd03-d" }))).toEqual(["wisp/tpd03-d"]);
+  });
+
   test("never claims a sibling task's or a colleague's branch the task merged in", async () => {
     const { repo, base } = world();
     // sibling task A, on its own local branch, pushed under another name
@@ -117,7 +169,7 @@ describe("a task's branch pushed under another name", () => {
 });
 
 describe("autopilot's choice among the task's PRs", () => {
-  test("prefers the task's own pushed name over an older PR of the same author", () => {
+  test("prefers the task's own pushed name over an older PR of the same author, and its own branch over both", () => {
     const created = "2026-11-04T00:00:00Z";
     const pull = (number: number, head: string, at: string) =>
       ({ number, headRefName: head, baseRefName: "main", author: "owner", createdAt: at, isCrossRepository: false }) as OpenPullRequest;
@@ -126,5 +178,8 @@ describe("autopilot's choice among the task's PRs", () => {
     expect(choosePull([sibling, own], t, "owner", new Set(["main"]), 0, ["fix/b"])?.number).toBe(11);
     // without the pushed name, the oldest onto the base, as before
     expect(choosePull([sibling, own], t, "owner", new Set(["main"]))?.number).toBe(10);
+    // a PR from the task's own branch still wins over a pushed name
+    const branchPull = pull(12, "wisp/tpb01-keen-stork", "2026-11-04T03:00:00Z");
+    expect(choosePull([sibling, own, branchPull], t, "owner", new Set(["main"]), 0, ["fix/a", "fix/b"])?.number).toBe(12);
   });
 });
