@@ -53,10 +53,10 @@ them as queued) and go before any message sent after them, so a steady stream
 of messages cannot hold them back. Read a review's findings with `wisp review show <child>`
 and a child's full answer with `wisp result <child>`. If you have already read
 a child's result (you waited on it, or read it before its report came), run
-`wisp report ack <child>` so its waiting reports of finished turns are not
-delivered to you again as news; `--through-turn <n>` stops at the turn you
-read. A failed or needs-input turn, a question and a PR event are never marked
-this way.
+`wisp report ack <child> --through-turn <n>` with the turn you read (`wisp
+result` names it), so its waiting reports of finished turns up to that one are
+not delivered to you again as news. A failed or needs-input turn, a question
+and a PR event are never marked this way.
 
 A message you send a child with `wisp send` starts a turn that does **not**
 report back: that rule keeps a parent and child from pinging each other

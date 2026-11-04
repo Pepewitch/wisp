@@ -2,7 +2,8 @@
  * A parent marking a child's waiting reports as handled (#527): it read the
  * child's result with `wisp result` or `wisp wait`, so the next delivery
  * should not present those reports as news. Explicit only: reading a result
- * acknowledges nothing by itself.
+ * acknowledges nothing by itself. Only the child's parent agent, or a person,
+ * may do it (routes/report-ack.ts): a child must not drop its own reports.
  *
  * Only a turn that finished `done` can be handled this way. A failed turn,
  * one that ended needing input, a question, a stuck turn, a setup failure and
@@ -39,15 +40,19 @@ function handles(facts: ReportFacts, through: number): boolean {
 }
 
 /**
- * Mark the child's waiting `done` turn reports up to `throughTurn` (default:
- * its latest finished turn) as handled, in one transaction. A queued message
- * left with no report is cancelled; one that keeps some has its text
- * rewritten to what it will now deliver. A message a turn is already
- * starting is past changing and keeps its reports.
+ * Mark the child's waiting `done` turn reports up to `throughTurn` as
+ * handled, in one transaction. The turn is the one the parent read, never
+ * defaulted: "the latest" at ack time could be a turn that finished after the
+ * read, whose report the parent never saw. A turn past the child's latest
+ * finished one acknowledges only up to that one. A queued message left with
+ * no report is cancelled; one that keeps some has its text rewritten to what
+ * it will now deliver. A message a turn is already starting is past changing
+ * and keeps its reports.
  */
-export function ackReports(childId: string, throughTurn?: number): ReportAck {
+export function ackReports(childId: string, throughTurn: number): ReportAck {
   return db.transaction((): ReportAck => {
-    const through = throughTurn ?? latestFinishedTurn(childId);
+    const latest = latestFinishedTurn(childId);
+    const through = latest === null ? null : Math.min(throughTurn, latest);
     const rows = db.query(`SELECT r.id, r.message_id, r.facts_json,
         (m.id IS NOT NULL AND (m.claim IS NOT NULL OR m.status != 'queued')) AS claimed
       FROM subtask_reports r LEFT JOIN task_messages m ON m.id = r.message_id

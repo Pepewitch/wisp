@@ -45,7 +45,7 @@ function report(
 const row = (id: string) => db.query("SELECT state, reason FROM subtask_reports WHERE id = ?").get(id) as { state: string; reason: string | null };
 
 describe("marking a subtask's reports handled", () => {
-  test("drops waiting done-turn reports through its latest turn, and keeps every actionable one", () => {
+  test("drops waiting done-turn reports through the turn read, and keeps every actionable one", () => {
     const { parent, child } = family();
     turn(child, 1, "done");
     turn(child, 2, "failed");
@@ -57,12 +57,12 @@ describe("marking a subtask's reports handled", () => {
     const hold = report(parent, child, { kind: "needs-you", pr: 4, class: "conflict" });
     const done3 = report(parent, child, { kind: "turn", turn: 3, outcome: "done" });
 
-    expect(ackReports(child)).toEqual({ through: 3, handled: 2, kept: 4, cancelled: [] });
+    expect(ackReports(child, 3)).toEqual({ through: 3, handled: 2, kept: 4, cancelled: [] });
     for (const id of [done1, done3]) expect(row(id)).toEqual({ state: "dropped", reason: HANDLED_REASON });
     for (const id of [failed2, asks, question, hold]) expect(row(id).state).toBe("pending");
   });
 
-  test("--through-turn stops at the turn the parent read", () => {
+  test("stops at the turn the parent read, and a turn past the latest finished one is capped to it", () => {
     const { parent, child } = family();
     turn(child, 1, "done");
     turn(child, 2, "done");
@@ -71,12 +71,14 @@ describe("marking a subtask's reports handled", () => {
     expect(ackReports(child, 1)).toMatchObject({ through: 1, handled: 1, kept: 1 });
     expect(row(first).state).toBe("dropped");
     expect(row(second).state).toBe("pending");
+    expect(ackReports(child, 99)).toMatchObject({ through: 2, handled: 1, kept: 0 });
+    expect(row(second).state).toBe("dropped");
   });
 
   test("a child with no finished turn has nothing to mark", () => {
     const { parent, child } = family();
     const stuck = report(parent, child, { kind: "stuck", turn: 1 });
-    expect(ackReports(child)).toEqual({ through: null, handled: 0, kept: 1, cancelled: [] });
+    expect(ackReports(child, 1)).toEqual({ through: null, handled: 0, kept: 1, cancelled: [] });
     expect(row(stuck).state).toBe("pending");
   });
 
@@ -92,7 +94,7 @@ describe("marking a subtask's reports handled", () => {
     report(parent, child, { kind: "turn", turn: 1, outcome: "done" }, "queued", mixed);
     const failed = report(parent, child, { kind: "turn", turn: 2, outcome: "failed" }, "queued", mixed);
 
-    const ack = ackReports(child);
+    const ack = ackReports(child, 2);
     expect(ack).toMatchObject({ through: 2, handled: 2, kept: 1, cancelled: [emptied] });
     expect(getTaskMessage(emptied)!.status).toBe("cancelled");
     expect(getTaskMessage(mixed)!.status).toBe("queued");
@@ -103,15 +105,18 @@ describe("marking a subtask's reports handled", () => {
     expect(getTaskMessage(mixed)!.text).toStartWith("1 report from your subtasks");
   });
 
-  test("a message a turn is already starting keeps its reports", () => {
+  test("a message a turn is already starting, steering or has delivered keeps its reports", () => {
     const { parent, child } = family();
     turn(child, 1, "done");
-    const claimed = `msack${++seq}`;
-    createTaskMessage({ id: claimed, taskId: parent, text: "1 report", attachmentHash: "", origin: "subtask", actor: "system" });
-    db.run("UPDATE task_messages SET claim = 'started' WHERE id = ?", [claimed]);
-    const id = report(parent, child, { kind: "turn", turn: 1, outcome: "done" }, "queued", claimed);
-    expect(ackReports(child)).toMatchObject({ handled: 0, kept: 1, cancelled: [] });
-    expect(row(id).state).toBe("queued");
+    const ids = ["started", "steered", null].map((claim) => {
+      const message = `msack${++seq}`;
+      createTaskMessage({ id: message, taskId: parent, text: "1 report", attachmentHash: "", origin: "subtask", actor: "system" });
+      if (claim) db.run("UPDATE task_messages SET claim = ? WHERE id = ?", [claim, message]);
+      else db.run("UPDATE task_messages SET status = 'delivered' WHERE id = ?", [message]);
+      return report(parent, child, { kind: "turn", turn: 1, outcome: "done" }, "queued", message);
+    });
+    expect(ackReports(child, 1)).toMatchObject({ handled: 0, kept: 3, cancelled: [] });
+    for (const id of ids) expect(row(id).state).toBe("queued");
   });
 });
 
@@ -127,26 +132,40 @@ describe("POST /api/tasks/:id/report-ack", () => {
     const { parent, child } = family();
     turn(child, 1, "done");
     report(parent, child, { kind: "turn", turn: 1, outcome: "done" });
-    const res = await call(child, {}, { "x-wisp-client": "cli", "x-wisp-task": parent });
+    const res = await call(child, { throughTurn: 1 }, { "x-wisp-client": "cli", "x-wisp-task": parent });
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ through: 1, handled: 1, kept: 0, cancelled: [] });
     const audit = db.query("SELECT action, actor, detail FROM task_audit WHERE task_id = ? AND action = 'report-ack'").get(parent);
     expect(audit).toEqual({ action: "report-ack", actor: `agent:${parent}`, detail: `${child} through turn 1: 1 handled` });
   });
 
-  test("refuses a bad turn number and a task that is not a subtask", async () => {
+  test("a person may ack too; the child itself and a sibling may not", async () => {
     const { parent, child } = family();
+    turn(child, 1, "done");
+    const id = report(parent, child, { kind: "turn", turn: 1, outcome: "done" });
+    const self = await call(child, { throughTurn: 1 }, { "x-wisp-client": "cli", "x-wisp-task": child });
+    expect(self.status).toBe(403);
+    expect(((await self.json()) as { error: string }).error).toContain(`only the parent task (${parent})`);
+    expect((await call(child, { throughTurn: 1 }, { "x-wisp-client": "cli", "x-wisp-task": "tsibling" })).status).toBe(403);
+    expect(row(id).state).toBe("pending");
+    const person = await call(child, { throughTurn: 1 }, { "x-wisp-client": "web" });
+    expect(await person.json()).toMatchObject({ handled: 1 });
+  });
+
+  test("refuses a missing or bad turn number and a task that is not a subtask", async () => {
+    const { parent, child } = family();
+    expect((await call(child, {})).status).toBe(400);
     expect((await call(child, { throughTurn: 0 })).status).toBe(400);
     expect((await call(child, { throughTurn: "2" })).status).toBe(400);
-    const root = await call(parent, {});
+    const root = await call(parent, { throughTurn: 1 });
     expect(root.status).toBe(409);
     expect(((await root.json()) as { error: string }).error).toContain("not a subtask");
   });
 });
 
 describe("wisp report ack", () => {
-  test("parses the subtask and an optional turn", () => {
-    expect(parseReport(["ack", "tkid"], {})).toEqual({ child: "tkid" });
+  test("parses the subtask and the turn it read, which it requires", () => {
+    expect(parseReport(["ack", "tkid"], {})).toContain("--through-turn <n> is required");
     expect(parseReport(["ack", "tkid"], { "through-turn": "3" })).toEqual({ child: "tkid", throughTurn: 3 });
     expect(parseReport(["ack", "tkid"], { "through-turn": "0" })).toContain("--through-turn must be a turn number");
     expect(parseReport(["ack"], {})).toBe(REPORT_USAGE);
@@ -155,7 +174,7 @@ describe("wisp report ack", () => {
 
   test("says what it marked and what still waits", () => {
     expect(reportAckLine("tkid", { through: 3, handled: 2, kept: 1, cancelled: [] })).toBe(
-      "2 reports from tkid through turn 3 marked handled; 1 still waiting (a failure, a question, a PR event or a later turn is never marked)",
+      "2 reports from tkid through turn 3 marked handled; 1 still waiting (failures, questions, PR events, later turns and reports already being delivered stay)",
     );
     expect(reportAckLine("tkid", { through: 3, handled: 0, kept: 0, cancelled: [] })).toBe("no waiting report from tkid through turn 3 to mark handled");
     expect(reportAckLine("tkid", { through: null, handled: 0, kept: 0, cancelled: [] })).toBe("tkid has no finished turn yet; nothing to mark handled");

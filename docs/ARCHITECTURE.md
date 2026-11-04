@@ -323,10 +323,12 @@ person's message queued behind it still goes first. A turn a report starts is
 a `report` turn: no done webhook, and `latest_turn_report` in the task list.
 
 **Marked handled** (`subtask-report-ack.ts`, `POST /api/tasks/:id/report-ack`,
-`wisp report ack <child> [--through-turn N]`): a parent that has already read a
-child's result can say so, and that child's waiting `done` turn reports through
-turn N (default: its latest finished turn) are dropped with the reason "handled
-by the parent". A failed or needs-input turn, a question, a stuck turn, a setup
+`wisp report ack <child> --through-turn N`): a parent that has already read
+turn N of a child's result can say so, and that child's waiting `done` turn
+reports through turn N are dropped with the reason "handled by the parent". N
+is required, never "the latest": a turn that finished after the read would be
+marked unread. Only the child's parent agent or a person may ack (403 for any
+other agent, the child itself included). A failed or needs-input turn, a question, a stuck turn, a setup
 failure and every PR event are never dropped this way. A queued message that
 loses all of its reports is cancelled; one that keeps some has its text
 rewritten. A message a turn is already starting keeps its reports. Reading a

@@ -17,12 +17,12 @@ import {
   FILE_CAP,
   matchCopyFiles,
   readWorktreeFile,
-  removeWorktree,
   resolveDiffBase,
   runSetup,
   statusSummary,
   worktreeHealth,
 } from "../src/worktree";
+import { removeWorktree } from "../src/worktree-removal";
 
 const cfg = { envAllowlist: {}, setupTimeoutMinutes: 5 } as WispConfig;
 
