@@ -155,6 +155,53 @@ describe("delivering subtask reports", () => {
     }
   });
 
+  test("background work holds a report back for five minutes at most, then it goes (#517)", async () => {
+    const adapters = { quick };
+    const parent = await make({ repoPath: await repo() }, adapters);
+    const child = await make({ subtask: { parentId: parent.id, report: true } }, adapters);
+    // the parent always keeps something running: a background `wisp wait` for its subtasks
+    const turn = turnsFor(parent.id).at(-1)!;
+    db.run(`INSERT INTO turn_process_groups (turn_id, task_id, pgid, members_json, state, stop_requested)
+      VALUES (?, ?, 999999, '[{"pid":999999,"started":null}]', 'running', 0)
+      ON CONFLICT(turn_id) DO UPDATE SET state = 'running', members_json = excluded.members_json`, [turn.id, parent.id]);
+    try {
+      const delivery = new SubtaskDelivery(cfg(), adapters, 0);
+      delivery.deliver(parent.id);
+      // fresh: it waits for the work, queued in its place, and the parent's next turn end does not take it
+      const [report] = reportMessages(parent.id);
+      expect(report).toMatchObject({ status: "queued" });
+      expect(turnsFor(parent.id)).toHaveLength(1);
+      createTaskMessage({ id: `mnext${parent.id}`, taskId: parent.id, text: "and then this", attachmentHash: "" }, false);
+      const head = db.query("SELECT * FROM task_messages WHERE id = ?").get(`mnext${parent.id}`) as TaskMessage;
+      expect(reportBefore(getTask(parent.id)!, head)).toBeNull();
+      cancelQueuedTaskMessage(`mnext${parent.id}`, parent.id);
+      // five minutes on, the work still running: the report goes anyway
+      const past = new Date(Date.now() - 5 * 60_000 - 1_000).toISOString();
+      db.run("UPDATE subtask_reports SET created_at = ? WHERE parent_task_id = ?", [past, parent.id]);
+      db.run("UPDATE task_messages SET created_at = ? WHERE id = ?", [past, report!.id]);
+      // the clock is the parent's waiting on background work alone: a turn that ended just now holds it again
+      db.run("UPDATE turns SET ended_at = ? WHERE id = ?", [new Date().toISOString(), turn.id]);
+      expect(reportBefore(getTask(parent.id)!, { source_seq: Number.MAX_SAFE_INTEGER })).toBeNull();
+      // but not past ten minutes of the report's age, however often turns end
+      const older = new Date(Date.now() - 10 * 60_000 - 1_000).toISOString();
+      db.run("UPDATE subtask_reports SET created_at = ? WHERE parent_task_id = ?", [older, parent.id]);
+      db.run("UPDATE task_messages SET created_at = ? WHERE id = ?", [older, report!.id]);
+      expect(reportBefore(getTask(parent.id)!, { source_seq: Number.MAX_SAFE_INTEGER })).toBe(report!.id);
+      db.run("UPDATE subtask_reports SET created_at = ? WHERE parent_task_id = ?", [past, parent.id]);
+      db.run("UPDATE task_messages SET created_at = ? WHERE id = ?", [past, report!.id]);
+      db.run("UPDATE turns SET ended_at = ? WHERE id = ?", [past, turn.id]);
+      // a newer report does not restart it: the oldest waiting one counts
+      recordPrEvent(child.id, "closed:3:def", { kind: "closed", pr: 3, head: "def" });
+      expect(reportBefore(getTask(parent.id)!, { source_seq: Number.MAX_SAFE_INTEGER })).toBe(report!.id);
+      delivery.deliver(parent.id);
+      await until(() => settled(parent.id) && turnsFor(parent.id).length === 2, "the report turn");
+      expect(turnsFor(parent.id)[1]).toMatchObject({ source_message_id: report!.id, origin: "report" });
+      expect(rows(parent.id).map((row) => row.state)).toEqual(["delivered", "pending"]);
+    } finally {
+      db.run("UPDATE turn_process_groups SET state = 'none' WHERE turn_id = ?", [turn.id]);
+    }
+  });
+
   test("a report queued before a crash is started by id, never queued twice", async () => {
     const adapters = { quick };
     const parent = await make({ repoPath: await repo() }, adapters);

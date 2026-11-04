@@ -9,10 +9,58 @@ import { backgroundWork, processStopPending } from "../task-processes"
 import { isTaskStopping } from "../turn-interrupt"
 import type { Task } from "../types"
 
+/** How long a parent's background work may hold a waiting subtask report back (#517). */
+export const REPORT_BACKGROUND_HOLD_MS = 5 * 60_000
+/** And never past this age of the oldest waiting report, however often the parent's turns end. */
+export const REPORT_BACKGROUND_MAX_MS = 2 * REPORT_BACKGROUND_HOLD_MS
+
+/** Nothing running, queued or stopping; background work aside. */
+function quiet(task: Task): boolean {
+  return !task.archived && !runningTurn(task.id) && !nextQueuedMessage(task.id) &&
+    !isTaskStopping(task.id) && !processStopPending(task.id)
+}
+
 /** Nothing running, queued, stopping or left in the background. */
 function settled(task: Task): boolean {
-  return !task.archived && !runningTurn(task.id) && !nextQueuedMessage(task.id) &&
-    !isTaskStopping(task.id) && !processStopPending(task.id) && backgroundWork(task.id).state === "none"
+  return quiet(task) && backgroundWork(task.id).state === "none"
+}
+
+/** When the parent's oldest waiting subtask report was recorded, epoch ms; null when none waits. */
+function oldestReportWaiting(taskId: string): number | null {
+  const row = db.query(`SELECT MIN(at) AS at FROM (
+    SELECT created_at AS at FROM subtask_reports WHERE parent_task_id = ? AND state IN ('pending', 'queued')
+    UNION ALL SELECT created_at AS at FROM task_messages WHERE task_id = ? AND origin = 'subtask' AND status = 'queued')`)
+    .get(taskId, taskId) as { at: string | null } | null
+  const at = Date.parse(row?.at ?? "")
+  return Number.isFinite(at) ? at : null
+}
+
+/** When the parent's latest turn ended, epoch ms; null while one runs or before any. */
+function lastTurnEnded(taskId: string): number | null {
+  const row = db.query("SELECT ended_at FROM turns WHERE task_id = ? ORDER BY n DESC LIMIT 1").get(taskId) as { ended_at: string | null } | null
+  const at = Date.parse(row?.ended_at ?? "")
+  return Number.isFinite(at) ? at : null
+}
+
+/**
+ * Whether the parent's background work still holds its subtask reports back.
+ * The agent will wake when that work finishes, so a report waits to go with
+ * it, but only for REPORT_BACKGROUND_HOLD_MS, counted from the later of the
+ * oldest waiting report and the parent's last turn end (the time it has been
+ * waiting on background work alone), and never past REPORT_BACKGROUND_MAX_MS
+ * of the oldest report's age, so turns that keep ending cannot keep restarting
+ * it: a parent that always keeps something running (a background `wisp wait`
+ * for its subtasks, a dev server) would otherwise never get one (#517). The
+ * report then goes as the person's messages do, into the harness's live
+ * process when one is kept for that work. Background work Wisp cannot read
+ * (`unknown`) is held the same way.
+ */
+export function backgroundHoldsReport(taskId: string, now = Date.now()): boolean {
+  if (backgroundWork(taskId).state === "none") return false
+  const oldest = oldestReportWaiting(taskId)
+  if (oldest === null) return true
+  const since = Math.max(oldest, lastTurnEnded(taskId) ?? oldest)
+  return now - since < REPORT_BACKGROUND_HOLD_MS && now - oldest < REPORT_BACKGROUND_MAX_MS
 }
 
 /** A subtask report not yet read: recorded and waiting for delivery, or queued to start. */
@@ -31,9 +79,13 @@ export function taskIsIdle(task: Task, reports: "count" | "ignore" = "count"): b
   return task.state === "done" && settled(task) && (reports === "ignore" || !reportWaiting(task.id))
 }
 
-/** Free to take a subtask report: settled after a turn that ended done or failed, and not waiting on the person. */
-export function canTakeReport(task: Task): boolean {
-  return (task.state === "done" || task.state === "failed") && !task.purge_pending && settled(task)
+/**
+ * Free to take a subtask report: settled after a turn that ended done or
+ * failed, not waiting on the person, and not held by its background work
+ * (backgroundHoldsReport).
+ */
+export function canTakeReport(task: Task, now = Date.now()): boolean {
+  return (task.state === "done" || task.state === "failed") && !task.purge_pending && quiet(task) && !backgroundHoldsReport(task.id, now)
 }
 
 /** Settled on a turn that ended on the network (adapters/network.ts): autopilot may resume it (network.ts). */

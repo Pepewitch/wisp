@@ -7,7 +7,7 @@
 import { randomBytes } from "node:crypto";
 import { createTaskMessage, db } from "./store";
 import { reportFraming } from "./subtask-reports";
-import { backgroundWork } from "./task-processes";
+import { backgroundHoldsReport } from "./autopilot/idle";
 import type { Task, TaskMessage } from "./types";
 
 /** A Stop the person pressed holds the parent's automation until their next turn: a report waits for it too. */
@@ -52,13 +52,13 @@ export function queueReports(parent: Pick<Task, "id">): string | null {
  * parent's reports as they arrive (subtask-delivery.ts), so they hold their
  * place among the person's messages; without this a parent that is always
  * sent something never settled, and its reports never went (#499). Never
- * over a parent that needs the person, that a Stop holds, or whose
- * background work still runs.
+ * over a parent that needs the person or that a Stop holds, nor while its
+ * background work still holds reports back (autopilot/idle.ts).
  */
 export function reportBefore(parent: Pick<Task, "id" | "state">, head: Pick<TaskMessage, "source_seq">): string | null {
   if ((parent.state !== "done" && parent.state !== "failed") || heldAfterStop(parent.id)) return null;
-  // background work still running holds a report back, as delivery's own readiness does (autopilot/idle.ts)
-  if (backgroundWork(parent.id).state !== "none") return null;
+  // background work still running holds a report back for a while, as delivery's own readiness does (autopilot/idle.ts)
+  if (backgroundHoldsReport(parent.id)) return null;
   const row = db.query(`SELECT id FROM task_messages WHERE task_id = ? AND origin = 'subtask' AND status = 'queued' AND claim IS NULL
     AND source_seq < ? ORDER BY source_seq, rowid LIMIT 1`).get(parent.id, head.source_seq ?? 0) as { id: string } | null;
   return row?.id ?? null;
