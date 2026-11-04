@@ -60,8 +60,8 @@ have been answered meanwhile. If the task is still asking,
   denied tool call from the main agent's last batch of calls (one model
   response). A denial the agent went past, making another batch of calls
   after it, leaves the finished turn `done`. That includes an agent that
-  checked something after the denial and only then asked: its question is in
-  the turn's answer. To see the denials:
+  checked something after the denial and only then asked, and a denial inside
+  a subagent: the question is in the turn's answer. To see the denials:
 
   ```sh
   wisp log <id> <N> --raw | jq -cR 'fromjson? | objects | select(.type == "result") | .permission_denials'

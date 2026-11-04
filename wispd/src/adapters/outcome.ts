@@ -544,6 +544,7 @@ export class IncrementalOutcomeReducer {
     const ids = (event.message.content as unknown[]).flatMap((part) =>
       isRecord(part) && part.type === "tool_use" && typeof part.id === "string" ? [this.factString(part.id)] : []);
     if (ids.length === 0) return;
+    // a batch is bounded like every fact the reducer keeps; no real response makes 64 calls
     const message = typeof event.message.id === "string" ? event.message.id : null;
     const batch = this.lastToolBatch;
     if (batch && message !== null && batch.message === message) batch.ids.push(...ids.slice(0, 64 - batch.ids.length));
@@ -558,7 +559,8 @@ export class IncrementalOutcomeReducer {
    * to ask about, so it holds; one the agent went past, making another batch
    * of calls after it, does not, and the finished turn reads done. That
    * accepts one miss: an agent that checks something after a denial and only
-   * then asks reads done, its question still in its answer. Entries that name
+   * then asks reads done, its question still in its answer, and so does one
+   * whose denied call was inside a subagent of its last batch. Entries that name
    * no tool call, or a stream with no call of the main agent, keep the plain
    * rule (null).
    */
