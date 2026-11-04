@@ -64,6 +64,8 @@ interface DroidLiveOptions {
    */
   /** The turn stopped on a question (`question` names it) or went on after its last one. */
   onWaiting?: (waiting: boolean, question?: { id: string; questions: DroidQuestion[] }) => void;
+  /** A question was released: answered, or cancelled (superseded by a message, or stopped). */
+  onQuestionSettled?: (id: string, phase: "answered" | "cancelled") => void;
   /** Test seam for ASK_USER_GRACE_MS; production never sets it. */
   askUserGraceMs?: number;
   /** Test seam for FOREIGN_END_GRACE_MS; production never sets it. */
@@ -447,6 +449,7 @@ export class DroidLiveDriver {
   ): Promise<void> {
     await this.peer.respond(pending.frameId, result);
     this.questions.delete(pending.toolCallId);
+    this.options.onQuestionSettled?.(pending.toolCallId, settled.phase);
     if (this.questions.size === 0 && settled.reason !== "stopped") this.options.onWaiting?.(false);
     this.options.emit({
       type: "question",

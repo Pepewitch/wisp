@@ -275,7 +275,10 @@ change it reports, so a report never exists without its cause. It records:
 - a live turn stopping on a question it asks mid-turn (`question`, Droid
   today), once per question, with the question and its options as the body.
   The turn is still running, so no settled-turn report would come. The parent
-  answers with `wisp send <child> "…"`, which steers into the turn;
+  answers with `wisp send <child> "…"`, which steers into the turn. A question
+  released before the parent reads its report (answered from its card or by a
+  send, or stopped) drops a pending report, and one already queued says it no
+  longer waits;
 - setup failing before any turn (`setup-failed`);
 - with autopilot on, the PR events: a review round settled (outcome only), the
   PR merged, the PR closed unmerged, and autopilot needing a person. The last

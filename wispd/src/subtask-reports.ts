@@ -29,6 +29,10 @@ export interface ReportFacts {
   round?: number;
   /** needs-you: a fixed reason class (round-cap, recipe, conflict, merge-failed, provider-auto-merge, merge-rights, …) */
   class?: string;
+  /** question: the harness's id for it */
+  questionId?: string;
+  /** question: released before the parent read it */
+  settled?: "answered" | "cancelled";
 }
 
 /** A turn's own words in a report: enough to act on, and the rest one `wisp result` away. */
@@ -146,7 +150,22 @@ export function recordQuestionReport(childId: string, turn: number, questionId: 
     `${q.topic ? `${q.topic}: ` : ""}${q.question}${q.multiSelect ? " (choose any)" : ""}`,
     ...q.options.map((option, at) => `  ${at + 1}. ${option}`),
   ].join("\n")).join("\n\n");
-  record(child, `question:${turn}:${questionId}`, { kind: "question", turn }, body);
+  record(child, `question:${turn}:${questionId}`, { kind: "question", turn, questionId }, body);
+}
+
+/**
+ * The question was released (answered from its card or by a `wisp send`,
+ * superseded, or stopped) before the parent read its report: a pending report
+ * is dropped, and one already queued in a message says so when it is framed,
+ * so the parent is never told a child still waits that does not.
+ */
+export function settleQuestionReport(childId: string, questionId: string, phase: "answered" | "cancelled"): void {
+  const match = "child_task_id = ? AND kind = 'question' AND json_valid(facts_json) AND json_extract(facts_json, '$.questionId') = ?";
+  const at = stamp();
+  db.run(`UPDATE subtask_reports SET state = 'dropped', reason = ?, updated_at = ? WHERE ${match} AND state = 'pending'`,
+    [phase === "answered" ? "question answered" : "question withdrawn", at, childId, questionId]);
+  db.run(`UPDATE subtask_reports SET facts_json = json_set(facts_json, '$.settled', ?), updated_at = ? WHERE ${match} AND state = 'queued'`,
+    [phase, at, childId, questionId]);
 }
 
 /** Setup failed before any turn existed: without this, an orchestrator would wait on a child that never started. */
@@ -182,7 +201,9 @@ function factLine(index: number, row: DeliveredRow): string {
   const what: Record<ReportKind, string> = {
     turn: `finished turn ${facts.turn}: ${facts.outcome}`,
     stuck: `has gone quiet in turn ${facts.turn}`,
-    question: `is asking a question in turn ${facts.turn} and waits for the answer; answer with \`${wispCommand()} send ${row.child_task_id} "…"\``,
+    question: facts.settled
+      ? `asked a question in turn ${facts.turn}, since ${facts.settled === "answered" ? "answered" : "withdrawn"}; it no longer waits for an answer`
+      : `is asking a question in turn ${facts.turn} and waits for the answer; answer with \`${wispCommand()} send ${row.child_task_id} "…"\``,
     "setup-failed": "failed during setup, before its first turn",
     round: `${pr} review round ${facts.round} on ${short(facts.head)} settled: ${facts.outcome}; read it with \`${wispCommand()} review show ${row.child_task_id}\``,
     merged: `${pr} merged at ${short(facts.head)}`,
