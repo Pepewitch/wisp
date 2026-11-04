@@ -204,7 +204,7 @@ describe("Droid background work outliving its turn", () => {
 
 describe("a Droid turn reopened on the same process", () => {
   /** A driver over a fake stdin, booted: its requests answered, its first turn ended. */
-  async function bootedDriver(foreignEndGraceMs?: number) {
+  async function bootedDriver(foreignEndGraceMs?: number, errorEndGraceMs?: number) {
     const written: Record<string, any>[] = [];
     const events: Record<string, any>[] = [];
     let terminals = 0;
@@ -222,6 +222,7 @@ describe("a Droid turn reopened on the same process", () => {
       emit: (event) => void events.push(event),
       onTerminal: () => void (terminals += 1),
       foreignEndGraceMs,
+      errorEndGraceMs,
     });
     const respond = async (result: Record<string, unknown>) => {
       await until(() => written.some((frame) => frame.type === "request" && !frame.answered));
@@ -281,6 +282,105 @@ describe("a Droid turn reopened on the same process", () => {
     note({ type: "agent_turn_completed", reason: "completed", turnId: "m2" });
     expect(terminals()).toBe(2);
     expect(events.filter((event) => event.type === "completion").at(-1)!.finalText).toBe("ANSWER_TO_NEXT");
+  });
+
+  test("a turn Droid recovers after a rejected model request ends with its real answer (#520)", async () => {
+    const { driver, events, respond, note, said, terminals } = await bootedDriver(100, 100);
+    driver.reopen(2, "m2");
+    const sent = driver.send("m2", "next", []);
+    await respond({});
+    await sent;
+    said("m2", "user", "next");
+    note({ type: "droid_working_state_changed", newState: "streaming_assistant_message" });
+    said("a2", "assistant", "Now verify the pointer test actually catches the old TTL:");
+    // one model request is rejected; Droid reports an end, then its agent loop goes on
+    note({ type: "agent_turn_completed", reason: "model_request_rejected", turnId: "m2" });
+    note({ type: "droid_working_state_changed", newState: "idle" });
+    await Bun.sleep(40);
+    note({ type: "droid_working_state_changed", newState: "streaming_assistant_message" });
+    said("a3", "assistant", "Verified, pushed, and here is the summary.");
+    note({ type: "agent_turn_completed", reason: "completed", turnId: "m2" });
+    expect(terminals()).toBe(2);
+    await Bun.sleep(250);
+    expect(terminals()).toBe(2);
+    const last = events.filter((event) => event.type === "completion").at(-1)!;
+    expect(last).toMatchObject({ finalText: "Verified, pushed, and here is the summary.", isError: false });
+    expect(events.some((event) => event.type === "error" && event.message === "Droid turn model_request_rejected")).toBe(false);
+  });
+
+  test("a turn's own error end counts once Droid stays idle", async () => {
+    const { driver, events, respond, note, said, terminals } = await bootedDriver(100, 100);
+    driver.reopen(2, "m2");
+    const sent = driver.send("m2", "next", []);
+    await respond({});
+    await sent;
+    said("m2", "user", "next");
+    said("a2", "assistant", "Partly done.");
+    note({ type: "agent_turn_completed", reason: "model_request_rejected", turnId: "m2" });
+    note({ type: "droid_working_state_changed", newState: "idle" });
+    expect(terminals()).toBe(1);
+    await until(() => terminals() === 2, 2000);
+    expect(events.filter((event) => event.type === "completion").at(-1)).toMatchObject({ isError: true });
+    expect(events.some((event) => event.type === "error" && event.message === "Droid turn model_request_rejected")).toBe(true);
+  });
+
+  test("a rejected end with Droid never reporting idle still fails the turn once the wait passes", async () => {
+    const { driver, events, respond, note, said, terminals } = await bootedDriver(100, 150);
+    driver.reopen(2, "m2");
+    const sent = driver.send("m2", "next", []);
+    await respond({});
+    await sent;
+    said("m2", "user", "next");
+    note({ type: "droid_working_state_changed", newState: "streaming_assistant_message" });
+    said("a2", "assistant", "Halfway");
+    note({ type: "agent_turn_completed", reason: "model_request_rejected", turnId: "m2" });
+    // activity keeps restarting the wait
+    await Bun.sleep(100);
+    said("a3", "assistant", "still going");
+    await Bun.sleep(100);
+    expect(terminals()).toBe(1);
+    await until(() => terminals() === 2, 2000);
+    expect(events.filter((event) => event.type === "completion").at(-1)).toMatchObject({ isError: true });
+  });
+
+  test("another agent turn's end never replaces the turn's own rejected end", async () => {
+    const { driver, events, respond, note, said, terminals } = await bootedDriver(50, 150);
+    driver.reopen(2, "m2");
+    const sent = driver.send("m2", "next", []);
+    await respond({});
+    await sent;
+    said("m2", "user", "next");
+    said("a2", "assistant", "Partly done.");
+    note({ type: "agent_turn_completed", reason: "model_request_rejected", turnId: "m2" });
+    note({ type: "droid_working_state_changed", newState: "idle" });
+    // a background command finishes and Droid answers it in an agent turn of its own
+    said("execute-completion:x", "user", "Background Execute command finished.");
+    said("a3", "assistant", "ABOUT_THE_COMMAND");
+    note({ type: "agent_turn_completed", reason: "completed", turnId: "execute-completion:x" });
+    note({ type: "droid_working_state_changed", newState: "idle" });
+    await until(() => terminals() === 2, 2000);
+    expect(events.filter((event) => event.type === "completion").at(-1)).toMatchObject({ isError: true });
+    expect(events.some((event) => event.type === "error" && event.message === "Droid turn model_request_rejected")).toBe(true);
+  });
+
+  test("the turn's own rejected end replaces another agent turn's end still waiting to count", async () => {
+    const { driver, events, respond, note, said, terminals } = await bootedDriver(50, 300);
+    driver.reopen(2, "m2");
+    const sent = driver.send("m2", "next", []);
+    await respond({});
+    await sent;
+    // a queued steer's agent turn ends first; Droid never echoes m2
+    said("steer-1", "user", "and the port");
+    said("a2", "assistant", "THE_PORT");
+    note({ type: "agent_turn_completed", reason: "completed", turnId: "steer-1" });
+    said("a3", "assistant", "partial own");
+    note({ type: "agent_turn_completed", reason: "model_request_rejected", turnId: "m2" });
+    note({ type: "droid_working_state_changed", newState: "idle" });
+    // past the foreign grace, nothing has ended the turn as done
+    await Bun.sleep(150);
+    expect(terminals()).toBe(1);
+    await until(() => terminals() === 2, 2000);
+    expect(events.filter((event) => event.type === "completion").at(-1)).toMatchObject({ isError: true });
   });
 
   test("an end Droid gives an agent turn the open turn did not start counts once Droid stays idle", async () => {
