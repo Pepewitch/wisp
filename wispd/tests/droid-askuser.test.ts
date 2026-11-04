@@ -10,6 +10,7 @@ import { taskAudit } from "../src/task-audit";
 import { conversationDetail } from "../src/routes/task-conversation";
 import { hasRunningTurn, interruptTurn, startTurn } from "../src/runner";
 import { createTask, db, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
+import { reportFraming } from "../src/subtask-reports";
 import { nudgeReviewer } from "../src/verify/reviewer";
 import type { ReviewRow } from "../src/verify/reviews";
 
@@ -118,6 +119,38 @@ if (request.method === "droid.initialize_session") {
   };
   return def;
 }
+
+describe("a reporting subtask's live question (#518)", () => {
+  test("reaches its parent as a report, once, with the question and its options", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "wisp-droid-askuser-report-"));
+    const def = fakeDroid(dir, join(dir, "answers.json"));
+    const parent = makeTask();
+    const child = makeTask();
+    db.run("UPDATE tasks SET parent_task_id = ?, report_to_parent = 1, subtask_kind = 'explore' WHERE id = ?", [parent.id, child.id]);
+    const unrelated = makeTask();
+    startTurn(getTask(child.id)!, "ask me", def, cfg);
+    startTurn(unrelated, "ask me", fakeDroid(mkdtempSync(join(tmpdir(), "wisp-droid-askuser-other-")), join(dir, "other.json")), cfg);
+    await until(() => getTask(child.id)?.state === "needs-input" && getTask(unrelated.id)?.state === "needs-input");
+
+    const rows = db.query("SELECT child_task_id, kind, event_key, facts_json, body, state FROM subtask_reports WHERE child_task_id IN (?, ?)")
+      .all(child.id, unrelated.id) as { child_task_id: string; kind: string; event_key: string; facts_json: string; body: string; state: string }[];
+    // the turn is still running, so no settled-turn report: only the question's, and none for a task that reports to nobody
+    expect(rows).toEqual([{
+      child_task_id: child.id, kind: "question", event_key: "question:1:ask-1", facts_json: JSON.stringify({ kind: "question", turn: 1 }),
+      body: "Travel: Where to?\n  1. Japan\n  2. Italy", state: "pending",
+    }]);
+    // the parent is told how to answer it
+    db.run("UPDATE subtask_reports SET message_id = 'msquestion' WHERE child_task_id = ?", [child.id]);
+    const framed = reportFraming("msquestion");
+    expect(framed.lines[1]).toContain(`subtask ${child.id} (explore) is asking a question in turn 1 and waits for the answer; answer with`);
+    expect(framed.lines[1]).toContain(`send ${child.id} "…"`);
+    expect(framed.words).toContain("Travel: Where to?");
+    for (const id of [child.id, unrelated.id]) {
+      await interruptTurn(id);
+      await until(() => hasRunningTurn(id) === null);
+    }
+  });
+});
 
 describe("Droid live AskUser and interrupt", () => {
   test("AskUser suspends the turn, and answering it in-protocol resumes the same turn", async () => {

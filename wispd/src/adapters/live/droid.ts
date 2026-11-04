@@ -62,7 +62,8 @@ interface DroidLiveOptions {
    * moves — which is also what keeps stuck-detection off a turn that is idle
    * on purpose.
    */
-  onWaiting?: (waiting: boolean) => void;
+  /** The turn stopped on a question (`question` names it) or went on after its last one. */
+  onWaiting?: (waiting: boolean, question?: { id: string; questions: DroidQuestion[] }) => void;
   /** Test seam for ASK_USER_GRACE_MS; production never sets it. */
   askUserGraceMs?: number;
   /** Test seam for FOREIGN_END_GRACE_MS; production never sets it. */
@@ -391,7 +392,7 @@ export class DroidLiveDriver {
     // blocked forever on a card that never settles, and nothing to notice it,
     // because a task parked in needs-input is skipped by stuck detection.
     this.questions.set(toolCallId, { frameId: frame.id, toolCallId, questions });
-    this.options.onWaiting?.(true);
+    this.options.onWaiting?.(true, { id: toolCallId, questions });
     this.options.emit({
       type: "question",
       phase: "asked",

@@ -1,8 +1,9 @@
 /**
  * What a subtask reports to its parent, recorded in the same transaction as
  * the change that causes it: a turn settling (store.ts settleTurn), a turn
- * going quiet (stuck.ts), setup failing before any turn (domain/task-launch),
- * and its PR's events (autopilot). Delivery is subtask-delivery.ts.
+ * going quiet (stuck.ts), a live turn stopping on a question (live-droid.ts),
+ * setup failing before any turn (domain/task-launch), and its PR's events
+ * (autopilot). Delivery is subtask-delivery.ts.
  *
  * Only the database handle is imported: store.ts calls in here, so anything
  * more would be an import cycle.
@@ -16,7 +17,7 @@ import { wispCommand } from "./command";
 import { db } from "./store-database";
 
 /** What the parent is told; never the reason text of a hold, which can carry gh or CI output. */
-export type ReportKind = "turn" | "stuck" | "setup-failed" | "round" | "merged" | "closed" | "needs-you";
+export type ReportKind = "turn" | "stuck" | "question" | "setup-failed" | "round" | "merged" | "closed" | "needs-you";
 
 export interface ReportFacts {
   kind: ReportKind;
@@ -123,6 +124,31 @@ export function recordStuckReport(childId: string, turn: number): void {
   if (child) record(child, `stuck:${turn}`, { kind: "stuck", turn }, null);
 }
 
+/** One question as a live harness poses it mid-turn (adapters/live/droid.ts DroidQuestion). */
+export interface AskedQuestion {
+  topic: string | null;
+  question: string;
+  multiSelect: boolean;
+  options: string[];
+}
+
+/**
+ * A live turn stopped on a question (#518): the turn is still running, so no
+ * settled-turn report comes, and stuck detection skips a turn waiting on
+ * purpose. Without this the child waits for an answer nobody knows it needs.
+ * Once per question; its text and options are the body, so the parent can
+ * answer with `wisp send`, which steers into the turn and answers it.
+ */
+export function recordQuestionReport(childId: string, turn: number, questionId: string, questions: AskedQuestion[]): void {
+  const child = reportingChild(childId);
+  if (!child) return;
+  const body = questions.map((q) => [
+    `${q.topic ? `${q.topic}: ` : ""}${q.question}${q.multiSelect ? " (choose any)" : ""}`,
+    ...q.options.map((option, at) => `  ${at + 1}. ${option}`),
+  ].join("\n")).join("\n\n");
+  record(child, `question:${turn}:${questionId}`, { kind: "question", turn }, body);
+}
+
 /** Setup failed before any turn existed: without this, an orchestrator would wait on a child that never started. */
 export function recordSetupFailure(childId: string, detail: string): void {
   const child = reportingChild(childId);
@@ -156,6 +182,7 @@ function factLine(index: number, row: DeliveredRow): string {
   const what: Record<ReportKind, string> = {
     turn: `finished turn ${facts.turn}: ${facts.outcome}`,
     stuck: `has gone quiet in turn ${facts.turn}`,
+    question: `is asking a question in turn ${facts.turn} and waits for the answer; answer with \`${wispCommand()} send ${row.child_task_id} "…"\``,
     "setup-failed": "failed during setup, before its first turn",
     round: `${pr} review round ${facts.round} on ${short(facts.head)} settled: ${facts.outcome}; read it with \`${wispCommand()} review show ${row.child_task_id}\``,
     merged: `${pr} merged at ${short(facts.head)}`,
