@@ -42,6 +42,14 @@ export interface OutcomeCheckpointV1 {
   context?: ContextPoint | null;
   /** Droid's answer across its messages (droid-answer.ts); absent in checkpoints written before it existed. */
   droidAnswer?: DroidAnswerState;
+  /** The id of the last tool call the stream showed; absent in checkpoints written before it existed. */
+  lastToolUse?: string | null;
+  /**
+   * Whether the last result's needs-input entries still hold the turn: false
+   * when every one names a tool call the agent went past. Absent (or null)
+   * means the plain rule, any entry at all.
+   */
+  needsInputHeld?: boolean | null;
   firstStderr: string | null;
   stderrTail: string[];
 }
@@ -108,6 +116,8 @@ export class IncrementalOutcomeReducer {
   private opencodeMessage: string | null = null;
   private opencodeSteps: unknown[] = [];
   private context: ContextPoint | null = null;
+  private lastToolUse: string | null = null;
+  private needsInputHeld: boolean | null = null;
   private firstStderr: string | null = null;
   private stderrTail: string[] = [];
 
@@ -186,6 +196,7 @@ export class IncrementalOutcomeReducer {
     else if (this.kind === "opencode-json") this.pushOpencode(event);
     else this.pushMapped(event);
     if (this.def.events === "droid-stream-json") this.pushDroidAnswer(event);
+    this.pushToolUse(event);
     this.pushErrorEvent(event);
     return this.earlySession !== knownSession || this.earlyModel !== knownModel || this.earlySkills !== knownSkills;
   }
@@ -263,12 +274,11 @@ export class IncrementalOutcomeReducer {
     const result = typeof text === "string" ? text : text != null ? JSON.stringify(text) : null;
     const rawSession = this.def.parse.session ? event[this.def.parse.session] : null;
     const rawModel = this.def.parse.model ? event[this.def.parse.model] : null;
-    const needsInputField = this.def.parse.needsInput;
     const rawUsage = this.summedUsage() ? this.usage : this.def.parse.usage ? event[this.def.parse.usage] : null;
     return {
       result,
       session: typeof rawSession === "string" ? rawSession : null,
-      needsInput: needsInputField ? Array.isArray(event[needsInputField]) && event[needsInputField].length > 0 : false,
+      needsInput: this.mappedNeedsInput(event),
       isError: event.isError === true || event.is_error === true,
       model: typeof rawModel === "string" ? rawModel : this.earlyModel,
       usage: isRecord(rawUsage) ? rawUsage : null,
@@ -333,6 +343,8 @@ export class IncrementalOutcomeReducer {
       opencodeSteps: [...this.opencodeSteps],
       context: this.context,
       droidAnswer: this.droidAnswer.checkpoint(),
+      lastToolUse: this.lastToolUse,
+      needsInputHeld: this.needsInputHeld,
       firstStderr: this.firstStderr,
       stderrTail: [...this.stderrTail],
     };
@@ -369,6 +381,8 @@ export class IncrementalOutcomeReducer {
     this.opencodeSteps = [...(checkpoint.opencodeSteps ?? [])];
     this.context = checkpoint.context ?? null;
     this.droidAnswer.restore(checkpoint.droidAnswer);
+    this.lastToolUse = checkpoint.lastToolUse ?? null;
+    this.needsInputHeld = checkpoint.needsInputHeld ?? null;
     this.firstStderr = checkpoint.firstStderr;
     this.stderrTail = checkpoint.stderrTail.slice(-3);
   }
@@ -495,6 +509,7 @@ export class IncrementalOutcomeReducer {
         "is_error",
       ]);
       this.settled = true;
+      this.needsInputHeld = this.heldByEntries(event);
       // A claude turn emits a result per model cycle (a background task's
       // notification, a retry after a connection error), each reporting only
       // its own cycle; the turn's usage is all of them. See addUsageBlobs.
@@ -503,6 +518,38 @@ export class IncrementalOutcomeReducer {
         this.usage = this.factValue(isRecord(this.usage) ? addUsageBlobs(this.usage, usage) : usage);
       }
     }
+  }
+
+  /** The mapped kind's needs-input: any entry in the declared field, unless every one names a tool call the agent went past. */
+  private mappedNeedsInput(event: Record<string, unknown>): boolean {
+    const field = this.def.parse.needsInput;
+    const entries = field ? event[field] : undefined;
+    return Array.isArray(entries) && entries.length > 0 && this.needsInputHeld !== false;
+  }
+
+  /** The latest tool call in the stream: an assistant message's last `tool_use` block (claude's stream-json). */
+  private pushToolUse(event: Record<string, any>): void {
+    if (event.type !== "assistant" || !Array.isArray(event.message?.content)) return;
+    for (const part of event.message.content as unknown[]) {
+      if (isRecord(part) && part.type === "tool_use" && typeof part.id === "string") this.lastToolUse = this.factString(part.id);
+    }
+  }
+
+  /**
+   * Whether a result's needs-input entries still hold the turn for the
+   * person. Claude lists every tool call a permission check denied during
+   * the turn in `permission_denials`, even one the agent then worked around
+   * and went past. Such a turn finished; only a denial of its last tool call
+   * can mean it stopped to ask. Entries that name no tool call, or a stream
+   * that showed none, keep the plain rule (null).
+   */
+  private heldByEntries(event: Record<string, any>): boolean | null {
+    const field = this.def.parse.needsInput;
+    const entries: unknown = field ? event[field] : undefined;
+    if (!Array.isArray(entries) || entries.length === 0 || this.lastToolUse === null) return null;
+    const ids = entries.map((entry) => (isRecord(entry) && typeof entry.tool_use_id === "string" ? entry.tool_use_id : null));
+    if (ids.some((id) => id === null)) return null;
+    return ids.includes(this.lastToolUse);
   }
 
   private pushErrorEvent(event: Record<string, any>): void {

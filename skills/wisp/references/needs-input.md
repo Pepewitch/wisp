@@ -57,7 +57,9 @@ have been answered meanwhile. If the task is still asking,
   ```
 
 - A Claude turn reads `needs-input` when its final `result` event lists
-  denied tool calls:
+  denied tool calls and the turn's last tool call is one of them. A denial
+  the agent worked around, making other tool calls after it, leaves the turn
+  `done`:
 
   ```sh
   wisp log <id> <N> --raw | jq -cR 'fromjson? | objects | select(.type == "result") | .permission_denials'
