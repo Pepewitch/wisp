@@ -5,6 +5,7 @@
  * subtask-reports.ts, which may import only the database handle.
  */
 import { randomBytes } from "node:crypto";
+import { emit } from "./events";
 import { createTaskMessage, db } from "./store";
 import { reportFraming } from "./subtask-reports";
 import { backgroundHoldsReport } from "./autopilot/idle";
@@ -23,15 +24,35 @@ export function queuedReport(parentId: string): string | null {
   return row?.id ?? null;
 }
 
+/** At most this many reports go in one message; the rest wait, in order, for the next (#519). */
+export const REPORT_BATCH_MAX_REPORTS = 10;
 /**
- * Every pending row of a parent, as one queued message, in one transaction.
- * Its text is what the transcript shows; the framing the parent receives is
- * built from the rows (reportFraming).
+ * And at most about this much of the children's words, as stored (a report
+ * later marked superseded still counts its words here): a batch stops before
+ * the report that would pass it.
+ */
+export const REPORT_BATCH_MAX_CHARS = 12_000;
+
+/**
+ * The oldest pending rows of a parent, as one queued message, in one
+ * transaction: at most REPORT_BATCH_MAX_REPORTS, and no more children's words
+ * than REPORT_BATCH_MAX_CHARS (always at least one report). The rest stay
+ * pending for the next message, so a parent busy while many reports arrive
+ * gets them in bounded, ordered batches rather than one that grows without
+ * limit. Its text is what the transcript shows; the framing the parent
+ * receives is built from the rows (reportFraming).
  */
 export function queueReports(parent: Pick<Task, "id">): string | null {
   return db.transaction((): string | null => {
-    const rows = db.query("SELECT id FROM subtask_reports WHERE parent_task_id = ? AND state = 'pending' ORDER BY created_at, rowid")
-      .all(parent.id) as { id: string }[];
+    const pending = db.query("SELECT id, length(coalesce(body, '')) AS chars FROM subtask_reports WHERE parent_task_id = ? AND state = 'pending' ORDER BY created_at, rowid")
+      .all(parent.id) as { id: string; chars: number }[];
+    const rows: { id: string }[] = [];
+    let chars = 0;
+    for (const row of pending) {
+      if (rows.length >= REPORT_BATCH_MAX_REPORTS || (rows.length > 0 && chars + row.chars > REPORT_BATCH_MAX_CHARS)) break;
+      rows.push(row);
+      chars += row.chars;
+    }
     if (rows.length === 0) return null;
     const id = `ms${randomBytes(9).toString("hex")}`;
     // mark them first, so the framing below reads exactly this message's rows
@@ -39,7 +60,7 @@ export function queueReports(parent: Pick<Task, "id">): string | null {
     for (const row of rows) db.run("UPDATE subtask_reports SET state = 'queued', message_id = ?, updated_at = ? WHERE id = ?", [id, at, row.id]);
     const framed = reportFraming(id);
     createTaskMessage({
-      id, taskId: parent.id, text: [...framed.lines, ...(framed.words ? ["", framed.words] : [])].join("\n"),
+      id, taskId: parent.id, text: reportText(framed),
       attachmentHash: "", origin: "subtask", actor: "system",
     });
     return id;
@@ -62,4 +83,26 @@ export function reportBefore(parent: Pick<Task, "id" | "state">, head: Pick<Task
   const row = db.query(`SELECT id FROM task_messages WHERE task_id = ? AND origin = 'subtask' AND status = 'queued' AND claim IS NULL
     AND source_seq < ? ORDER BY source_seq, rowid LIMIT 1`).get(parent.id, head.source_seq ?? 0) as { id: string } | null;
   return row?.id ?? null;
+}
+
+/** A report message's transcript text: Wisp's lines, then the children's fenced words. */
+function reportText(framed: { lines: string[]; words: string }): string {
+  return [...framed.lines, ...(framed.words ? ["", framed.words] : [])].join("\n");
+}
+
+/**
+ * The report message's transcript text, rewritten to the framing its parent
+ * receives now. The framing is built again when the message starts (a turn
+ * report the child has moved past is marked superseded then), so the text
+ * stored at queue time could otherwise show words the parent never got.
+ */
+export function refreshReportText(messageId: string, framed: { lines: string[]; words: string; found: boolean }): void {
+  // with its rows gone, the text stored at queue time is the only record of what the children said
+  if (!framed.found) return;
+  const row = db.query("SELECT task_id, text FROM task_messages WHERE id = ? AND origin = 'subtask'").get(messageId) as { task_id: string; text: string } | null;
+  const text = reportText(framed);
+  if (!row || row.text === text) return;
+  db.run("UPDATE task_messages SET text = ?, updated_at = ? WHERE id = ?", [text, new Date().toISOString(), messageId]);
+  // an open transcript shows the new text, as for any other change to a message
+  emit({ type: "message", taskId: row.task_id, messageId });
 }
