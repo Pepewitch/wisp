@@ -58,14 +58,14 @@ describe("claude permission denials", () => {
   });
 
   test("the batch survives a checkpoint, and an older checkpoint without it keeps the plain rule", () => {
-    const first = createIncrementalOutcomeReducer(claude);
+    const first = createIncrementalOutcomeReducer(claude)!;
     for (const line of [calls("m1", ["denied"]), calls("m2", ["b"])]) first.pushStdoutLine(line);
-    const resumed = createIncrementalOutcomeReducer(claude, first.checkpoint());
+    const resumed = createIncrementalOutcomeReducer(claude, first.checkpoint())!;
     resumed.pushStdoutLine(result("denied"));
     expect(resumed.outcome().needsInput).toBe(false);
 
     const { lastToolBatch: _batch, needsInputHeld: _held, ...older } = first.checkpoint();
-    const fromOlder = createIncrementalOutcomeReducer(claude, older as OutcomeCheckpointV1);
+    const fromOlder = createIncrementalOutcomeReducer(claude, older as OutcomeCheckpointV1)!;
     fromOlder.pushStdoutLine(result("denied"));
     expect(fromOlder.outcome().needsInput).toBe(true);
   });
