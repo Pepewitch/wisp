@@ -54,6 +54,7 @@ export function limitsLines(response: HarnessLimitsResponse, now: Date): string[
       }
     }
     if (entry.limits.account === "unchecked") lines.push("  not checked against droid's login");
+    if (entry.refreshError) lines.push(`  read at ${entry.fetchedAt}; the refresh failed: ${entry.refreshError}`);
   }
   return lines;
 }

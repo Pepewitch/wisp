@@ -39,6 +39,12 @@ export const LIMITS_FAILURE_BACKOFF_MS = 5 * 60_000;
 export const LIMITS_FAILURE_BACKOFF_MAX_MS = 30 * 60_000;
 export const LIMITS_BACKOFF_HEADROOM_MS = 10_000;
 export const LIMITS_TIMEOUT_MS = 20_000;
+/**
+ * How long a good reading keeps standing in for failed refreshes. Past it the
+ * failure shows on its own: a plan window may have reset since, and an hour
+ * spans two failure backoffs, so a broken harness is never hidden for long.
+ */
+export const LIMITS_STALE_MAX_MS = 60 * 60_000;
 
 export type FactoryKeySource = SecretKeySource;
 
@@ -73,6 +79,7 @@ export interface HarnessLimitsCacheOptions {
   failureBackoffMaxMs?: number;
   failureBackoffHeadroomMs?: number;
   timeoutMs?: number;
+  staleMaxMs?: number;
   now?: () => Date;
 }
 
@@ -82,6 +89,8 @@ interface CachedLimitsEntry {
   value: HarnessLimitsEntry;
   /** consecutive real probe errors for this exact harness configuration */
   failures: number;
+  /** the last successful read for this key, kept so a failed refresh can serve it */
+  lastGood: HarnessLimitsEntry | null;
 }
 
 function readTextFile(path: string): string | null {
@@ -120,6 +129,7 @@ export class HarnessLimitsCache {
   private readonly failureBackoffMaxMs: number;
   private readonly failureBackoffHeadroomMs: number;
   private readonly timeoutMs: number;
+  private readonly staleMaxMs: number;
   private readonly now: () => Date;
   private askedAt: number | null = null;
 
@@ -143,6 +153,7 @@ export class HarnessLimitsCache {
     this.failureBackoffMaxMs = options.failureBackoffMaxMs ?? LIMITS_FAILURE_BACKOFF_MAX_MS;
     this.failureBackoffHeadroomMs = options.failureBackoffHeadroomMs ?? LIMITS_BACKOFF_HEADROOM_MS;
     this.timeoutMs = options.timeoutMs ?? LIMITS_TIMEOUT_MS;
+    this.staleMaxMs = options.staleMaxMs ?? LIMITS_STALE_MAX_MS;
     this.now = options.now ?? (() => new Date());
   }
 
@@ -198,11 +209,10 @@ export class HarnessLimitsCache {
     const attempt = this.fetchOne(name, def, credential)
       .then((entry) => {
         const completedAt = this.now().getTime();
-        const failures = entry.status !== "error"
-          ? 0
-          : hit?.key === key && hit.value.status === "error"
-            ? hit.failures + 1
-            : 1;
+        // read at completion: a Refresh may have finished while this read ran
+        const prior = this.entries.get(name);
+        const same = prior?.key === key ? prior : undefined;
+        const failures = entry.status !== "error" ? 0 : (same?.failures ?? 0) + 1;
         const backoff = entry.status !== "error"
           ? this.ttlMs
           : Math.max(
@@ -212,8 +222,15 @@ export class HarnessLimitsCache {
                 this.failureBackoffMaxMs,
               ) - this.failureBackoffHeadroomMs,
             );
-        this.entries.set(name, { key, freshUntil: completedAt + backoff, value: entry, failures });
-        return entry;
+        // only a real failure stands behind an old reading; "not installed" or
+        // "needs a key" is the answer itself and drops it
+        const lastGood = entry.status === "ok" ? entry : entry.status === "error" ? (same?.lastGood ?? null) : null;
+        const value = entry.status === "error" && lastGood !== null
+            && completedAt - Date.parse(lastGood.fetchedAt) < this.staleMaxMs
+          ? { ...lastGood, cached: false, refreshError: entry.message }
+          : entry;
+        this.entries.set(name, { key, freshUntil: completedAt + backoff, value, failures, lastGood });
+        return { ...value }; // a caller's copy: the cached entry is served again
       })
       .finally(() => this.inFlight.delete(key));
     this.inFlight.set(key, attempt);
