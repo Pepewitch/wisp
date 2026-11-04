@@ -256,6 +256,17 @@ export interface ApiSubtask {
   updated_at: string;
 }
 
+/** POST /api/tasks/:id/report-ack: a subtask's waiting `done` turn reports, marked handled by its parent. */
+export interface ReportAckResponse {
+  /** the newest turn acknowledged: the one asked for, capped at the subtask's latest finished turn; null when it has none */
+  through: number | null;
+  handled: number;
+  /** its reports still waiting: a failed or needs-input turn, a question, a PR event, or a turn past `through` */
+  kept: number;
+  /** queued report messages left with nothing to deliver, and cancelled */
+  cancelled: string[];
+}
+
 /** GET /api/tasks: each task plus the facts only the list carries. */
 export interface ApiTaskListItem extends ApiTask {
   /** True while at least one active or paused workflow is attached. */

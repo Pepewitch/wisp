@@ -51,6 +51,7 @@ import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
 import { recordAudit, recordSendAudit, requestActor } from "../task-audit";
 import { taskAuditRoute } from "./task-audit";
 import { reportsToParent } from "../subtask-reports";
+import { reportAckRoute } from "./report-ack";
 import { subtaskBodyError, subtaskRequest, subtasksRoute, type SubtaskBody } from "./subtasks";
 
 /** GET /api/tasks */
@@ -362,6 +363,7 @@ function basicTaskAction(
   }
   if (action === "audit" && method === "GET") return taskAuditRoute(task, url);
   if (action === "subtasks" && method === "GET") return subtasksRoute(task);
+  if (action === "report-ack" && method === "POST") return reportAckRoute(task, req);
   if (action === "attach" && method === "GET") {
     const def = adapters[task.harness];
     if (!def || !task.session_id) return json<AttachResponse>({ argv: null, cwd: null, message: "no session yet" });
