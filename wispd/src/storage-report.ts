@@ -1,7 +1,6 @@
 import { basename, dirname, join, resolve } from "node:path";
 import { readStorageLedger } from "./storage-ledger";
 import { archivedBefore, DAY_MS, scanStorage, storageBytes, type StorageEntry } from "./storage-scan";
-import { TRASH_DIR_NAME } from "./worktree-trash-name";
 
 interface StorageTask {
   id: string; state: string; archived: number; updated_at: string;
@@ -13,8 +12,6 @@ export interface StorageReport {
   total: number;
   directories: { name: string; bytes: number }[];
   worktrees: WorktreeStorage[];
-  /** Removed worktrees still being deleted in the background (worktree-trash.ts). */
-  trash: number;
   logs: { live: number; archived: number; unknown: number; bytesPerDay: number | null };
   done: { tasks: number; bytes: number };
   purge: { tasks: number; bytes: number; cutoff: string };
@@ -36,9 +33,7 @@ export async function storageReport(home: string, before = "30d", now = Date.now
   const entries: StorageEntry[] = [];
   const total = await scanStorage(home, entry => entries.push(entry));
   const top = entries.filter(e => dirname(e.path) === home);
-  const trashPath = join(home, "worktrees", TRASH_DIR_NAME);
-  const trash = entries.find(e => e.directory && e.path === trashPath)?.bytes ?? 0;
-  const worktrees = entries.filter(e => e.directory && dirname(e.path) === join(home, "worktrees") && e.path !== trashPath).map(e => {
+  const worktrees = entries.filter(e => e.directory && dirname(e.path) === join(home, "worktrees")).map(e => {
     const name = basename(e.path);
     const task = tasks.find(t => t.worktree_path !== null && resolve(t.worktree_path) === e.path)
       ?? taskMap.get(name.slice(name.lastIndexOf("-") + 1));
@@ -65,7 +60,7 @@ export async function storageReport(home: string, before = "30d", now = Date.now
   const done = tasks.filter(t => !t.archived && t.state === "done" && t.mode !== "local");
   const purge = tasks.filter(t => t.archived && t.updated_at < cutoff);
   return { total, directories: top.map(e => ({ name: basename(e.path) + (e.directory ? "/" : ""), bytes: e.bytes })).sort((a, b) => b.bytes - a.bytes),
-    worktrees, trash, logs,
+    worktrees, logs,
     done: { tasks: done.length, bytes: worktrees.filter(w => done.some(t => t.id === w.taskId)).reduce((sum, w) => sum + w.bytes, 0) },
     purge: { tasks: purge.length, bytes: purge.reduce((sum, t) => sum + (taskBytes.get(t.id) ?? 0), 0), cutoff } };
 }
@@ -79,7 +74,6 @@ export function formatStorageReport(report: StorageReport): string {
     ...report.directories.map(e => row(e.name, e.bytes)),
     "\nLargest worktrees", ...report.worktrees.slice(0, 10).map(tree),
     `\nOrphan worktrees: ${orphans.length}`, ...orphans.map(tree),
-    ...(report.trash ? [row(`removed worktrees still being deleted (worktrees/${TRASH_DIR_NAME})`, report.trash)] : []),
     "\nLogs", row("live tasks", report.logs.live), row("archived tasks", report.logs.archived), row("unknown tasks", report.logs.unknown),
     `  Growth estimate: ${report.logs.bytesPerDay === null ? "unavailable (no dated logs)" : `${storageBytes(report.logs.bytesPerDay)}/day`}, retained bytes / age of oldest log mtime`,
     "\nPotential reclaim",

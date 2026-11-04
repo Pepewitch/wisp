@@ -55,6 +55,10 @@ const COMMAND_USAGE = {
                                                exit 0 done, 2 needs-input, 1 failed, 3 timeout;
                                                several tasks: --all (default) waits for every one, --any for the first;
                                                --settled: done also waits for background work its agent will answer again for`,
+  report: `  ${COMMAND} report ack <subtask> [--through-turn <n>] [--json]
+                                               a parent that has read a subtask's result marks its waiting
+                                               done-turn reports as handled (default: through its latest turn);
+                                               a failed or needs-input turn, a question or a PR event stays`,
   send: `  ${COMMAND} send <task> "message" [--model <m>] [--effort <level>] [--harness <h> --fresh-context] [--when now|next-turn] [--report] [--attach <path>]… send safely; active tasks steer or queue without stopping; --model/--effort switch the task from its next turn (same harness keeps the session); --report: a parent's follow-up to its subtask starts the next turn (never steers) and reports back when it ends`,
   interrupt: `  ${COMMAND} interrupt <task>                        stop the running turn (session survives)`,
   workflow: `  ${COMMAND} workflow <command>                      task automations: types, start, list, show, set, pause, resume, complete

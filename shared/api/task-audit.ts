@@ -31,6 +31,7 @@ export const TASK_AUDIT_ACTIONS = [
   "cleanup",
   "fresh-session",
   "push",
+  "report-ack",
   "autopilot",
   "autopilot-resume",
   "autopilot-skip",

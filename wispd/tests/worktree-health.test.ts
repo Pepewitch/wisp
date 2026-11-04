@@ -357,7 +357,7 @@ describe("archive answers before it destroys (D4)", () => {
     );
     const detail = getTask(id)!.state_detail!;
     expect(detail).toContain("Cleanup is incomplete and will be retried");
-    expect(detail).toContain("could not read the repository");
+    expect(detail).toContain("git worktree remove failed");
     expect(detail.split("\n")).toHaveLength(1); // sanitized: never git's usage text
     expect(detail.length).toBeLessThanOrEqual(300);
   });

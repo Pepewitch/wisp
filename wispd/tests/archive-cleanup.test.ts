@@ -291,8 +291,7 @@ describe("a failing stage stops the sequence", () => {
   /**
    * The review's fail-closed case, with a real failure rather than an
    * injected one: the task's `repo_path` is not a git repository, so
-   * the removal cannot confirm the worktree is one of its own, and stops
-   * before moving anything. Everything after that stage deletes
+   * `git worktree remove` cannot run. Everything after that stage deletes
    * something, so nothing after it may run.
    */
   test("the worktree and the attachments are both kept, and the job says why", async () => {
@@ -305,7 +304,7 @@ describe("a failing stage stops the sequence", () => {
     await eventually("the failure to be recorded", () => archiveCleanup(fixture.id)?.last_error !== null);
     const job = archiveCleanup(fixture.id)!;
     expect(job.stage).toBe("remove-worktree");
-    expect(job.last_error).toContain("could not read the repository");
+    expect(job.last_error).toContain("git worktree remove failed");
     expect(job.attempts).toBeGreaterThan(0);
 
     // Fail-closed: the files are still there, and the NEXT stage never ran.

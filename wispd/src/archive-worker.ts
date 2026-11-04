@@ -6,10 +6,7 @@ import { assertCleanupHookEnded, runCleanupHook } from "./archive-hooks";
 import { assertTaskProcessesEnded, stopSetupGroups } from "./task-processes";
 import { killTurnForArchive } from "./runner";
 import { killForTask } from "./terminal";
-import { commitDirtyWork, worktreeHealth } from "./worktree";
-import { removeWorktree } from "./worktree-removal";
-import { startTrashSweepLoop } from "./worktree-trash";
-import { intervalService, type DaemonService } from "./daemon-context";
+import { commitDirtyWork, removeWorktree, worktreeHealth } from "./worktree";
 import { homeIsDraining, trackHomeWork } from "./home-lifetime";
 
 const MAX_ATTEMPTS = 5;
@@ -123,9 +120,4 @@ export function startArchiveCleanupLoop(): ReturnType<typeof setInterval> {
   timer.unref();
   kickCleanup();
   return timer;
-}
-
-/** Archive cleanup's two loops: its jobs, and the background delete of the worktrees they removed. */
-export function archiveCleanupServices(): DaemonService[] {
-  return [intervalService("archive cleanup", startArchiveCleanupLoop()), intervalService("worktree trash", startTrashSweepLoop())];
 }

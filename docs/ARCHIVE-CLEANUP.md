@@ -11,16 +11,6 @@ even when forced, because it cannot tell what would be lost. Repair the
 repository, or move the worktree directory somewhere else; archive then clears
 the task, and removing a project with its tasks works again.
 
-Removing a worktree takes milliseconds however large it is. Wisp first checks
-that the path is the top level of an unlocked linked worktree of the task's
-repository, never a main checkout. It then renames the directory into
-`worktrees/.trash` and prunes Git's entry for it; the branch stays. The files are
-deleted in the background, one removed worktree at a time and with no deadline.
-A daemon restart resumes an unfinished delete, and an entry that fails is retried
-every minute. A worktree outside Wisp's worktree directory, or on another volume,
-is still deleted in place by `git worktree remove`, within the usual two-minute
-limit for Git writes.
-
 Pending jobs do not delay daemon startup. Two workers process them in the
 background. In the browser and Desktop, unfinished archives appear in the
 sidebar's **Cleanup** section regardless of **Show archived**. Selecting one
@@ -164,8 +154,7 @@ allocated disk blocks; symlinks are not followed. Concurrent filesystem changes
 can make the totals approximate; a busy database snapshot asks you to retry.
 
 Orphan worktrees belong to archived or missing tasks. The report identifies
-them but never removes them. Removed worktrees still waiting for their
-background delete are reported separately, as bytes in `worktrees/.trash`. The done-task estimate counts worktrees only, not
+them but never removes them. The done-task estimate counts worktrees only, not
 local repositories; actual archive still runs its normal safety checks.
 The purge estimate counts managed task files, logs and diagnostics, not orphan
 worktrees or SQLite space (logical row deletion does not shrink the database).

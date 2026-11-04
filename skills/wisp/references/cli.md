@@ -307,6 +307,16 @@ behind, such as a dev server, has no agent to wake: the line still reports it,
 but it never holds the wait.
 
 ```
+wisp report ack <subtask> [--through-turn <n>] [--json]
+```
+
+For a parent that has already read its subtask's result: the subtask's waiting
+reports of `done` turns, through turn `n` (default: its latest finished turn),
+are marked handled and not delivered. It prints how many, and how many still
+wait. A failed or needs-input turn, a question, a stuck turn and a PR event
+always stay. A queued report message left empty is cancelled.
+
+```
 wisp send <task> "message" [--model <m>] [--effort <level>] [--harness <h> --fresh-context] [--when now|next-turn] [--report] [--attach <path>]…
 wisp interrupt <task>
 wisp fresh <task>

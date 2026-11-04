@@ -29,6 +29,7 @@ import { formatBytes } from "./attachments";
 import { readAttachmentFlags } from "./cli-attach";
 import { searchCommand } from "./cli-search";
 import { waitCommand } from "./cli-wait";
+import { reportCommand } from "./cli-report";
 import { limitsCommand } from "./cli-limits";
 import { sendCommand, taskMessageSummary } from "./cli-send";
 import { exportDiagnosticLog, followHumanLog } from "./cli-stream";
@@ -462,6 +463,11 @@ export const COMMANDS = {
   log: (positional, flags) => logCommand(positional, flags),
   search: (positional, flags) => searchCommand(positional, flags, api),
   wait: (positional, flags) => waitCommand(positional, flags),
+  report: (positional, flags) =>
+    reportCommand(positional, flags, (path, method, body) => api(path, method, body), (message) => {
+      printError(message);
+      process.exit(1);
+    }),
   send: (positional, flags) =>
     sendCommand({
       positional,
