@@ -56,10 +56,12 @@ have been answered meanwhile. If the task is still asking,
     jq -rR 'fromjson? | objects | select(.type == "tool_call" and .toolName == "AskUser") | .parameters.questionnaire'
   ```
 
-- A Claude turn reads `needs-input` when its final `result` event lists
-  denied tool calls and the turn's last tool call is one of them. A denial
-  the agent worked around, making other tool calls after it, leaves the turn
-  `done`:
+- A Claude turn reads `needs-input` when its final `result` event lists a
+  denied tool call from the main agent's last batch of calls (one model
+  response). A denial the agent went past, making another batch of calls
+  after it, leaves the finished turn `done`. That includes an agent that
+  checked something after the denial and only then asked: its question is in
+  the turn's answer. To see the denials:
 
   ```sh
   wisp log <id> <N> --raw | jq -cR 'fromjson? | objects | select(.type == "result") | .permission_denials'

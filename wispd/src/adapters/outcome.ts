@@ -42,8 +42,12 @@ export interface OutcomeCheckpointV1 {
   context?: ContextPoint | null;
   /** Droid's answer across its messages (droid-answer.ts); absent in checkpoints written before it existed. */
   droidAnswer?: DroidAnswerState;
-  /** The id of the last tool call the stream showed; absent in checkpoints written before it existed. */
-  lastToolUse?: string | null;
+  /**
+   * The main agent's latest batch of tool calls: the model response that
+   * made them (`message.id`) and their ids. Absent in checkpoints written
+   * before it existed.
+   */
+  lastToolBatch?: { message: string | null; ids: string[] } | null;
   /**
    * Whether the last result's needs-input entries still hold the turn: false
    * when every one names a tool call the agent went past. Absent (or null)
@@ -116,7 +120,7 @@ export class IncrementalOutcomeReducer {
   private opencodeMessage: string | null = null;
   private opencodeSteps: unknown[] = [];
   private context: ContextPoint | null = null;
-  private lastToolUse: string | null = null;
+  private lastToolBatch: { message: string | null; ids: string[] } | null = null;
   private needsInputHeld: boolean | null = null;
   private firstStderr: string | null = null;
   private stderrTail: string[] = [];
@@ -196,7 +200,7 @@ export class IncrementalOutcomeReducer {
     else if (this.kind === "opencode-json") this.pushOpencode(event);
     else this.pushMapped(event);
     if (this.def.events === "droid-stream-json") this.pushDroidAnswer(event);
-    this.pushToolUse(event);
+    if (this.kind === "mapped-json") this.pushToolUse(event);
     this.pushErrorEvent(event);
     return this.earlySession !== knownSession || this.earlyModel !== knownModel || this.earlySkills !== knownSkills;
   }
@@ -343,7 +347,7 @@ export class IncrementalOutcomeReducer {
       opencodeSteps: [...this.opencodeSteps],
       context: this.context,
       droidAnswer: this.droidAnswer.checkpoint(),
-      lastToolUse: this.lastToolUse,
+      lastToolBatch: this.lastToolBatch ? { message: this.lastToolBatch.message, ids: [...this.lastToolBatch.ids] } : null,
       needsInputHeld: this.needsInputHeld,
       firstStderr: this.firstStderr,
       stderrTail: [...this.stderrTail],
@@ -381,7 +385,7 @@ export class IncrementalOutcomeReducer {
     this.opencodeSteps = [...(checkpoint.opencodeSteps ?? [])];
     this.context = checkpoint.context ?? null;
     this.droidAnswer.restore(checkpoint.droidAnswer);
-    this.lastToolUse = checkpoint.lastToolUse ?? null;
+    this.lastToolBatch = checkpoint.lastToolBatch ? { message: checkpoint.lastToolBatch.message, ids: [...checkpoint.lastToolBatch.ids] } : null;
     this.needsInputHeld = checkpoint.needsInputHeld ?? null;
     this.firstStderr = checkpoint.firstStderr;
     this.stderrTail = checkpoint.stderrTail.slice(-3);
@@ -527,29 +531,44 @@ export class IncrementalOutcomeReducer {
     return Array.isArray(entries) && entries.length > 0 && this.needsInputHeld !== false;
   }
 
-  /** The latest tool call in the stream: an assistant message's last `tool_use` block (claude's stream-json). */
+  /**
+   * The main agent's latest batch of tool calls (claude's stream-json). One
+   * model response may make several calls, each written as its own
+   * `assistant` event under the same `message.id`, so they gather into one
+   * batch until a response with another id makes a call. A subagent's events
+   * (`parent_tool_use_id`) are not the main agent's: a background subagent
+   * still working must not move the batch past the main agent's question.
+   */
   private pushToolUse(event: Record<string, any>): void {
-    if (event.type !== "assistant" || !Array.isArray(event.message?.content)) return;
-    for (const part of event.message.content as unknown[]) {
-      if (isRecord(part) && part.type === "tool_use" && typeof part.id === "string") this.lastToolUse = this.factString(part.id);
-    }
+    if (event.type !== "assistant" || event.parent_tool_use_id || !Array.isArray(event.message?.content)) return;
+    const ids = (event.message.content as unknown[]).flatMap((part) =>
+      isRecord(part) && part.type === "tool_use" && typeof part.id === "string" ? [this.factString(part.id)] : []);
+    if (ids.length === 0) return;
+    const message = typeof event.message.id === "string" ? event.message.id : null;
+    const batch = this.lastToolBatch;
+    if (batch && message !== null && batch.message === message) batch.ids.push(...ids.slice(0, 64 - batch.ids.length));
+    else this.lastToolBatch = { message, ids: ids.slice(0, 64) };
   }
 
   /**
    * Whether a result's needs-input entries still hold the turn for the
    * person. Claude lists every tool call a permission check denied during
-   * the turn in `permission_denials`, even one the agent then worked around
-   * and went past. Such a turn finished; only a denial of its last tool call
-   * can mean it stopped to ask. Entries that name no tool call, or a stream
-   * that showed none, keep the plain rule (null).
+   * the turn in `permission_denials`, even one the agent then worked around.
+   * A denial in the main agent's last batch of calls may be what it stopped
+   * to ask about, so it holds; one the agent went past, making another batch
+   * of calls after it, does not, and the finished turn reads done. That
+   * accepts one miss: an agent that checks something after a denial and only
+   * then asks reads done, its question still in its answer. Entries that name
+   * no tool call, or a stream with no call of the main agent, keep the plain
+   * rule (null).
    */
   private heldByEntries(event: Record<string, any>): boolean | null {
     const field = this.def.parse.needsInput;
     const entries: unknown = field ? event[field] : undefined;
-    if (!Array.isArray(entries) || entries.length === 0 || this.lastToolUse === null) return null;
+    if (!Array.isArray(entries) || entries.length === 0 || this.lastToolBatch === null) return null;
     const ids = entries.map((entry) => (isRecord(entry) && typeof entry.tool_use_id === "string" ? entry.tool_use_id : null));
     if (ids.some((id) => id === null)) return null;
-    return ids.includes(this.lastToolUse);
+    return ids.some((id) => this.lastToolBatch!.ids.includes(id!));
   }
 
   private pushErrorEvent(event: Record<string, any>): void {
