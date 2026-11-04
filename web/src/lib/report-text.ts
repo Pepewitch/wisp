@@ -46,7 +46,13 @@ export function parseReportText(text: string): ReportText {
 /** Wisp's report heading, for a daemon that predates the message's `report` field. */
 const REPORT_HEADING = /^\d+ reports? from your subtasks\. Each child's own words sit between <<<report-/
 
-/** A queued delivery of subtask reports: said by the daemon, or by Wisp's own heading on an older one. */
-export function isReportMessage(message: { report?: true; text: string }): boolean {
-  return message.report === true || (message.report === undefined && REPORT_HEADING.test(message.text))
+/**
+ * A delivery of subtask reports: said by the daemon, or, from a daemon that
+ * predates the field and so sends none at all, by Wisp's own heading. A
+ * current daemon's `report: false` is final, so a person's message that
+ * opens with copied report text stays theirs.
+ */
+export function isReportMessage(message: { report?: boolean; text: string }): boolean {
+  if ("report" in message && message.report !== undefined) return message.report === true
+  return REPORT_HEADING.test(message.text)
 }

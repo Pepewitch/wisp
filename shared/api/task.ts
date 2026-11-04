@@ -357,10 +357,10 @@ export interface ApiTaskMessage {
   deferred: boolean;
   /**
    * Wisp's delivery of subtask reports, not the person's words: shown as
-   * Wisp's own report block, and only cancellable. Present only when true,
-   * and absent from daemons that predate it.
+   * Wisp's own report block, and only cancellable. Absent only from daemons
+   * that predate it.
    */
-  report?: true;
+  report?: boolean;
   attachments: TurnAttachment[];
   created_at: string;
   updated_at: string;

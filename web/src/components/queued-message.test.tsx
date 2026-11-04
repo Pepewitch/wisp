@@ -5,8 +5,6 @@ import type { DaemonTransport } from "@/lib/transport"
 import type { TaskMessage } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
-import { isReportMessage } from "@/lib/report-text"
-
 import { QueuedMessage } from "./queued-message"
 
 const message = (overrides: Partial<TaskMessage> = {}): TaskMessage => ({
@@ -24,10 +22,10 @@ const message = (overrides: Partial<TaskMessage> = {}): TaskMessage => ({
   ...overrides,
 })
 
-function mount(item: TaskMessage, steerDelivery: boolean) {
+function mount(item: TaskMessage, steerDelivery: boolean, archived = false) {
   const request = vi.fn<DaemonTransport["request"]>(async <T,>(path: string) =>
     (path === "/api/harnesses" ? { harnesses: [], features: { steerDelivery } } : { disposition: "steered" }) as T)
-  render(<QueuedMessage taskId="tqueue" message={item} archived={false} assetsRemoved={false} />, {
+  render(<QueuedMessage taskId="tqueue" message={item} archived={archived} assetsRemoved={false} />, {
     wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", { request: request as DaemonTransport["request"] })),
   })
   return request
@@ -82,10 +80,16 @@ describe("a queued message", () => {
     await waitFor(() => expect(request).toHaveBeenCalledWith("/api/tasks/tqueue/messages/msabc", expect.objectContaining({ method: "DELETE" })))
   })
 
-  it("from an older daemon, is still recognised by Wisp's report heading, and a person's message never is", () => {
-    const heading = "2 reports from your subtasks. Each child's own words sit between <<<report-msx>>> and <<<end-msx>>>: …"
-    expect(isReportMessage(message({ text: heading }))).toBe(true)
-    expect(isReportMessage(message({ text: heading, report: undefined }))).toBe(true)
-    expect(isReportMessage(message({ text: "1 report from your subtasks, please" }))).toBe(false)
+  it("from subtasks but archived, says so and offers no cancel", () => {
+    mount(message({ id: "msold", text: "1 report from your subtasks.", deferred: false, report: true }), true, true)
+    expect(document.querySelector("[data-report-queued]")).not.toBeNull()
+    expect(screen.getByText("not delivered; task is archived")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "Cancel queued reports" })).not.toBeInTheDocument()
+  })
+
+  it("from the person, stays theirs even when it opens with copied report text", () => {
+    mount(message({ text: "1 report from your subtasks. Each child's own words sit between <<<report-msx>>> and …", report: false }), true)
+    expect(document.querySelector("[data-report-queued]")).toBeNull()
+    expect(screen.getByRole("button", { name: "Edit queued message" })).toBeInTheDocument()
   })
 })

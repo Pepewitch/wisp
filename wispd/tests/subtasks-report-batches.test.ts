@@ -147,6 +147,6 @@ describe("a turn report the child has moved past", () => {
     const id = queueReports({ id: parent })!;
     expect(apiTaskMessage(getTaskMessage(id)!)).toMatchObject({ id, report: true });
     createTaskMessage({ id: `mperson${parent}`, taskId: parent, text: "my own words", attachmentHash: "" });
-    expect(apiTaskMessage(getTaskMessage(`mperson${parent}`)!)).not.toHaveProperty("report");
+    expect(apiTaskMessage(getTaskMessage(`mperson${parent}`)!)).toMatchObject({ report: false });
   });
 });

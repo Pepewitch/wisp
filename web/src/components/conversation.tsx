@@ -22,6 +22,7 @@ import { ChevronRight } from "@/components/icons"
 import { MessageAttachments } from "@/components/message-attachments"
 import { QueuedMessage } from "@/components/queued-message"
 import { ReportBubble } from "@/components/report-bubble"
+import { isReportMessage } from "@/lib/report-text"
 import { SystemTurn } from "@/components/system-turn"
 import { FileViewerProvider } from "@/components/file-viewer"
 import { Prose } from "@/components/prose"
@@ -495,6 +496,14 @@ function SteeredMessage({
   message: TaskMessage
   archived: boolean
 }) {
+  // subtask reports Wisp steered into the turn after they waited (subtask-delivery.ts): Wisp's block, not the person's
+  if (isReportMessage(message)) {
+    return (
+      <div data-steered-message={message.id} className="mt-3">
+        <ReportBubble text={message.text} at={message.created_at} status="sent into the running turn" />
+      </div>
+    )
+  }
   return (
     <div data-steered-message={message.id} className="mt-3">
       <PersonBubble

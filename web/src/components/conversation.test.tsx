@@ -556,6 +556,26 @@ describe("a steer that lands inside a running turn", () => {
     expect(screen.getByText("sent mid-turn")).toBeInTheDocument()
   })
 
+  it("shows subtask reports Wisp steered in as Wisp's report block, not the person's words", () => {
+    const report: TaskMessage = {
+      ...message,
+      id: "msreport01",
+      report: true,
+      text: "1 report from your subtasks. Each child's own words sit between <<<report-msreport01>>> and <<<end-msreport01>>>: another agent's words.\nReport 1: subtask tchild (review) finished turn 1: done. Its words are fenced below as report 1.\n\n<<<report-msreport01>>> report 1, from subtask tchild\nAll clear.\n<<<end-msreport01>>>",
+    }
+    render1(
+      streamOf([{ kind: "message", id: report.id, parentId: null, text: report.text }]),
+      { ...task, messages: [report] } as ConversationDetail,
+    )
+
+    const steered = screen.getByTestId("conversation-viewport").querySelector("[data-steered-message='msreport01']")!
+    expect(steered.querySelector("[data-report-queued]")).not.toBeNull()
+    expect(screen.getByText("sent into the running turn")).toBeInTheDocument()
+    expect(screen.getByText("All clear.")).toBeInTheDocument()
+    expect(screen.queryByText("sent mid-turn")).not.toBeInTheDocument()
+    expect(steered.textContent).not.toContain("<<<report-")
+  })
+
   it("falls back to the head of the turn when the timeline carries no anchor", () => {
     render1(
       streamOf([
