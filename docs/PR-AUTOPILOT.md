@@ -71,9 +71,9 @@ another name (`git push origin HEAD:fix/…`, to follow a repository's naming).
 Wisp finds that last kind from the remote-tracking refs the push updated, and
 claims a branch only on direct evidence the task made its tip: the task
 branch's reflog shows it reaching that commit by a commit made on it, a
-cherry-pick, a merge that made a commit, or a rebase no other branch on origin
-also holds. A branch the task merged in, fast-forwarded or reset onto (a
-colleague's, a sibling task's) is never its own. A PR from a pushed name is
+cherry-pick, a merge that made a commit, or a rebase that replayed something
+of its own. A branch the task merged in, fast-forwarded, reset or rebased onto
+with nothing of its own (a colleague's, a sibling task's) is never its own. A PR from a pushed name is
 preferred after one from the task's own branch. If the forge deletes that
 branch after a merge and a later fetch prunes it, or the reflog has expired,
 the PR is no longer found this way.

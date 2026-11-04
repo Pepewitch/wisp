@@ -58,7 +58,7 @@ function madeHere(tip: string, subject: string): boolean {
   if (/: fast-forward$/i.test(subject)) return false;
   if (/^(commit|cherry-pick)\b/.test(subject)) return true;
   if (/^(merge|pull)\b[^:]*: Merge made by/.test(subject)) return true;
-  const rebase = /^(rebase|pull)\b[^:]*\(finish\): refs\/heads\/\S+ onto ([0-9a-f]{40})$/.exec(subject);
+  const rebase = /^(rebase|pull)\b[^:]*\(finish\): refs\/heads\/\S+ onto ([0-9a-f]{40,64})$/.exec(subject);
   return rebase !== null && rebase[2] !== tip;
 }
 
