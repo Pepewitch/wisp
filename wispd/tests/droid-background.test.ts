@@ -363,6 +363,26 @@ describe("a Droid turn reopened on the same process", () => {
     expect(events.some((event) => event.type === "error" && event.message === "Droid turn model_request_rejected")).toBe(true);
   });
 
+  test("the turn's own rejected end replaces another agent turn's end still waiting to count", async () => {
+    const { driver, events, respond, note, said, terminals } = await bootedDriver(50, 300);
+    driver.reopen(2, "m2");
+    const sent = driver.send("m2", "next", []);
+    await respond({});
+    await sent;
+    // a queued steer's agent turn ends first; Droid never echoes m2
+    said("steer-1", "user", "and the port");
+    said("a2", "assistant", "THE_PORT");
+    note({ type: "agent_turn_completed", reason: "completed", turnId: "steer-1" });
+    said("a3", "assistant", "partial own");
+    note({ type: "agent_turn_completed", reason: "model_request_rejected", turnId: "m2" });
+    note({ type: "droid_working_state_changed", newState: "idle" });
+    // past the foreign grace, nothing has ended the turn as done
+    await Bun.sleep(150);
+    expect(terminals()).toBe(1);
+    await until(() => terminals() === 2, 2000);
+    expect(events.filter((event) => event.type === "completion").at(-1)).toMatchObject({ isError: true });
+  });
+
   test("an end Droid gives an agent turn the open turn did not start counts once Droid stays idle", async () => {
     const { driver, events, respond, note, said, terminals } = await bootedDriver(100);
     driver.reopen(2, "m2");

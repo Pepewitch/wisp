@@ -560,6 +560,9 @@ export class DroidLiveDriver {
         // The turn's own end on an error Droid recovers from: Droid may go on, and the turn's
         // next own end replaces this one (#520).
         if (RECOVERABLE_END_REASONS.has(end.reason)) {
+          // the turn's own end supersedes another agent turn's end still waiting to count
+          this.clearForeignEnd(false);
+          this.foreignEnd = null;
           this.provisionalEnd = end;
           this.armProvisionalEnd();
           return;
@@ -596,8 +599,11 @@ export class DroidLiveDriver {
     if (this.provisionalTimer) clearTimeout(this.provisionalTimer);
     this.provisionalTimer = setTimeout(() => {
       this.provisionalTimer = null;
-      // Not while a questionnaire is open: Droid is waiting on the operator, and its answer is activity.
-      if (this.provisionalEnd && this.questions.size === 0) this.endTurn(this.provisionalEnd);
+      // Not while a questionnaire is open: Droid is waiting on the operator. Wait again rather than
+      // count on the answer's activity: a questionnaire cancelled while Droid stays silent brings none.
+      if (!this.provisionalEnd) return;
+      if (this.questions.size > 0) this.armProvisionalEnd();
+      else this.endTurn(this.provisionalEnd);
     }, this.options.errorEndGraceMs ?? ERROR_END_GRACE_MS);
     this.provisionalTimer.unref?.();
   }
