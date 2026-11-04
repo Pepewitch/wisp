@@ -42,8 +42,55 @@ async function currentTaskBranch(
 }
 
 /**
+ * Branches on origin that hold this task's own work under another name: the
+ * agent pushed with `git push origin HEAD:<name>` to follow a repository's
+ * branch naming, so the pull request's head is `<name>` and no local branch
+ * carries it. Read from the remote-tracking refs the push itself updated:
+ * those whose tip is in the task branch's history but not in the commit it
+ * forked from, nor in its base ref as it stands now (so the base branch, and
+ * every branch that reached the task only by merging the base in, stay out).
+ * Empty for a task with no recorded fork point (a local task), and whenever
+ * git cannot answer.
+ */
+async function pushedUnderOtherNames(
+  task: Task,
+  run: ProbeSpawnFn,
+  signal: AbortSignal,
+): Promise<string[]> {
+  if (!task.branch || !task.base_commit) return [];
+  const query = (bases: string[]) =>
+    Promise.resolve()
+      .then(() =>
+        run(
+          [
+            "git",
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--format=%(refname:short)",
+            `--merged=refs/heads/${task.branch}`,
+            ...bases.map((base) => `--no-merged=${base}`),
+            "refs/remotes/origin/",
+          ],
+          { cwd: task.repo_path, signal },
+        ),
+      )
+      .catch(() => null);
+  // a base ref that no longer resolves fails the whole query: ask again without it
+  let result = task.base_ref ? await query([task.base_commit, task.base_ref]) : null;
+  if (!result || result.exitCode !== 0) result = await query([task.base_commit]);
+  if (!result || result.exitCode !== 0) return [];
+  return result.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("origin/") && line !== "origin/HEAD")
+    .map((line) => line.slice("origin/".length))
+    .filter((name) => name !== "" && !name.includes(" "));
+}
+
+/**
  * Every branch this task made, its branch of record first and current checkout
- * second, followed by its other task-named branches in recency order.
+ * second, then the names its work was pushed under on origin, followed by its
+ * other task-named branches in recency order.
  *
  * `wisp/<id>-…` is the convention every worktree branch is created under, so
  * the id in the name is the whole index — nothing to record at push time,
@@ -68,7 +115,7 @@ export async function taskBranches(
 ): Promise<string[]> {
   const stored = task.branch;
   if (!stored) return [];
-  const [found, checkedOut] = await Promise.all([
+  const [found, checkedOut, pushed] = await Promise.all([
     Promise.resolve()
       .then(() =>
         run(
@@ -86,9 +133,12 @@ export async function taskBranches(
       )
       .catch(() => null),
     currentTaskBranch(task, run, signal),
+    pushedUnderOtherNames(task, run, signal),
   ]);
+  const leading = [stored, ...(checkedOut && checkedOut !== stored ? [checkedOut] : [])];
+  const others = pushed.filter((name) => !leading.includes(name));
   if (!found || found.exitCode !== 0) {
-    return checkedOut && checkedOut !== stored ? [stored, checkedOut] : [stored];
+    return [...leading, ...others].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT);
   }
   // Only names git could have matched: the prefix is re-checked here so a
   // surprising stdout can never become a head in a provider query.
@@ -97,12 +147,8 @@ export async function taskBranches(
     .split("\n")
     .map((line) => line.trim())
     // git's order is kept, not re-sorted: it is the recency the cap spends
-    .filter((line) => line.startsWith(prefix) && line !== stored && line !== checkedOut);
-  return [
-    stored,
-    ...(checkedOut && checkedOut !== stored ? [checkedOut] : []),
-    ...names,
-  ].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT);
+    .filter((line) => line.startsWith(prefix) && !leading.includes(line) && !others.includes(line));
+  return [...leading, ...others, ...names].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT);
 }
 
 /**

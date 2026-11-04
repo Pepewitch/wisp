@@ -133,7 +133,8 @@ describe("PullRequestCache", () => {
     );
     const result = await new PullRequestCache({ run }).status(task());
 
-    // which repository, then task-named branches and current HEAD, then the provider
+    // which repository, then task-named branches, current HEAD and the names
+    // the task's work was pushed under, then the provider
     expect(calls[0]).toEqual(["git", "remote", "get-url", "origin"]);
     expect(calls[1]).toEqual([
       "git",
@@ -143,11 +144,20 @@ describe("PullRequestCache", () => {
       "refs/heads/wisp/tpr01-*",
     ]);
     expect(calls[2]).toEqual(["git", "symbolic-ref", "--quiet", "--short", "HEAD"]);
-    expect(calls[3]).toContain("name=widgets");
-    expect(calls[3]!.join(" ")).not.toContain("credential");
-    expect(calls[3]!.join(" ")).toContain("mergeQueueEntry");
-    expect(calls[3]!.join(" ")).toContain("mergeStateStatus");
-    expect(calls[3]!.join(" ")).toContain('headRefName: "wisp/tpr01-show-pr-status"');
+    expect(calls[3]).toEqual([
+      "git",
+      "for-each-ref",
+      "--sort=-committerdate",
+      "--format=%(refname:short)",
+      "--merged=refs/heads/wisp/tpr01-show-pr-status",
+      "--no-merged=abc123",
+      "refs/remotes/origin/",
+    ]);
+    expect(calls[4]).toContain("name=widgets");
+    expect(calls[4]!.join(" ")).not.toContain("credential");
+    expect(calls[4]!.join(" ")).toContain("mergeQueueEntry");
+    expect(calls[4]!.join(" ")).toContain("mergeStateStatus");
+    expect(calls[4]!.join(" ")).toContain('headRefName: "wisp/tpr01-show-pr-status"');
     expect(result).toEqual({
       kind: "found",
       provider: "github",
@@ -444,10 +454,10 @@ describe("PullRequestCache", () => {
     await cache.status(task({ id: "keep" }));
     await cache.status(task({ id: "touch" }));
     // The evicted task repeats its branch enumeration, current-branch read,
-    // and provider lookup:
+    // pushed-name read and provider lookup:
     // repository discovery is cached once per repo path for both selected-task
-    // and overview reads, and both branch reads are local and cheap.
-    expect(calls.length - callsBeforeHits).toBe(3);
+    // and overview reads, and the three branch reads are local and cheap.
+    expect(calls.length - callsBeforeHits).toBe(4);
   });
 });
 
@@ -834,10 +844,10 @@ describe("PullRequestCache overview", () => {
 
     const result = await cache.overview([first, second, local, archived]);
 
-    // one repository lookup, cached per repo path, plus one local branch read
-    // for each of the two live worktree tasks
+    // one repository lookup, cached per repo path, plus two local ref reads
+    // (task-named branches, pushed names) for each of the two live worktree tasks
     expect(calls.filter((cmd) => cmd[1] === "remote")).toHaveLength(1);
-    expect(calls.filter((cmd) => cmd[1] === "for-each-ref")).toHaveLength(2);
+    expect(calls.filter((cmd) => cmd[1] === "for-each-ref")).toHaveLength(4);
     const providerCalls = calls.filter((cmd) => cmd[0] === "gh");
     expect(providerCalls).toHaveLength(1);
     expect(providerCalls[0]!.slice(0, 3)).toEqual(["gh", "api", "graphql"]);

@@ -65,6 +65,13 @@ repository. A worktree can check out anyone's branch, and Wisp never adopts
 someone else's PR. It prefers the task's own branch, then the oldest PR onto the
 base. `wisp pr <task>` and the task menu name the PR it is bound to.
 
+The task's branches are its own `wisp/<id>-…` branch, whatever its worktree
+has checked out, and any branch on `origin` its work was pushed under with
+another name (`git push origin HEAD:fix/…`, to follow a repository's naming).
+Wisp finds that last kind from the remote-tracking refs the push updated:
+branches whose tip is in the task's history but not in the commit it forked
+from or its base branch.
+
 **After a merge, both switches stay on for the task's next PR.** Wisp then
 adopts a PR you open from this task after the merged one was opened — the
 task's next change, or a PR that was stacked on the merged one — and never an
