@@ -4,7 +4,7 @@
  * head is that name, so it must be one of the task's branches. Real git, a
  * bare origin and a clone, as the agent's push leaves them.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -50,6 +50,9 @@ const run: ProbeSpawnFn = async (cmd, opts) => {
 };
 
 const branches = (t: Task) => taskBranches(t, run, new AbortController().signal);
+
+// each test runs a dozen git commands: room for a loaded machine
+setDefaultTimeout(30_000);
 
 describe("a task's branch pushed under another name", () => {
   test("is one of the task's branches, so its pull request is found", async () => {
@@ -129,9 +132,29 @@ describe("a task's branch pushed under another name", () => {
     commit(repo, "the sibling's change");
     git(repo, "push", "-q", "origin", "HEAD:fix/sibling");
     git(repo, "checkout", "-q", "-b", "wisp/tpd03-d", base);
+    git(repo, "branch", "-q", "-D", "wisp/tsib01-s");
     git(repo, "rebase", "-q", "origin/fix/sibling");
+    expect(await branches(task(repo, base, { id: "tpd03", branch: "wisp/tpd03-d" }))).toEqual(["wisp/tpd03-d"]);
     git(repo, "push", "-q", "origin", "HEAD:fix/d");
     expect(await branches(task(repo, base, { id: "tpd03", branch: "wisp/tpd03-d" }))).toEqual(["wisp/tpd03-d"]);
+  });
+
+  test("a rebase that drops the task's only commit as already applied claims nothing", async () => {
+    const { repo, base } = world();
+    // the sibling's change, and the task's identical change
+    git(repo, "checkout", "-q", "-b", "wisp/tsib02-s", base);
+    await Bun.write(join(repo, "same.txt"), "the same change\n");
+    git(repo, "add", "same.txt");
+    commit(repo, "the sibling's change");
+    git(repo, "push", "-q", "origin", "HEAD:fix/sibling2");
+    git(repo, "checkout", "-q", "wisp/tpb01-keen-stork");
+    git(repo, "branch", "-q", "-D", "wisp/tsib02-s");
+    await Bun.write(join(repo, "same.txt"), "the same change\n");
+    git(repo, "add", "same.txt");
+    commit(repo, "the task's identical change");
+    git(repo, "rebase", "-q", "origin/fix/sibling2");
+    expect(git(repo, "rev-parse", "HEAD")).toBe(git(repo, "rev-parse", "origin/fix/sibling2"));
+    expect(await branches(task(repo, base))).toEqual(["wisp/tpb01-keen-stork"]);
   });
 
   test("a cherry-pick that only fast-forwards claims nothing", async () => {

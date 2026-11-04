@@ -45,19 +45,21 @@ async function currentTaskBranch(
 export const PUSHED_NAME_LIMIT = 2;
 
 /**
- * How the task branch reached a tip, from its reflog subject: a commit made
- * on it (`commit:`, `commit (amend):`, `commit (merge):`), a cherry-pick, a
- * merge that made a commit, or a rebase (`rebase … (finish)`, and the one
- * `pull --rebase` logs as `pull … (finish)`). Any fast-forward (`merge …:
- * Fast-forward`, `cherry-pick: fast-forward`), a reset or the branch's
- * creation brought someone else's commit, never the task's own.
+ * Whether the task branch made the tip a reflog entry moved it to: a commit
+ * made on it (`commit:`, `commit (amend):`, `commit (merge):`), a cherry-pick,
+ * a merge that made a commit, or a rebase (`rebase … (finish)`, and the one
+ * `pull --rebase` logs as `pull … (finish)`) that replayed something, its
+ * tip differing from the commit it went onto. A fast-forward (`merge …:
+ * Fast-forward`, `cherry-pick: fast-forward`), a reset, the branch's
+ * creation, or a rebase with nothing of the task's left to replay brought
+ * someone else's commit, never the task's own.
  */
-function arrival(subject: string): "own" | "rebase" | null {
-  if (/fast-forward/i.test(subject)) return null;
-  if (/^(commit|cherry-pick)\b/.test(subject)) return "own";
-  if (/^(merge|pull)\b[^:]*: Merge made by/.test(subject)) return "own";
-  if (/^(rebase|pull)\b[^:]*\(finish\): refs\/heads\//.test(subject)) return "rebase";
-  return null;
+function madeHere(tip: string, subject: string): boolean {
+  if (/: fast-forward$/i.test(subject)) return false;
+  if (/^(commit|cherry-pick)\b/.test(subject)) return true;
+  if (/^(merge|pull)\b[^:]*: Merge made by/.test(subject)) return true;
+  const rebase = /^(rebase|pull)\b[^:]*\(finish\): refs\/heads\/\S+ onto ([0-9a-f]{40})$/.exec(subject);
+  return rebase !== null && rebase[2] !== tip;
 }
 
 /**
@@ -66,11 +68,11 @@ function arrival(subject: string): "own" | "rebase" | null {
  * branch naming, so the pull request's head is `<name>` and no local branch
  * carries it. Read from the remote-tracking refs the push itself updated,
  * and claimed only on direct evidence the task made that tip: the task
- * branch's reflog shows the branch reaching it by a commit made on it (or a
- * cherry-pick, or a merge that made a commit), or by a rebase whose result no
- * other branch on origin also holds. A branch the task fast-forwarded or
- * reset onto (a sibling task's push, a colleague's branch) is never claimed,
- * whatever has happened to that branch since.
+ * branch's reflog shows the branch reaching it by a commit made on it, a
+ * cherry-pick, a merge that made a commit, or a rebase that replayed
+ * something (madeHere). A branch the task fast-forwarded, reset or rebased
+ * onto with nothing of its own (a sibling task's push, a colleague's branch)
+ * is never claimed, whatever has happened to that branch since.
  *
  * Newest first, at most PUSHED_NAME_LIMIT. Empty for a task with no recorded
  * fork point (a local task), when the reflog is missing or has expired, and
@@ -100,30 +102,15 @@ async function pushedUnderOtherNames(
   if (candidates.length === 0) return [];
   const reflog = await git(["reflog", "show", "--format=%H %gs", `refs/heads/${branch}`]);
   if (reflog === null) return [];
-  const made = new Map<string, "own" | "rebase">();
+  const made = new Set<string>();
   for (const line of reflog.split("\n")) {
     const at = line.indexOf(" ");
-    const how = at > 0 ? arrival(line.slice(at + 1)) : null;
-    // an own commit wins over a rebase that later landed on the same tip
-    if (how && made.get(line.slice(0, at)) !== "own") made.set(line.slice(0, at), how);
+    if (at > 0 && madeHere(line.slice(0, at), line.slice(at + 1).trim())) made.add(line.slice(0, at));
   }
   const names: string[] = [];
   for (const [tip, name] of candidates) {
     if (names.length >= PUSHED_NAME_LIMIT) break;
-    const how = made.get(tip);
-    if (!how) continue;
-    if (how === "rebase") {
-      // A rebase with nothing of the task's to replay lands on the other branch's own tip. The
-      // task's own branches (its `wisp/<id>-…` pushed by `/push`) hold it too, and do not count.
-      // Any other holder does, which only fails safe (no name): a stacked child's branch built on
-      // it, or the task's own push of the same tip under a second name, which refs alone cannot
-      // tell from someone else's branch at that tip.
-      const holders = await git(["for-each-ref", "--format=%(refname:lstrip=3)", `--contains=${tip}`, "refs/remotes/origin/"]);
-      const others = (holders ?? "").split("\n").map((line) => line.trim()).filter((holder) =>
-        holder !== "" && holder !== "HEAD" && holder !== name && holder !== branch && !holder.startsWith(`wisp/${task.id}-`));
-      if (holders === null || others.length > 0) continue;
-    }
-    names.push(name);
+    if (made.has(tip)) names.push(name);
   }
   return names;
 }
