@@ -303,7 +303,11 @@ such as a background `wisp wait` for its subtasks, still gets its reports, the
 way it gets the person's messages. It never interrupts or steers
 the parent and never fails it. Reports that arrive within about 3 seconds
 become one message (origin `subtask`, sender `system`), started by id once the
-parent is free. A pass runs after anything about the parent or a child
+parent is free. A message carries at most 10 reports and about 12,000
+characters of the children's words; the rest wait, in order, for the next.
+When it starts, a turn report whose child has settled a newer turn since is
+marked superseded, and its words are left out unless that turn failed or ended
+asking for input. A pass runs after anything about the parent or a child
 changes, at startup, and every 30 seconds. An archived, deleted or deleting
 parent drops its pending reports; `GET /api/tasks/:id/subtasks` counts the
 drop. A queued report can be cancelled but not edited or sent now (409), and a

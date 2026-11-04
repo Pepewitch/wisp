@@ -23,15 +23,31 @@ export function queuedReport(parentId: string): string | null {
   return row?.id ?? null;
 }
 
+/** At most this many reports go in one message; the rest wait, in order, for the next (#519). */
+export const REPORT_BATCH_MAX_REPORTS = 10;
+/** And at most about this much of the children's words: a batch stops before the report that would pass it. */
+export const REPORT_BATCH_MAX_CHARS = 12_000;
+
 /**
- * Every pending row of a parent, as one queued message, in one transaction.
- * Its text is what the transcript shows; the framing the parent receives is
- * built from the rows (reportFraming).
+ * The oldest pending rows of a parent, as one queued message, in one
+ * transaction: at most REPORT_BATCH_MAX_REPORTS, and no more children's words
+ * than REPORT_BATCH_MAX_CHARS (always at least one report). The rest stay
+ * pending for the next message, so a parent busy while many reports arrive
+ * gets them in bounded, ordered batches rather than one that grows without
+ * limit. Its text is what the transcript shows; the framing the parent
+ * receives is built from the rows (reportFraming).
  */
 export function queueReports(parent: Pick<Task, "id">): string | null {
   return db.transaction((): string | null => {
-    const rows = db.query("SELECT id FROM subtask_reports WHERE parent_task_id = ? AND state = 'pending' ORDER BY created_at, rowid")
-      .all(parent.id) as { id: string }[];
+    const pending = db.query("SELECT id, length(coalesce(body, '')) AS chars FROM subtask_reports WHERE parent_task_id = ? AND state = 'pending' ORDER BY created_at, rowid")
+      .all(parent.id) as { id: string; chars: number }[];
+    const rows: { id: string }[] = [];
+    let chars = 0;
+    for (const row of pending) {
+      if (rows.length >= REPORT_BATCH_MAX_REPORTS || (rows.length > 0 && chars + row.chars > REPORT_BATCH_MAX_CHARS)) break;
+      rows.push(row);
+      chars += row.chars;
+    }
     if (rows.length === 0) return null;
     const id = `ms${randomBytes(9).toString("hex")}`;
     // mark them first, so the framing below reads exactly this message's rows
