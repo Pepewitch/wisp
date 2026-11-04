@@ -54,7 +54,7 @@ of messages cannot hold them back. Read a review's findings with `wisp review sh
 and a child's full answer with `wisp result <child>`. If you have already read
 a child's result (you waited on it, or read it before its report came), run
 `wisp report ack <child> --through-turn <n>` with the turn you read (`wisp
-result` names it), so its waiting reports of finished turns up to that one are
+result <child>` names it; after only a `wisp wait`, read it there first), so its waiting reports of finished turns up to that one are
 not delivered to you again as news. A failed or needs-input turn, a question
 and a PR event are never marked this way.
 
