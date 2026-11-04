@@ -28,6 +28,14 @@ export function resetsIn(iso: string | null, now: Date): string {
   return `resets in ${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
+/** How old a reading is, in the same units as "resets in". */
+export function readAgo(iso: string, now: Date): string {
+  const minutes = Math.floor((now.getTime() - Date.parse(iso)) / 60_000);
+  if (!Number.isFinite(minutes) || minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`;
+}
+
 function windowLine(window: LimitWindow, indent: string, now: Date): string {
   const percent = `${Math.round(window.usedPercent)}%`.padStart(4);
   const reset = resetsIn(window.resetsAt, now);
@@ -54,7 +62,7 @@ export function limitsLines(response: HarnessLimitsResponse, now: Date): string[
       }
     }
     if (entry.limits.account === "unchecked") lines.push("  not checked against droid's login");
-    if (entry.refreshError) lines.push(`  read at ${entry.fetchedAt}; the refresh failed: ${entry.refreshError}`);
+    if (entry.refreshError) lines.push(`  read ${readAgo(entry.fetchedAt, now)}; the refresh failed: ${entry.refreshError}`);
   }
   return lines;
 }

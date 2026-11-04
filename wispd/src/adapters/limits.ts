@@ -375,7 +375,9 @@ function checkAccount(whoami: unknown, login: { userId: string; orgId: string } 
  * were ever to hold some. `--strict-mcp-config` with no `--mcp-config` starts
  * no MCP server, and `disableAllHooks` runs none of the user's hooks: the read
  * needs neither, and on a busy machine they took the read past its time limit
- * (2.1.318 under heavy load: 17–25s with them, 7–18s without).
+ * (2.1.318 under heavy load: 17–25s with them, 7–18s without). A JSON string
+ * for `--settings` needs a claude from the 2.x line, which `get_usage` already
+ * does; on an older one both reads fail and say so.
  */
 const CLAUDE_QUIET_ARGS = [
   "--no-session-persistence",

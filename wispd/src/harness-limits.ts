@@ -40,9 +40,10 @@ export const LIMITS_FAILURE_BACKOFF_MAX_MS = 30 * 60_000;
 export const LIMITS_BACKOFF_HEADROOM_MS = 10_000;
 export const LIMITS_TIMEOUT_MS = 20_000;
 /**
- * How long a good reading keeps standing in for failed refreshes. Past it the
- * failure shows on its own: a plan window may have reset since, and an hour
- * spans two failure backoffs, so a broken harness is never hidden for long.
+ * How long a good reading keeps standing in for failed refreshes, and never
+ * past the first reset of a window it shows, whose share used is then wrong.
+ * Past either the failure shows on its own; an hour holds about four failed
+ * retries, so a broken harness is never hidden for long.
  */
 export const LIMITS_STALE_MAX_MS = 60 * 60_000;
 
@@ -116,6 +117,14 @@ export function privateScratchDir(dir: string = PROBE_SCRATCH_DIR): string {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
   return dir;
+}
+
+/** When a good reading stops standing in for failed refreshes: an hour on, or its first window reset if sooner. */
+function staleUntil(reading: HarnessLimitsEntry, staleMaxMs: number): number {
+  const resets = (reading.limits?.windows ?? [])
+    .map((window) => (window.resetsAt === null ? Number.NaN : Date.parse(window.resetsAt)))
+    .filter((at) => Number.isFinite(at));
+  return Math.min(Date.parse(reading.fetchedAt) + staleMaxMs, ...resets);
 }
 
 export class HarnessLimitsCache {
@@ -225,11 +234,12 @@ export class HarnessLimitsCache {
         // only a real failure stands behind an old reading; "not installed" or
         // "needs a key" is the answer itself and drops it
         const lastGood = entry.status === "ok" ? entry : entry.status === "error" ? (same?.lastGood ?? null) : null;
-        const value = entry.status === "error" && lastGood !== null
-            && completedAt - Date.parse(lastGood.fetchedAt) < this.staleMaxMs
-          ? { ...lastGood, cached: false, refreshError: entry.message }
-          : entry;
-        this.entries.set(name, { key, freshUntil: completedAt + backoff, value, failures, lastGood });
+        const until = lastGood === null ? 0 : staleUntil(lastGood, this.staleMaxMs);
+        const stale = entry.status === "error" && lastGood !== null && completedAt < until;
+        const value = stale ? { ...lastGood, cached: false, refreshError: entry.message } : entry;
+        // an old reading is served from the cache no longer than it may stand in at all
+        const freshUntil = stale ? Math.min(completedAt + backoff, until) : completedAt + backoff;
+        this.entries.set(name, { key, freshUntil, value, failures, lastGood });
         return { ...value }; // a caller's copy: the cached entry is served again
       })
       .finally(() => this.inFlight.delete(key));

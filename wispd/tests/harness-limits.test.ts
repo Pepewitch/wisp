@@ -598,6 +598,43 @@ describe("HarnessLimitsCache", () => {
     expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "error", limits: null, cached: false });
   });
 
+  test("a backed-off old reading is not served from the cache past its hour", async () => {
+    const c = counting();
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({
+      spawnOnce: c.spawnOnce,
+      which: (bin) => bin,
+      env: {},
+      failureBackoffMs: 10_000,
+      failureBackoffMaxMs: 10_000,
+      failureBackoffHeadroomMs: 0,
+      staleMaxMs: 800,
+      now: () => new Date(now),
+    });
+    await cache.read({}, { claude });
+    c.failNext(true);
+    now += 500;
+    expect((await cache.read({}, { claude }, { refresh: true }))[0]).toMatchObject({ status: "ok", refreshError: expect.any(String) });
+    now += 299;
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "ok", cached: true });
+    expect(c.reads()).toBe(2);
+    now += 1; // the hour is up, though the 10s backoff is not
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "error", limits: null, cached: false });
+    expect(c.reads()).toBe(3);
+  });
+
+  test("an old reading stops standing in once one of its windows has reset", async () => {
+    const c = counting();
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({ spawnOnce: c.spawnOnce, which: (bin) => bin, env: {}, staleMaxMs: 24 * 3_600_000, now: () => new Date(now) });
+    await cache.read({}, { claude }); // its 5h window resets at 05:49, 3h49m on
+    c.failNext(true);
+    now += 3 * 3_600_000;
+    expect((await cache.read({}, { claude }, { refresh: true }))[0]).toMatchObject({ status: "ok", refreshError: expect.any(String) });
+    now += 49 * 60_000;
+    expect((await cache.read({}, { claude }, { refresh: true }))[0]).toMatchObject({ status: "error", limits: null });
+  });
+
   test("an answer that is not a failure drops the old reading", async () => {
     let installed = true;
     let fail = false;
@@ -761,7 +798,7 @@ describe("wisp limits output", () => {
             status: "ok",
             limits: parseClaudeUsage(CLAUDE_REPORT, NOW),
             message: null,
-            fetchedAt: NOW.toISOString(),
+            fetchedAt: new Date(NOW.getTime() - 12 * 60_000).toISOString(),
             cached: false,
             refreshError: "the claude limits read timed out after 20s",
           },
@@ -783,7 +820,7 @@ describe("wisp limits output", () => {
       "  5h         ███░░░░░░░  33% used  resets in 3h 49m",
       "  7d         █████░░░░░  51% used  resets in 5d 1h",
       "  Opus       ░░░░░░░░░░   0% used  resets in 5d 2h",
-      "  read at 2026-09-25T02:00:00.000Z; the refresh failed: the claude limits read timed out after 20s",
+      "  read 12m ago; the refresh failed: the claude limits read timed out after 20s",
       "droid",
       "  standard",
       "    5h         █░░░░░░░░░  13% used  resets in 2h 30m",
