@@ -33,19 +33,30 @@ function oldestReportWaiting(taskId: string): number | null {
   return Number.isFinite(at) ? at : null
 }
 
+/** When the parent's latest turn ended, epoch ms; null while one runs or before any. */
+function lastTurnEnded(taskId: string): number | null {
+  const row = db.query("SELECT ended_at FROM turns WHERE task_id = ? ORDER BY n DESC LIMIT 1").get(taskId) as { ended_at: string | null } | null
+  const at = Date.parse(row?.ended_at ?? "")
+  return Number.isFinite(at) ? at : null
+}
+
 /**
  * Whether the parent's background work still holds its subtask reports back.
  * The agent will wake when that work finishes, so a report waits to go with
- * it, but only for REPORT_BACKGROUND_HOLD_MS from the oldest waiting report:
- * a parent that always keeps something running (a background `wisp wait` for
- * its subtasks, a dev server) would otherwise never get one (#517). The
- * report then goes as the person's messages do, into the harness's live
- * process when one is kept for that work.
+ * it, but only for REPORT_BACKGROUND_HOLD_MS, counted from the later of the
+ * oldest waiting report and the parent's last turn end (the time it has been
+ * waiting on background work alone): a parent that always keeps something
+ * running (a background `wisp wait` for its subtasks, a dev server) would
+ * otherwise never get one (#517). The report then goes as the person's
+ * messages do, into the harness's live process when one is kept for that
+ * work. Background work Wisp cannot read (`unknown`) is held the same way.
  */
 export function backgroundHoldsReport(taskId: string, now = Date.now()): boolean {
   if (backgroundWork(taskId).state === "none") return false
   const oldest = oldestReportWaiting(taskId)
-  return oldest === null || now - oldest < REPORT_BACKGROUND_HOLD_MS
+  if (oldest === null) return true
+  const since = Math.max(oldest, lastTurnEnded(taskId) ?? oldest)
+  return now - since < REPORT_BACKGROUND_HOLD_MS
 }
 
 /** A subtask report not yet read: recorded and waiting for delivery, or queued to start. */

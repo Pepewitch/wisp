@@ -158,7 +158,7 @@ describe("delivering subtask reports", () => {
   test("background work holds a report back for five minutes at most, then it goes (#517)", async () => {
     const adapters = { quick };
     const parent = await make({ repoPath: await repo() }, adapters);
-    await make({ subtask: { parentId: parent.id, report: true } }, adapters);
+    const child = await make({ subtask: { parentId: parent.id, report: true } }, adapters);
     // the parent always keeps something running: a background `wisp wait` for its subtasks
     const turn = turnsFor(parent.id).at(-1)!;
     db.run(`INSERT INTO turn_process_groups (turn_id, task_id, pgid, members_json, state, stop_requested)
@@ -179,11 +179,17 @@ describe("delivering subtask reports", () => {
       const past = new Date(Date.now() - 5 * 60_000 - 1_000).toISOString();
       db.run("UPDATE subtask_reports SET created_at = ? WHERE parent_task_id = ?", [past, parent.id]);
       db.run("UPDATE task_messages SET created_at = ? WHERE id = ?", [past, report!.id]);
+      // the clock is the parent's waiting on background work alone: a turn that ended just now holds it again
+      db.run("UPDATE turns SET ended_at = ? WHERE id = ?", [new Date().toISOString(), turn.id]);
+      expect(reportBefore(getTask(parent.id)!, { source_seq: Number.MAX_SAFE_INTEGER })).toBeNull();
+      db.run("UPDATE turns SET ended_at = ? WHERE id = ?", [past, turn.id]);
+      // a newer report does not restart it: the oldest waiting one counts
+      recordPrEvent(child.id, "closed:3:def", { kind: "closed", pr: 3, head: "def" });
       expect(reportBefore(getTask(parent.id)!, { source_seq: Number.MAX_SAFE_INTEGER })).toBe(report!.id);
       delivery.deliver(parent.id);
       await until(() => settled(parent.id) && turnsFor(parent.id).length === 2, "the report turn");
       expect(turnsFor(parent.id)[1]).toMatchObject({ source_message_id: report!.id, origin: "report" });
-      expect(rows(parent.id).map((row) => row.state)).toEqual(["delivered"]);
+      expect(rows(parent.id).map((row) => row.state)).toEqual(["delivered", "pending"]);
     } finally {
       db.run("UPDATE turn_process_groups SET state = 'none' WHERE turn_id = ?", [turn.id]);
     }
