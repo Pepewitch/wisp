@@ -18,17 +18,20 @@ import { kickTrashSweep, moveToTrash } from "./worktree-trash";
  * locked. Above all it must never be a main checkout.
  */
 async function assertRemovableWorktree(repo: string, worktree: string): Promise<void> {
-  const own = await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel"], worktree);
-  const theirs = await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], repo);
+  // No --path-format=absolute (git 2.31+): a relative answer is relative to
+  // the directory git ran in, so it is resolved against that instead.
+  const own = await git(["rev-parse", "--git-dir", "--git-common-dir", "--show-toplevel"], worktree);
+  const theirs = await git(["rev-parse", "--git-common-dir"], repo);
   must(own, `could not read the worktree at ${worktree}`);
   must(theirs, `could not read the repository at ${repo}`);
-  const [gitDir, commonDir, top] = own.out.trim().split("\n").map(line => line.trim());
-  if (!gitDir || !commonDir || !top) throw new Error(`could not read the worktree at ${worktree}`);
+  const lines = own.out.trim().split("\n").map(line => line.trim());
+  if (lines.length !== 3 || lines.some(line => line === "")) throw new Error(`could not read the worktree at ${worktree}`);
+  const [gitDir, commonDir, top] = lines.map(line => resolve(worktree, line)) as [string, string, string];
   const real = await realpath(worktree);
   if ((await realpath(gitDir)) === (await realpath(commonDir))) {
     throw new Error(`${worktree} is a repository's main checkout, not a task worktree; Wisp never removes it`);
   }
-  if ((await realpath(commonDir)) !== (await realpath(theirs.out.trim()))) {
+  if ((await realpath(commonDir)) !== (await realpath(resolve(repo, theirs.out.trim())))) {
     throw new Error(`${worktree} is a worktree of a different repository than ${repo}`);
   }
   if ((await realpath(top)) !== real) throw new Error(`${worktree} is inside a worktree, not its top level (${top})`);

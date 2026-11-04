@@ -57,18 +57,35 @@ export function sweepTrash(): Promise<void> {
     again = true;
     return sweeping;
   }
-  sweeping = (async () => {
+  sweeping = sweepUntilQuiet();
+  return sweeping;
+}
+
+/**
+ * The flag is cleared in the same continuation that last read `again`, not in
+ * a later `.finally`: in between, a new call would join a sweep that has
+ * already decided to stop, and its entry would wait for the next interval.
+ */
+async function sweepUntilQuiet(): Promise<void> {
+  try {
     do {
       again = false;
       await sweepOnce();
     } while (again);
-  })().finally(() => { sweeping = null; });
-  return sweeping;
+  } finally {
+    sweeping = null;
+  }
 }
 
 async function sweepOnce(): Promise<void> {
   let names: string[];
   try {
+    // A trash that is a symlink is not one Wisp made; never delete through it.
+    if (!(await lstat(TRASH_ROOT)).isDirectory()) {
+      if (!reported.has(TRASH_ROOT)) console.error(`[wisp] ${TRASH_ROOT} is not a directory; not deleting anything in it`);
+      reported.add(TRASH_ROOT);
+      return;
+    }
     names = await readdir(TRASH_ROOT);
   } catch {
     return; // no trash yet
@@ -89,11 +106,12 @@ async function sweepOnce(): Promise<void> {
 async function purge(path: string): Promise<void> {
   try {
     await rm(path, { recursive: true, force: true });
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EACCES" && code !== "EPERM") throw error;
+  } catch {
     // A read-only directory (Go's module cache makes them) refuses to let its
-    // entries be unlinked. The tree is already ours to delete.
+    // entries be unlinked. The error code is not a reliable signal: Bun
+    // reports ENOTEMPTY for a read-only directory holding files, and EACCES
+    // only when its parent is read-only too. So any failure makes the tree
+    // writable and tries once more; the tree is already ours to delete.
     await makeWritable(path);
     await rm(path, { recursive: true, force: true });
   }

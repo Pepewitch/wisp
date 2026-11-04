@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { WispConfig } from "../src/config";
@@ -115,13 +115,46 @@ describe("removing a worktree through the trash", () => {
     expect(trashed(wt.path)).toEqual([]);
   });
 
-  test("read-only directories in the trash are deleted too", async () => {
-    const entry = join(TRASH_ROOT, `readonly-${Date.now()}`);
-    mkdirSync(join(entry, "pkg", "mod"), { recursive: true });
-    writeFileSync(join(entry, "pkg", "mod", "go.mod"), "module x\n");
-    chmodSync(join(entry, "pkg", "mod"), 0o555);
-    chmodSync(join(entry, "pkg"), 0o555);
+  test("read-only directories in the trash are deleted too, in either layout", async () => {
+    // a read-only directory holding files (Go's module cache), and a read-only
+    // parent over a read-only child: Bun fails these with different codes
+    const flat = join(TRASH_ROOT, `readonly-flat-${Date.now()}`);
+    mkdirSync(join(flat, "mod@v1"), { recursive: true });
+    writeFileSync(join(flat, "mod@v1", "go.mod"), "module x\n");
+    chmodSync(join(flat, "mod@v1"), 0o555);
+    const nested = join(TRASH_ROOT, `readonly-nested-${Date.now()}`);
+    mkdirSync(join(nested, "pkg", "mod"), { recursive: true });
+    writeFileSync(join(nested, "pkg", "mod", "go.mod"), "module x\n");
+    chmodSync(join(nested, "pkg", "mod"), 0o555);
+    chmodSync(join(nested, "pkg"), 0o555);
     await sweepTrash();
-    expect(existsSync(entry)).toBe(false);
+    expect(existsSync(flat)).toBe(false);
+    expect(existsSync(nested)).toBe(false);
+  });
+
+  test("a sweep asked for while one runs still sees the new entry", async () => {
+    const first = join(TRASH_ROOT, `concurrent-a-${Date.now()}`);
+    mkdirSync(first, { recursive: true });
+    const running = sweepTrash();
+    const second = join(TRASH_ROOT, `concurrent-b-${Date.now()}`);
+    mkdirSync(second, { recursive: true });
+    await Promise.all([running, sweepTrash()]);
+    expect(existsSync(first)).toBe(false);
+    expect(existsSync(second)).toBe(false);
+  });
+
+  test("a trash that is a symlink is never swept through", async () => {
+    const outside = fixtureDir("wisp-trash-target-");
+    writeFileSync(join(outside, "precious.txt"), "keep\n");
+    const aside = `${TRASH_ROOT}-aside-${Date.now()}`;
+    if (existsSync(TRASH_ROOT)) renameSync(TRASH_ROOT, aside);
+    try {
+      symlinkSync(outside, TRASH_ROOT);
+      await sweepTrash();
+      expect(readFileSync(join(outside, "precious.txt"), "utf8")).toBe("keep\n");
+    } finally {
+      unlinkSync(TRASH_ROOT);
+      if (existsSync(aside)) renameSync(aside, TRASH_ROOT);
+    }
   });
 });
