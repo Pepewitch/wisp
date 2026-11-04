@@ -5,6 +5,7 @@
  * subtask-reports.ts, which may import only the database handle.
  */
 import { randomBytes } from "node:crypto";
+import { emit } from "./events";
 import { createTaskMessage, db } from "./store";
 import { reportFraming } from "./subtask-reports";
 import { backgroundHoldsReport } from "./autopilot/idle";
@@ -95,7 +96,13 @@ function reportText(framed: { lines: string[]; words: string }): string {
  * report the child has moved past is marked superseded then), so the text
  * stored at queue time could otherwise show words the parent never got.
  */
-export function refreshReportText(messageId: string, framed: { lines: string[]; words: string }): void {
-  db.run("UPDATE task_messages SET text = ?, updated_at = ? WHERE id = ? AND origin = 'subtask'",
-    [reportText(framed), new Date().toISOString(), messageId]);
+export function refreshReportText(messageId: string, framed: { lines: string[]; words: string; found: boolean }): void {
+  // with its rows gone, the text stored at queue time is the only record of what the children said
+  if (!framed.found) return;
+  const row = db.query("SELECT task_id, text FROM task_messages WHERE id = ? AND origin = 'subtask'").get(messageId) as { task_id: string; text: string } | null;
+  const text = reportText(framed);
+  if (!row || row.text === text) return;
+  db.run("UPDATE task_messages SET text = ?, updated_at = ? WHERE id = ?", [text, new Date().toISOString(), messageId]);
+  // an open transcript shows the new text, as for any other change to a message
+  emit({ type: "message", taskId: row.task_id, messageId });
 }

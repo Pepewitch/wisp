@@ -8,7 +8,8 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { LOG_DIR } from "../src/config";
 import { createTask, createTurn, db, freeSlot, newTaskId, settleTurn } from "../src/store";
-import { queueReports, REPORT_BATCH_MAX_CHARS, REPORT_BATCH_MAX_REPORTS } from "../src/subtask-report-queue";
+import { subscribe } from "../src/events";
+import { queueReports, refreshReportText, REPORT_BATCH_MAX_CHARS, REPORT_BATCH_MAX_REPORTS } from "../src/subtask-report-queue";
 import { reportFraming } from "../src/subtask-reports";
 
 function task(parent?: string): string {
@@ -111,5 +112,31 @@ describe("a turn report the child has moved past", () => {
     const asked = reportFraming(queueReports({ id: other })!);
     expect(asked.lines[1]).toContain("finished turn 1: needs input, since superseded by its turn 2. Its words are fenced below");
     expect(asked.words).toContain("which database?");
+  });
+
+  test("the transcript text is rewritten when a message starts, and an open transcript hears of it; gone rows leave it alone", () => {
+    const parent = task(), child = task(parent);
+    report(child, parent, { kind: "turn", turn: 1, outcome: "done" }, "the old state");
+    turn(child, 1);
+    const id = queueReports({ id: parent })!;
+    turn(child, 2);
+    const heard: string[] = [];
+    const stop = subscribe((event) => { if (event.type === "message") heard.push(event.messageId); });
+    try {
+      refreshReportText(id, reportFraming(id));
+      const text = (db.query("SELECT text FROM task_messages WHERE id = ?").get(id) as { text: string }).text;
+      expect(text).toContain("since superseded by its turn 2");
+      expect(text).not.toContain("the old state");
+      expect(heard).toEqual([id]);
+      // unchanged: no second event
+      refreshReportText(id, reportFraming(id));
+      expect(heard).toEqual([id]);
+      // the rows gone: the stored text is the only record, and stays
+      db.run("DELETE FROM subtask_reports WHERE message_id = ?", [id]);
+      refreshReportText(id, reportFraming(id));
+      expect((db.query("SELECT text FROM task_messages WHERE id = ?").get(id) as { text: string }).text).toBe(text);
+    } finally {
+      stop();
+    }
   });
 });
