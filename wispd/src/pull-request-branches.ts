@@ -41,50 +41,61 @@ async function currentTaskBranch(
   return branch !== "" && !branch.includes("\n") ? branch : null;
 }
 
+/** At most this many names a task's work was pushed under: normally one, its own push. */
+export const PUSHED_NAME_LIMIT = 2;
+
 /**
  * Branches on origin that hold this task's own work under another name: the
  * agent pushed with `git push origin HEAD:<name>` to follow a repository's
  * branch naming, so the pull request's head is `<name>` and no local branch
- * carries it. Read from the remote-tracking refs the push itself updated:
- * those whose tip is in the task branch's history but not in the commit it
- * forked from, nor in its base ref as it stands now (so the base branch, and
- * every branch that reached the task only by merging the base in, stay out).
- * Empty for a task with no recorded fork point (a local task), and whenever
- * git cannot answer.
+ * carries it. Read from the remote-tracking refs the push itself updated, and
+ * claimed only when the branch's tip is the task's own commit:
+ *
+ *  - on the task branch's first-parent chain since the commit it forked from,
+ *    so a branch that came in by a merge (the base, a colleague's branch, a
+ *    sibling task's) is not the task's;
+ *  - and held by no other task's local `wisp/` branch, so a task that
+ *    fast-forwarded onto a sibling's work does not claim the sibling's push.
+ *
+ * Newest first, at most PUSHED_NAME_LIMIT. Empty for a task with no recorded
+ * fork point (a local task), and whenever git cannot answer. A forge that
+ * deletes the head after a merge, followed by a pruning fetch, removes the
+ * ref, and the merged PR is no longer found this way.
  */
 async function pushedUnderOtherNames(
   task: Task,
   run: ProbeSpawnFn,
   signal: AbortSignal,
 ): Promise<string[]> {
-  if (!task.branch || !task.base_commit) return [];
-  const query = (bases: string[]) =>
+  const branch = task.branch, base = task.base_commit;
+  if (!branch || !base) return [];
+  const git = (args: string[]) =>
     Promise.resolve()
-      .then(() =>
-        run(
-          [
-            "git",
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--format=%(refname:short)",
-            `--merged=refs/heads/${task.branch}`,
-            ...bases.map((base) => `--no-merged=${base}`),
-            "refs/remotes/origin/",
-          ],
-          { cwd: task.repo_path, signal },
-        ),
-      )
+      .then(() => run(["git", ...args], { cwd: task.repo_path, signal }))
+      .then((result) => (result.exitCode === 0 ? result.stdout : null))
       .catch(() => null);
-  // a base ref that no longer resolves fails the whole query: ask again without it
-  let result = task.base_ref ? await query([task.base_commit, task.base_ref]) : null;
-  if (!result || result.exitCode !== 0) result = await query([task.base_commit]);
-  if (!result || result.exitCode !== 0) return [];
-  return result.stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith("origin/") && line !== "origin/HEAD")
-    .map((line) => line.slice("origin/".length))
-    .filter((name) => name !== "" && !name.includes(" "));
+  const listed = await git([
+    "for-each-ref", "--sort=-committerdate", "--format=%(objectname) %(refname:lstrip=3)",
+    `--merged=refs/heads/${branch}`, `--no-merged=${base}`, "refs/remotes/origin/",
+  ]);
+  const candidates = (listed ?? "").split("\n")
+    .map((line) => line.trim().split(" "))
+    .filter((parts): parts is [string, string] => parts.length === 2 && parts[1] !== "HEAD" && parts[1] !== "");
+  if (candidates.length === 0) return [];
+  const chain = await git(["rev-list", "--first-parent", `^${base}`, `refs/heads/${branch}`]);
+  if (chain === null) return [];
+  const own = new Set(chain.split("\n").map((line) => line.trim()).filter(Boolean));
+  const names: string[] = [];
+  for (const [tip, name] of candidates) {
+    if (names.length >= PUSHED_NAME_LIMIT) break;
+    if (!own.has(tip)) continue;
+    const holders = await git(["for-each-ref", "--format=%(refname:short)", `--contains=${tip}`, "refs/heads/wisp/"]);
+    if (holders === null) continue;
+    const sibling = holders.split("\n").map((line) => line.trim())
+      .some((holder) => holder !== "" && holder !== branch && !holder.startsWith(`wisp/${task.id}-`));
+    if (!sibling) names.push(name);
+  }
+  return names;
 }
 
 /**
@@ -113,8 +124,17 @@ export async function taskBranches(
   run: ProbeSpawnFn,
   signal: AbortSignal,
 ): Promise<string[]> {
+  return (await taskBranchDetail(task, run, signal)).branches;
+}
+
+/** taskBranches, with the names its work was pushed under apart: autopilot prefers a PR from those (bind.ts). */
+export async function taskBranchDetail(
+  task: Task,
+  run: ProbeSpawnFn,
+  signal: AbortSignal,
+): Promise<{ branches: string[]; pushed: string[] }> {
   const stored = task.branch;
-  if (!stored) return [];
+  if (!stored) return { branches: [], pushed: [] };
   const [found, checkedOut, pushed] = await Promise.all([
     Promise.resolve()
       .then(() =>
@@ -138,7 +158,7 @@ export async function taskBranches(
   const leading = [stored, ...(checkedOut && checkedOut !== stored ? [checkedOut] : [])];
   const others = pushed.filter((name) => !leading.includes(name));
   if (!found || found.exitCode !== 0) {
-    return [...leading, ...others].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT);
+    return { branches: [...leading, ...others].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT), pushed: others };
   }
   // Only names git could have matched: the prefix is re-checked here so a
   // surprising stdout can never become a head in a provider query.
@@ -148,7 +168,7 @@ export async function taskBranches(
     .map((line) => line.trim())
     // git's order is kept, not re-sorted: it is the recency the cap spends
     .filter((line) => line.startsWith(prefix) && !leading.includes(line) && !others.includes(line));
-  return [...leading, ...others, ...names].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT);
+  return { branches: [...leading, ...others, ...names].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT), pushed: others };
 }
 
 /**

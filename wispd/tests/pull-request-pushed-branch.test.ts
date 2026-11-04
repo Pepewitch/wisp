@@ -9,6 +9,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProbeSpawnFn } from "../src/adapters";
+import { choosePull } from "../src/autopilot/bind";
+import type { OpenPullRequest } from "../src/autopilot/github";
 import { taskBranches } from "../src/pull-request-branches";
 import type { Task } from "../src/types";
 
@@ -74,9 +76,55 @@ describe("a task's branch pushed under another name", () => {
     git(repo, "checkout", "-q", "wisp/tpb01-keen-stork");
     git(repo, "merge", "-q", "--no-edit", "origin/main");
     expect(await branches(task(repo, base))).toEqual(["wisp/tpb01-keen-stork", "fix/super-2"]);
-    // a base ref that no longer resolves: the fork point alone still answers
-    expect(await branches(task(repo, base, { base_ref: "origin/gone" }))).toContain("fix/super-2");
+    // the base ref is not consulted: one that no longer resolves changes nothing
+    expect(await branches(task(repo, base, { base_ref: "origin/gone" }))).toEqual(["wisp/tpb01-keen-stork", "fix/super-2"]);
     // a local task records no fork point: nothing on origin is claimed
     expect(await branches(task(repo, base, { base_commit: null }))).toEqual(["wisp/tpb01-keen-stork"]);
+  });
+
+  test("never claims a sibling task's or a colleague's branch the task merged in", async () => {
+    const { repo, base } = world();
+    // sibling task A, on its own local branch, pushed under another name
+    git(repo, "checkout", "-q", "-b", "wisp/taaaa-a", base);
+    commit(repo, "A's change");
+    git(repo, "push", "-q", "origin", "HEAD:fix/a");
+    // a colleague's branch, on origin only
+    git(repo, "checkout", "-q", "-b", "colleague", base);
+    commit(repo, "a colleague's change");
+    git(repo, "push", "-q", "origin", "HEAD:feat/colleague");
+    git(repo, "checkout", "-q", "wisp/tpb01-keen-stork");
+    git(repo, "branch", "-q", "-D", "colleague");
+    // B fast-forwards onto A's work, merges the colleague's, then makes and pushes its own change
+    git(repo, "merge", "-q", "--ff-only", "origin/fix/a");
+    git(repo, "merge", "-q", "--no-edit", "origin/feat/colleague");
+    commit(repo, "B's change");
+    git(repo, "push", "-q", "origin", "HEAD:fix/b");
+    expect(await branches(task(repo, base))).toEqual(["wisp/tpb01-keen-stork", "fix/b"]);
+  });
+
+  test("names at most two pushes, newest first", async () => {
+    const { repo, base } = world();
+    for (const [at, name] of [[1, "fix/one"], [2, "fix/two"], [3, "fix/three"]] as const) {
+      // committer dates order them, a minute apart
+      const result = Bun.spawnSync(["git", "-c", "user.name=Wisp Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-q", "-m", name], {
+        cwd: repo, env: { ...process.env, GIT_COMMITTER_DATE: `2026-11-04T00:0${at}:00Z` },
+      });
+      expect(result.exitCode).toBe(0);
+      git(repo, "push", "-q", "origin", `HEAD:${name}`);
+    }
+    expect(await branches(task(repo, base))).toEqual(["wisp/tpb01-keen-stork", "fix/three", "fix/two"]);
+  });
+});
+
+describe("autopilot's choice among the task's PRs", () => {
+  test("prefers the task's own pushed name over an older PR of the same author", () => {
+    const created = "2026-11-04T00:00:00Z";
+    const pull = (number: number, head: string, at: string) =>
+      ({ number, headRefName: head, baseRefName: "main", author: "owner", createdAt: at, isCrossRepository: false }) as OpenPullRequest;
+    const sibling = pull(10, "fix/a", "2026-11-04T01:00:00Z"), own = pull(11, "fix/b", "2026-11-04T02:00:00Z");
+    const t = { id: "tpb01", branch: "wisp/tpb01-keen-stork", created_at: created } as Task;
+    expect(choosePull([sibling, own], t, "owner", new Set(["main"]), 0, ["fix/b"])?.number).toBe(11);
+    // without the pushed name, the oldest onto the base, as before
+    expect(choosePull([sibling, own], t, "owner", new Set(["main"]))?.number).toBe(10);
   });
 });

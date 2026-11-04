@@ -148,7 +148,7 @@ describe("PullRequestCache", () => {
       "git",
       "for-each-ref",
       "--sort=-committerdate",
-      "--format=%(refname:short)",
+      "--format=%(objectname) %(refname:lstrip=3)",
       "--merged=refs/heads/wisp/tpr01-show-pr-status",
       "--no-merged=abc123",
       "refs/remotes/origin/",
