@@ -300,10 +300,17 @@ minutes after the later of the oldest waiting report and the parent's last
 turn end, and never more than about 10 minutes after that report (the next
 30-second pass then starts it): a parent that always keeps something running,
 such as a background `wisp wait` for its subtasks, still gets its reports, the
-way it gets the person's messages. It never interrupts or steers
-the parent and never fails it. Reports that arrive within about 3 seconds
-become one message (origin `subtask`, sender `system`), started by id once the
-parent is free. A message carries at most 10 reports and about 12,000
+way it gets the person's messages. It never interrupts the parent and never
+fails it, but a report that has waited about 5 minutes behind a turn that is
+still running (counted from the later of its queueing and that turn's start)
+is steered into that turn, as a person's message would be, when the parent's
+harness takes live input (Claude, Droid, Codex); a turn that never ends would
+otherwise keep its reports waiting without bound. A report whose earlier steer
+may have reached the harness is never sent again by itself. A steered report
+is framed from its rows like any other, and migration 32 marks its rows
+delivered as a report that starts a turn does. Reports that arrive within
+about 3 seconds become one message (origin `subtask`, sender `system`),
+started by id once the parent is free. A message carries at most 10 reports and about 12,000
 characters of the children's words; the rest wait, in order, for the next.
 When it starts, a turn report whose child has finished a newer turn since
 (done or failed, not a background follow-up) is marked superseded, and its

@@ -1,16 +1,17 @@
 // Delivering subtask reports to their parent: one message for what arrived
 // together, started only when the parent is free, never failing it, framed
 // so a child's words cannot pass for Wisp's or the person's.
-import { mkdtempSync, realpathSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { createAndLaunchTask, type NewTaskInput } from "../src/domain/task-create";
-import { hasRunningTurn, submitTaskMessage } from "../src/runner";
+import { hasRunningTurn, startTurn, submitTaskMessage } from "../src/runner";
 import { cancelQueuedTaskMessage, createTaskMessage, db, getTask, listTasksWithLatestTurn, setTaskFields, transition, turnsFor } from "../src/store";
 import { SubtaskDelivery } from "../src/subtask-delivery";
+import { setAutopilot } from "../src/autopilot/store";
 import { recordPrEvent, reportFraming } from "../src/subtask-reports";
 import { reportBefore } from "../src/subtask-report-queue";
 import type { Task, TaskMessage } from "../src/types";
@@ -226,6 +227,62 @@ describe("delivering subtask reports", () => {
     await until(() => settled(parent.id) && turnsFor(parent.id).length === 3, "the second batch's turn");
     expect(reportMessages(parent.id)).toHaveLength(2);
     expect(rows(parent.id).every((row) => row.state === "delivered")).toBe(true);
+  }, 20_000);
+
+  test("a report queued five minutes behind a turn still running steers into it", async () => {
+    const adapters = { quick };
+    const parent = await make({ repoPath: await repo() }, adapters);
+    await make({ subtask: { parentId: parent.id, report: true } }, adapters);
+    // the parent's long turn: a live harness that takes one steer, then answers
+    const steerable: AdapterDef = {
+      bin: "bash",
+      exec: ["-c", ["IFS= read -r first", "IFS= read -r second", `printf '{"type":"input","value":%s}\\n' "$second"`,
+        `printf '%s\\n' '{"type":"result","result":"read the reports","session_id":"s-steer"}'`].join("; ")],
+      liveInput: "claude-stream-json",
+      parse: { format: "json", resultType: "result", result: "result", session: "session_id" },
+      attach: null,
+    };
+    startTurn(getTask(parent.id)!, "orchestrate", steerable, cfg());
+    await until(() => hasRunningTurn(parent.id) !== null && getTask(parent.id)!.state === "running", "the parent's turn");
+    const delivery = new SubtaskDelivery(cfg(), adapters, 0);
+    delivery.deliver(parent.id);
+    // fresh: it waits, queued for the next turn
+    const [report] = reportMessages(parent.id);
+    expect(report).toMatchObject({ status: "queued" });
+    delivery.deliver(parent.id);
+    await Bun.sleep(100);
+    expect(reportMessages(parent.id)[0]).toMatchObject({ status: "queued" });
+    // five minutes on, the turn still running: it goes into that turn, counted from the later of queueing and the turn's start
+    const past = new Date(Date.now() - 5 * 60_000 - 1_000).toISOString();
+    db.run("UPDATE task_messages SET created_at = ? WHERE id = ?", [past, report!.id]);
+    delivery.deliver(parent.id);
+    await Bun.sleep(100);
+    expect(reportMessages(parent.id)[0]).toMatchObject({ status: "queued" });
+    db.run("UPDATE turns SET started_at = ? WHERE task_id = ? AND status = 'running'", [past, parent.id]);
+    // not past a Stop hold, nor after a steer that may have reached the harness
+    setAutopilot(parent.id, { autoFix: true });
+    db.run("UPDATE workflows SET checkpoint_json = json_set(checkpoint_json, '$.stopHold', json('{\"turnCount\":1}')) WHERE task_id = ?", [parent.id]);
+    delivery.deliver(parent.id);
+    await Bun.sleep(100);
+    expect(reportMessages(parent.id)[0]).toMatchObject({ status: "queued" });
+    db.run("UPDATE workflows SET checkpoint_json = json_remove(checkpoint_json, '$.stopHold') WHERE task_id = ?", [parent.id]);
+    db.run("UPDATE task_messages SET delivery_uncertain = 1 WHERE id = ?", [report!.id]);
+    delivery.deliver(parent.id);
+    await Bun.sleep(100);
+    expect(reportMessages(parent.id)[0]).toMatchObject({ status: "queued" });
+    db.run("UPDATE task_messages SET delivery_uncertain = 0 WHERE id = ?", [report!.id]);
+    delivery.deliver(parent.id);
+    await until(() => reportMessages(parent.id)[0]!.status === "delivered", "the report steered");
+    expect(db.query("SELECT delivery, turn_n FROM task_messages WHERE id = ?").get(report!.id)).toEqual({ delivery: "steered", turn_n: 2 });
+    expect(rows(parent.id).map((row) => row.state)).toEqual(["delivered"]);
+    await until(() => settled(parent.id), "the parent's turn to finish");
+    expect(turnsFor(parent.id)).toHaveLength(2);
+    // framed from its rows, as a report turn is: Wisp's section and the child's fenced words
+    const admitted = readFileSync(turnsFor(parent.id)[1]!.log_file, "utf8").split("\n").filter((line) => line.startsWith("{"))
+      .map((line) => JSON.parse(line)).find((line) => line.type === "input");
+    const text = admitted.value.message.content.at(-1).text as string;
+    expect(text).toContain("1 report from your subtasks.");
+    expect(text).toContain(`<<<report-${report!.id}>>>`);
   }, 20_000);
 
   test("a report queued before a crash is started by id, never queued twice", async () => {
