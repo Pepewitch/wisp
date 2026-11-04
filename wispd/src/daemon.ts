@@ -29,7 +29,7 @@ import { failStaleCreatingTasks, recoverOrphanedTurns, startStuckLoop } from "./
 import { startSubtaskQueueLoop } from "./subtask-queue";
 import { SubtaskDelivery } from "./subtask-delivery";
 import { settleStrandedTasks } from "./turn-finalize";
-import { startArchiveCleanupLoop } from "./archive-worker";
+import { archiveCleanupServices } from "./archive-worker";
 import { startTurnTextBackfillLoop } from "./turn-text-backfill";
 import { startTurnLogRetentionLoop } from "./turn-log-retention";
 import { stopSearch } from "./search-runner";
@@ -744,7 +744,7 @@ async function serveOwned(
   services.push(
     intervalService("outbox", startOutboxLoop(cfg)),
     intervalService("stuck turns", startStuckLoop(cfg)),
-    intervalService("archive cleanup", startArchiveCleanupLoop()),
+    ...archiveCleanupServices(),
     intervalService("attachment uploads", startAttachmentUploadCleanupLoop()),
     intervalService("subtask queues", startSubtaskQueueLoop(adapters, cfg)),
   );

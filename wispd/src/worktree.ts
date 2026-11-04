@@ -1,5 +1,5 @@
 import { closeSync, openSync } from "node:fs";
-import { copyFile, mkdir, open, rm } from "node:fs/promises";
+import { copyFile, mkdir, open } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { branchFor } from "./branch-name";
 import { wispCommand } from "./command";
@@ -32,7 +32,7 @@ interface GitResult {
  * lockfile diff cost tens of megabytes to serve a 512 KiB response. The
  * budget is enforced while reading now; see subprocess.ts.
  */
-async function git(args: string[], cwd: string, options: GitRunOptions = {}): Promise<GitResult> {
+export async function git(args: string[], cwd: string, options: GitRunOptions = {}): Promise<GitResult> {
   const result = await runBounded({
     cmd: ["git", ...args],
     cwd,
@@ -93,7 +93,7 @@ function gitErrLine(r: GitResult): string {
   return line.length > GIT_ERR_CAP ? `${line.slice(0, GIT_ERR_CAP)}…` : line;
 }
 
-function must(r: GitResult, what: string): string {
+export function must(r: GitResult, what: string): string {
   if (!r.ok) {
     const line = gitErrLine(r);
     throw new Error(line === "" ? what : `${what}: ${line}`);
@@ -1010,33 +1010,3 @@ export async function commitDirtyWork(worktree: string, branch: string): Promise
   );
 }
 
-/**
- * Remove the worktree after archive preflight. The archive worker checkpoints
- * scripts separately before calling this filesystem/Git step. Removal can take
- * seconds or fail after preflight; a throw is a background failure the caller must surface
- * (state_detail), never swallow.
- *
- * The branch is always kept.
- */
-export async function removeWorktree(
-  repoPath: string,
-  worktree: string,
-  branch: string,
-  force: boolean,
-  steps: { save?: boolean } = {},
-): Promise<void> {
-  const repo = resolve(repoPath);
-  const health = await worktreeHealth(worktree);
-  if (!health.ok) {
-    // The recovery (D1 part 2): a worktree git has forgotten used to 409
-    // forever, because `git worktree remove` on a path git does not know fails.
-    // Prune the stale admin entry and let the row clear. The bytes are the
-    // deviation documented in archivePreflight — force takes them, plain
-    // archive leaves them.
-    await git(["worktree", "prune"], repo, { timeoutMs: WRITE_TIMEOUT_MS });
-    if (force) await rm(worktree, { recursive: true, force: true });
-    return;
-  }
-  if (steps.save !== false) await commitDirtyWork(worktree, branch);
-  must(await git(["worktree", "remove", "--force", worktree], repo, { timeoutMs: WRITE_TIMEOUT_MS }), "git worktree remove failed");
-}

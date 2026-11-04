@@ -35,6 +35,7 @@ function fixture() {
   file("tasks/closed/attachment", "12345");
   file("diagnostics/turn-20-000001.jsonl", "123");
   file("worktrees/fixture-missing/dependency", "1234567");
+  file("worktrees/.trash/fixture-removed-1/blob", "123456789");
   symlinkSync(join(home, "worktrees"), join(home, "loop"));
   return { home, db, now };
 }
@@ -52,6 +53,10 @@ test("report reads committed WAL and changes no files, permissions, or timestamp
     expect(report.worktrees.filter(w => w.orphan).map(w => w.state).sort()).toEqual(["archived", "missing"]);
     expect(report.total).toBe(report.directories.reduce((n, e) => n + e.bytes, 0));
     expect(formatStorageReport(report)).toContain("Orphan worktrees: 2");
+    // a removed worktree waiting for the background delete is neither a worktree nor an orphan
+    expect(report.worktrees.map(w => w.name)).not.toContain(".trash");
+    expect(report.trash).toBe(9);
+    expect(formatStorageReport(report)).toContain("removed worktrees still being deleted (worktrees/.trash)");
     const child = Bun.spawn([process.execPath, join(import.meta.dir, "../src/index.ts"), "doctor", "--storage"], {
       env: { ...process.env, WISP_HOME: home }, stdout: "pipe", stderr: "pipe",
     });
