@@ -255,6 +255,11 @@ function HarnessSection({
           {entry.limits.account === "unchecked" && (
             <p className="mt-1.5 text-[11px] text-faint">Not checked against droid&apos;s login.</p>
           )}
+          {entry.refreshError && (
+            <p className="mt-1.5 text-[11px] leading-normal text-faint">
+              Read {fromNow(entry.fetchedAt, now)}; the refresh failed: {entry.refreshError}
+            </p>
+          )}
         </>
       ) : (
         <HarnessNote entry={entry} onOpenSettings={onOpenSettings} />

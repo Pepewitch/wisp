@@ -184,6 +184,9 @@ describe("claude /usage", () => {
       "--no-session-persistence",
       "--setting-sources",
       "user",
+      "--strict-mcp-config",
+      "--settings",
+      '{"disableAllHooks":true}',
     ]);
     expect(calls[0]!.opts).toMatchObject({ cwd: "/tmp/scratch", env: { TZ: "UTC" } });
   });
@@ -278,6 +281,7 @@ describe("claude get_usage", () => {
     expect(rpc.opened[0]!.cmd).toEqual([
       claude.bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
       "--no-session-persistence", "--setting-sources", "user",
+      "--strict-mcp-config", "--settings", '{"disableAllHooks":true}',
     ]);
     expect(rpc.opened[0]!.opts).toMatchObject({ cwd: "/tmp/scratch", envelope: "claude-control" });
     expect(rpc.calls).toEqual([{ method: "initialize", params: {} }, { method: "get_usage", params: { skip_behaviors: true } }]);
@@ -552,15 +556,101 @@ describe("HarnessLimitsCache", () => {
     expect(c.reads()).toBe(1);
     c.failNext(true);
     const failed = await cache.read({}, { claude }, { refresh: true });
-    expect(failed[0]).toMatchObject({ status: "error", limits: null });
+    expect(failed[0]).toMatchObject({ status: "ok", refreshError: expect.stringContaining("no report") });
     const backedOff = await cache.read({}, { claude });
-    expect(backedOff[0]).toMatchObject({ status: "error", cached: true });
+    expect(backedOff[0]).toMatchObject({ status: "ok", cached: true, refreshError: expect.any(String) });
     expect(c.reads()).toBe(2);
     now += 100;
     c.failNext(false);
     const again = await cache.read({}, { claude });
     expect(again[0]).toMatchObject({ status: "ok", cached: false });
+    expect(again[0]!.refreshError).toBeUndefined();
     expect(c.reads()).toBe(3);
+  });
+
+  test("a failed refresh keeps the last good reading for an hour, then shows the failure alone", async () => {
+    const c = counting();
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({
+      spawnOnce: c.spawnOnce,
+      which: (bin) => bin,
+      env: {},
+      failureBackoffMs: 100,
+      failureBackoffMaxMs: 400,
+      failureBackoffHeadroomMs: 0,
+      staleMaxMs: 800,
+      now: () => new Date(now),
+    });
+    const good = (await cache.read({}, { claude }))[0]!;
+    c.failNext(true);
+    now += 500;
+    const stale = (await cache.read({}, { claude }, { refresh: true }))[0]!;
+    // the old numbers with their own time, so "Updated … ago" tells their age
+    expect(stale).toMatchObject({ status: "ok", limits: good.limits, fetchedAt: good.fetchedAt, cached: false });
+    expect(stale.refreshError).toContain("claude answered /usage with no report");
+    // the failures still back off: 100ms, then 200ms
+    now += 100;
+    await cache.read({}, { claude });
+    now += 199;
+    expect((await cache.read({}, { claude }))[0]!.cached).toBe(true);
+    expect(c.reads()).toBe(3);
+    now += 1; // 800ms after the good read
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "error", limits: null, cached: false });
+  });
+
+  test("a backed-off old reading is not served from the cache past its hour", async () => {
+    const c = counting();
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({
+      spawnOnce: c.spawnOnce,
+      which: (bin) => bin,
+      env: {},
+      failureBackoffMs: 10_000,
+      failureBackoffMaxMs: 10_000,
+      failureBackoffHeadroomMs: 0,
+      staleMaxMs: 800,
+      now: () => new Date(now),
+    });
+    await cache.read({}, { claude });
+    c.failNext(true);
+    now += 500;
+    expect((await cache.read({}, { claude }, { refresh: true }))[0]).toMatchObject({ status: "ok", refreshError: expect.any(String) });
+    now += 299;
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "ok", cached: true });
+    expect(c.reads()).toBe(2);
+    now += 1; // the hour is up, though the 10s backoff is not
+    expect((await cache.read({}, { claude }))[0]).toMatchObject({ status: "error", limits: null, cached: false });
+    expect(c.reads()).toBe(3);
+  });
+
+  test("an old reading stops standing in once one of its windows has reset", async () => {
+    const c = counting();
+    let now = NOW.getTime();
+    const cache = new HarnessLimitsCache({ spawnOnce: c.spawnOnce, which: (bin) => bin, env: {}, staleMaxMs: 24 * 3_600_000, now: () => new Date(now) });
+    await cache.read({}, { claude }); // its 5h window resets at 05:49, 3h49m on
+    c.failNext(true);
+    now += 3 * 3_600_000;
+    expect((await cache.read({}, { claude }, { refresh: true }))[0]).toMatchObject({ status: "ok", refreshError: expect.any(String) });
+    now += 49 * 60_000;
+    expect((await cache.read({}, { claude }, { refresh: true }))[0]).toMatchObject({ status: "error", limits: null });
+  });
+
+  test("an answer that is not a failure drops the old reading", async () => {
+    let installed = true;
+    let fail = false;
+    const cache = new HarnessLimitsCache({
+      spawnOnce: () => fail
+        ? { exitCode: 1, stdout: "", stderr: "boom" }
+        : { exitCode: 0, stdout: JSON.stringify({ result: CLAUDE_REPORT }), stderr: "" },
+      which: (bin) => (installed ? bin : null),
+      env: {},
+    });
+    await cache.read({}, { claude });
+    installed = false;
+    expect((await cache.read({}, { claude }, { refresh: true }))[0]).toMatchObject({ status: "unavailable" });
+    installed = true;
+    fail = true;
+    expect((await cache.read({}, { claude }, { refresh: true }))[0]).toMatchObject({ status: "error", limits: null });
   });
 
   test("consecutive failures double their automatic retry delay up to the cap", async () => {
@@ -699,7 +789,7 @@ describe("wisp limits output", () => {
     expect(resetsIn("2026-09-28T06:00:00Z", NOW)).toBe("resets in 3d 4h");
   });
 
-  test("one pool needs no heading, droid's two do, and a failure prints its reason", () => {
+  test("one pool needs no heading, droid's two do, a failure prints its reason, and an old reading says so", () => {
     const lines = limitsLines(
       {
         harnesses: [
@@ -708,8 +798,9 @@ describe("wisp limits output", () => {
             status: "ok",
             limits: parseClaudeUsage(CLAUDE_REPORT, NOW),
             message: null,
-            fetchedAt: NOW.toISOString(),
+            fetchedAt: new Date(NOW.getTime() - 12 * 60_000).toISOString(),
             cached: false,
+            refreshError: "the claude limits read timed out after 20s",
           },
           {
             name: "droid",
@@ -729,6 +820,7 @@ describe("wisp limits output", () => {
       "  5h         ███░░░░░░░  33% used  resets in 3h 49m",
       "  7d         █████░░░░░  51% used  resets in 5d 1h",
       "  Opus       ░░░░░░░░░░   0% used  resets in 5d 2h",
+      "  read 12m ago; the refresh failed: the claude limits read timed out after 20s",
       "droid",
       "  standard",
       "    5h         █░░░░░░░░░  13% used  resets in 2h 30m",

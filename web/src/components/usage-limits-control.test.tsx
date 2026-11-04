@@ -100,6 +100,17 @@ describe("the usage limits popover", () => {
     expect(screen.getByText(/^Updated /)).toBeInTheDocument()
   })
 
+  it("keeps the last numbers when a refresh failed, and says why", () => {
+    const stale = { ...CLAUDE, fetchedAt: new Date(Date.now() - 12 * 60_000).toISOString(), refreshError: "the claude limits read timed out after 20s" }
+    render(<UsageLimitsPopover entries={[stale]} harness="claude" onRefresh={() => {}} onOpenSettings={() => {}} defaultOpen />)
+    const claude = screen.getByRole("region", { name: "claude usage limits" })
+    expect(within(claude).getAllByRole("meter")).toHaveLength(2)
+    expect(
+      within(claude).getByText("Read 12 min ago; the refresh failed: the claude limits read timed out after 20s"),
+    ).toBeInTheDocument()
+    expect(within(claude).getByText(/refresh failed/)).not.toHaveClass("text-destructive")
+  })
+
   it("sends a harness that needs a key to Settings", () => {
     const onOpenSettings = vi.fn()
     render(

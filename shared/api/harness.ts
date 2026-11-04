@@ -45,6 +45,13 @@ export interface HarnessLimitsEntry {
   message: string | null;
   fetchedAt: string;
   cached: boolean;
+  /**
+   * Set when the latest read failed but an earlier one succeeded within the
+   * last hour: `limits` and `fetchedAt` are that earlier reading, `status` is
+   * "ok", and this says why it could not be refreshed. A slow read on a busy
+   * machine then leaves the numbers in place instead of replacing them.
+   */
+  refreshError?: string | null;
 }
 
 /** GET /api/harness-limits */

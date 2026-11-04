@@ -367,11 +367,30 @@ function checkAccount(whoami: unknown, login: { userId: string; orgId: string } 
   return "verified";
 }
 
+/**
+ * What every claude limits read starts with, so the session it opens loads
+ * as little as it can. `--no-session-persistence` keeps the read out of the
+ * user's session history. `--setting-sources user` keeps project and local
+ * settings (hooks, `apiKeyHelper`, `env`) out even if the private scratch cwd
+ * were ever to hold some. `--strict-mcp-config` with no `--mcp-config` starts
+ * no MCP server, and `disableAllHooks` runs none of the user's hooks: the read
+ * needs neither, and on a busy machine they took the read past its time limit
+ * (2.1.318 under heavy load: 17–25s with them, 7–18s without). A JSON string
+ * for `--settings` needs a claude from the 2.x line, which `get_usage` already
+ * does; on an older one both reads fail and say so.
+ */
+const CLAUDE_QUIET_ARGS = [
+  "--no-session-persistence",
+  "--setting-sources", "user",
+  "--strict-mcp-config",
+  "--settings", JSON.stringify({ disableAllHooks: true }),
+];
+
 /** claude's structured usage read: one control request on a session that never sees a prompt. */
 async function claudeControlUsage(def: AdapterDef, ctx: LimitsCtx, io: LimitsIo): Promise<HarnessLimits> {
   const rpc = io.openRpc(
     [def.bin, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-      "--no-session-persistence", "--setting-sources", "user"],
+      ...CLAUDE_QUIET_ARGS],
     { cwd: io.scratchDir, envelope: "claude-control", signal: ctx.signal },
   );
   try {
@@ -389,7 +408,7 @@ async function claudeControlUsage(def: AdapterDef, ctx: LimitsCtx, io: LimitsIo)
  */
 async function claudeReportUsage(def: AdapterDef, ctx: LimitsCtx, io: LimitsIo): Promise<HarnessLimits> {
   const res = await io.spawnOnce(
-    [def.bin, "-p", "/usage", "--output-format", "json", "--no-session-persistence", "--setting-sources", "user"],
+    [def.bin, "-p", "/usage", "--output-format", "json", ...CLAUDE_QUIET_ARGS],
     { cwd: io.scratchDir, env: { TZ: "UTC" }, signal: ctx.signal },
   );
   const line = res.stdout.split("\n").reverse().find((l) => l.trim().startsWith("{"));
@@ -418,10 +437,7 @@ export const LIMIT_STRATEGIES: Record<string, LimitsStrategy> = {
    * a busy machine and tripped the read's time limit; `skip_behaviors` is
    * claude's own switch for a usage meter that needs only the plan limits.
    * A claude too old for `get_usage` (an error answer, not a timeout) falls
-   * back to the `/usage` report. `--no-session-persistence` keeps the read
-   * out of the user's session history; `--setting-sources user` keeps project
-   * and local settings (hooks, `apiKeyHelper`, `env`) out of it even if the
-   * private scratch cwd were ever to hold some.
+   * back to the `/usage` report. Both start with CLAUDE_QUIET_ARGS.
    */
   "claude-usage": {
     async run(def, ctx, io) {
