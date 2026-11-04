@@ -16,10 +16,13 @@ export async function originRepository(task: Task, signal: AbortSignal): Promise
  * as, opened after the task was created, from this repository. A worktree can
  * check out anyone's branch (`gh pr checkout`), and adopting that PR would
  * merge someone else's work under the owner's name. Among those, the task's
- * own branch names first, then the oldest onto the base, so a stacked child
- * never jumps its parent.
+ * own branch names first (its branch, its `wisp/<id>-…` branches, and the
+ * names its work was pushed under, `pushed`), then the oldest onto the base,
+ * so a stacked child never jumps its parent.
  */
-export function choosePull(pulls: OpenPullRequest[], task: Task, viewer: string, allowedBases: ReadonlySet<string>, afterPr = 0): OpenPullRequest | null {
+export function choosePull(
+  pulls: OpenPullRequest[], task: Task, viewer: string, allowedBases: ReadonlySet<string>, afterPr = 0, pushed: readonly string[] = [],
+): OpenPullRequest | null {
   const created = Date.parse(task.created_at)
   // After a merge, only a PR numbered above the merged one: GitHub numbers in
   // creation order, so that is the task's next change or a PR stacked on the
@@ -28,8 +31,12 @@ export function choosePull(pulls: OpenPullRequest[], task: Task, viewer: string,
   const own = pulls
     .filter((pull) => !pull.isCrossRepository && viewer !== "" && pull.author === viewer && Date.parse(pull.createdAt) >= created && pull.number > afterPr)
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.number - b.number)
-  const named = (pull: OpenPullRequest) => pull.headRefName === task.branch || pull.headRefName.startsWith(`wisp/${task.id}-`)
-  return own.find((pull) => named(pull) && allowedBases.has(pull.baseRefName)) ??
+  // the task's own branch names first, then the names its work was pushed under
+  const ownName = (pull: OpenPullRequest) => pull.headRefName === task.branch || pull.headRefName.startsWith(`wisp/${task.id}-`)
+  const pushedName = (pull: OpenPullRequest) => pushed.includes(pull.headRefName)
+  const named = (pull: OpenPullRequest) => ownName(pull) || pushedName(pull)
+  return own.find((pull) => ownName(pull) && allowedBases.has(pull.baseRefName)) ??
+    own.find((pull) => pushedName(pull) && allowedBases.has(pull.baseRefName)) ??
     own.find((pull) => allowedBases.has(pull.baseRefName)) ?? own.find(named) ?? own[0] ?? null
 }
 

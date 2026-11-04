@@ -41,9 +41,84 @@ async function currentTaskBranch(
   return branch !== "" && !branch.includes("\n") ? branch : null;
 }
 
+/** At most this many names a task's work was pushed under: normally one, its own push. */
+export const PUSHED_NAME_LIMIT = 2;
+
+/**
+ * Whether the task branch made the tip a reflog entry moved it to: a commit
+ * made on it (`commit:`, `commit (amend):`, `commit (merge):`), a cherry-pick,
+ * a merge that made a commit, or a rebase (`rebase … (finish)`, and the one
+ * `pull --rebase` logs as `pull … (finish)`) that replayed something, its
+ * tip differing from the commit it went onto. A fast-forward (`merge …:
+ * Fast-forward`, `cherry-pick: fast-forward`), a reset, the branch's
+ * creation, or a rebase with nothing of the task's left to replay brought
+ * someone else's commit, never the task's own.
+ */
+function madeHere(tip: string, subject: string): boolean {
+  if (/: fast-forward$/i.test(subject)) return false;
+  if (/^(commit|cherry-pick)\b/.test(subject)) return true;
+  if (/^(merge|pull)\b[^:]*: Merge made by/.test(subject)) return true;
+  const rebase = /^(rebase|pull)\b[^:]*\(finish\): refs\/heads\/\S+ onto ([0-9a-f]{40,64})$/.exec(subject);
+  return rebase !== null && rebase[2] !== tip;
+}
+
+/**
+ * Branches on origin that hold this task's own work under another name: the
+ * agent pushed with `git push origin HEAD:<name>` to follow a repository's
+ * branch naming, so the pull request's head is `<name>` and no local branch
+ * carries it. Read from the remote-tracking refs the push itself updated,
+ * and claimed only on direct evidence the task made that tip: the task
+ * branch's reflog shows the branch reaching it by a commit made on it, a
+ * cherry-pick, a merge that made a commit, or a rebase that replayed
+ * something (madeHere). A branch the task fast-forwarded, reset or rebased
+ * onto with nothing of its own (a sibling task's push, a colleague's branch)
+ * is never claimed, whatever has happened to that branch since.
+ *
+ * Newest first, at most PUSHED_NAME_LIMIT. Empty for a task with no recorded
+ * fork point (a local task), when the reflog is missing or has expired, and
+ * whenever git cannot answer. A forge that deletes the head after a merge,
+ * followed by a pruning fetch, removes the ref, and the merged PR is no
+ * longer found this way.
+ */
+async function pushedUnderOtherNames(
+  task: Task,
+  run: ProbeSpawnFn,
+  signal: AbortSignal,
+): Promise<string[]> {
+  const branch = task.branch, base = task.base_commit;
+  if (!branch || !base) return [];
+  const git = (args: string[]) =>
+    Promise.resolve()
+      .then(() => run(["git", ...args], { cwd: task.repo_path, signal }))
+      .then((result) => (result.exitCode === 0 ? result.stdout : null))
+      .catch(() => null);
+  const listed = await git([
+    "for-each-ref", "--sort=-committerdate", "--format=%(objectname) %(refname:lstrip=3)",
+    `--merged=refs/heads/${branch}`, `--no-merged=${base}`, "refs/remotes/origin/",
+  ]);
+  const candidates = (listed ?? "").split("\n")
+    .map((line) => line.trim().split(" "))
+    .filter((parts): parts is [string, string] => parts.length === 2 && parts[1] !== "HEAD" && parts[1] !== "");
+  if (candidates.length === 0) return [];
+  const reflog = await git(["reflog", "show", "--format=%H %gs", `refs/heads/${branch}`]);
+  if (reflog === null) return [];
+  const made = new Set<string>();
+  for (const line of reflog.split("\n")) {
+    const at = line.indexOf(" ");
+    if (at > 0 && madeHere(line.slice(0, at), line.slice(at + 1).trim())) made.add(line.slice(0, at));
+  }
+  const names: string[] = [];
+  for (const [tip, name] of candidates) {
+    if (names.length >= PUSHED_NAME_LIMIT) break;
+    if (made.has(tip)) names.push(name);
+  }
+  return names;
+}
+
 /**
  * Every branch this task made, its branch of record first and current checkout
- * second, followed by its other task-named branches in recency order.
+ * second, then the names its work was pushed under on origin, followed by its
+ * other task-named branches in recency order.
  *
  * `wisp/<id>-…` is the convention every worktree branch is created under, so
  * the id in the name is the whole index — nothing to record at push time,
@@ -66,9 +141,18 @@ export async function taskBranches(
   run: ProbeSpawnFn,
   signal: AbortSignal,
 ): Promise<string[]> {
+  return (await taskBranchDetail(task, run, signal)).branches;
+}
+
+/** taskBranches, with the names its work was pushed under apart: autopilot prefers a PR from those (bind.ts). */
+export async function taskBranchDetail(
+  task: Task,
+  run: ProbeSpawnFn,
+  signal: AbortSignal,
+): Promise<{ branches: string[]; pushed: string[] }> {
   const stored = task.branch;
-  if (!stored) return [];
-  const [found, checkedOut] = await Promise.all([
+  if (!stored) return { branches: [], pushed: [] };
+  const [found, checkedOut, pushed] = await Promise.all([
     Promise.resolve()
       .then(() =>
         run(
@@ -86,9 +170,12 @@ export async function taskBranches(
       )
       .catch(() => null),
     currentTaskBranch(task, run, signal),
+    pushedUnderOtherNames(task, run, signal),
   ]);
+  const leading = [stored, ...(checkedOut && checkedOut !== stored ? [checkedOut] : [])];
+  const others = pushed.filter((name) => !leading.includes(name));
   if (!found || found.exitCode !== 0) {
-    return checkedOut && checkedOut !== stored ? [stored, checkedOut] : [stored];
+    return { branches: [...leading, ...others].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT), pushed: others };
   }
   // Only names git could have matched: the prefix is re-checked here so a
   // surprising stdout can never become a head in a provider query.
@@ -97,12 +184,8 @@ export async function taskBranches(
     .split("\n")
     .map((line) => line.trim())
     // git's order is kept, not re-sorted: it is the recency the cap spends
-    .filter((line) => line.startsWith(prefix) && line !== stored && line !== checkedOut);
-  return [
-    stored,
-    ...(checkedOut && checkedOut !== stored ? [checkedOut] : []),
-    ...names,
-  ].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT);
+    .filter((line) => line.startsWith(prefix) && !leading.includes(line) && !others.includes(line));
+  return { branches: [...leading, ...others, ...names].slice(0, PULL_REQUEST_TASK_BRANCH_LIMIT), pushed: others };
 }
 
 /**

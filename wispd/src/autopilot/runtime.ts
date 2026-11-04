@@ -14,7 +14,7 @@ import { emit, subscribe } from "../events"
 import { resolve } from "node:path"
 import { backgroundPass, homeIsDraining } from "../home-lifetime"
 import { bunProbeSpawn } from "../probes"
-import { taskBranches } from "../pull-request-branches"
+import { taskBranchDetail } from "../pull-request-branches"
 import { startNextQueuedMessage } from "../runner"
 import { getTask, randomId } from "../store"
 import { hasTaskCapacity, type Workload } from "../task-admission"
@@ -646,10 +646,10 @@ export class AutopilotRuntime {
   private async bind(
     row: WorkflowRow, task: Task, repository: string, configured: string | undefined, checkpoint: AutopilotCheckpoint, signal: AbortSignal,
   ): Promise<{ number: number } | string> {
-    const branches = await (this.options.branches ?? ((t, s) => taskBranches(t, bunProbeSpawn, s)))(task, signal)
+    const { branches, pushed } = this.options.branches ? { branches: await this.options.branches(task, signal), pushed: [] } : await taskBranchDetail(task, bunProbeSpawn, signal)
     const { defaultBranch, viewer, pulls } = await this.github.openPullRequests(repository, branches, task.repo_path, signal)
     const mergedPr = checkpoint.lastMerged?.pr
-    const pick = choosePull(pulls, task, viewer, new Set([defaultBranch, configured].filter((b): b is string => Boolean(b))), mergedPr)
+    const pick = choosePull(pulls, task, viewer, new Set([defaultBranch, configured].filter((b): b is string => Boolean(b))), mergedPr, pushed)
     if (!pick) {
       const skipped = skippedPull(pulls, task, viewer, mergedPr)
       return skipped ? `Waiting for this task's own PR (${skipped})` : "Waiting for a PR"
