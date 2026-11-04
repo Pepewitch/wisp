@@ -174,10 +174,11 @@ const FOREIGN_END_GRACE_MS = 2_000;
 /**
  * End reasons Droid's agent loop can recover from: it reports the end, then
  * goes on to a real answer (#520, a rejected model request). The turn's own
- * end for one of these is provisional, like a foreign end: Droid's next end
- * replaces it, and it counts only once Droid stays idle for
- * ERROR_END_GRACE_MS, which leaves room for a retry's back-off. Any other
- * reason ends the turn at once.
+ * end for one of these is provisional: the turn's next own end replaces it,
+ * and it counts once ERROR_END_GRACE_MS passes with no new activity (a
+ * message, a tool result, a working-state change), whatever Droid says its
+ * state is, so a Droid that never reports idle still ends the turn. A foreign
+ * end never replaces it. Any other reason ends the turn at once.
  */
 const RECOVERABLE_END_REASONS = new Set(["model_request_rejected"]);
 const ERROR_END_GRACE_MS = 10_000;
@@ -235,6 +236,9 @@ export class DroidLiveDriver {
   /** An agent turn the open Wisp turn did not start ended: the end to use if nothing follows. */
   private foreignEnd: { usage: Record<string, number> | null; reason: string } | null = null;
   private foreignEndTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The turn's own end on a reason Droid can recover from (RECOVERABLE_END_REASONS), until it counts. */
+  private provisionalEnd: { usage: Record<string, number> | null; reason: string } | null = null;
+  private provisionalTimer: ReturnType<typeof setTimeout> | null = null;
   private turn: number;
   private effort: string | null = null;
   private workingValue = false;
@@ -523,11 +527,8 @@ export class DroidLiveDriver {
   }
 
   private handleNotification(notification: Record<string, any>, receivedAt: number): void {
-    // Droid still at work after a provisional end: its grace starts again from here
-    if (this.foreignEndTimer && (notification.type === "create_message" || notification.type === "tool_result")) {
-      this.clearForeignEnd(false);
-      if (!this.workingValue) this.armForeignEnd();
-    }
+    // Droid still at work after a provisional end: its wait starts again from here
+    if (this.provisionalEnd && ["create_message", "tool_result", "droid_working_state_changed"].includes(notification.type)) this.armProvisionalEnd();
     switch (notification.type) {
       case "create_message":
         this.handleMessage(record(notification.message));
@@ -548,13 +549,19 @@ export class DroidLiveDriver {
         // Someone else's agent turn (a completion, a steer the last turn left
         // queued) ran first; the one this turn started comes next. Should
         // Droid go quiet instead, `foreignEnd` ends the turn after all.
-        // The turn's own end on an error Droid recovers from is provisional too: Droid may go on,
-        // and its next end replaces this one (#520). Only staying idle makes it count.
-        const foreign = typeof notification.turnId === "string" && !this.owned.has(notification.turnId);
-        if (foreign || RECOVERABLE_END_REASONS.has(end.reason)) {
+        if (typeof notification.turnId === "string" && !this.owned.has(notification.turnId)) {
+          // the turn's own provisional end stands: another agent turn's end never replaces it
+          if (this.provisionalEnd) return;
           this.foreignEnd = end;
           // Droid may have reported idle before this end; then no idle follows.
           if (!this.workingValue) this.armForeignEnd();
+          return;
+        }
+        // The turn's own end on an error Droid recovers from: Droid may go on, and the turn's
+        // next own end replaces this one (#520).
+        if (RECOVERABLE_END_REASONS.has(end.reason)) {
+          this.provisionalEnd = end;
+          this.armProvisionalEnd();
           return;
         }
         this.endTurn(end);
@@ -580,10 +587,19 @@ export class DroidLiveDriver {
       this.foreignEndTimer = null;
       // Not while a questionnaire is open: Droid is waiting on the operator.
       if (this.foreignEnd && !this.workingValue && this.questions.size === 0) this.endTurn(this.foreignEnd);
-    }, RECOVERABLE_END_REASONS.has(this.foreignEnd?.reason ?? "")
-      ? this.options.errorEndGraceMs ?? ERROR_END_GRACE_MS
-      : this.options.foreignEndGraceMs ?? FOREIGN_END_GRACE_MS);
+    }, this.options.foreignEndGraceMs ?? FOREIGN_END_GRACE_MS);
     this.foreignEndTimer.unref?.();
+  }
+
+  /** (Re)start the provisional end's wait: it counts once this passes with no new activity. */
+  private armProvisionalEnd(): void {
+    if (this.provisionalTimer) clearTimeout(this.provisionalTimer);
+    this.provisionalTimer = setTimeout(() => {
+      this.provisionalTimer = null;
+      // Not while a questionnaire is open: Droid is waiting on the operator, and its answer is activity.
+      if (this.provisionalEnd && this.questions.size === 0) this.endTurn(this.provisionalEnd);
+    }, this.options.errorEndGraceMs ?? ERROR_END_GRACE_MS);
+    this.provisionalTimer.unref?.();
   }
 
   private endTurn(end: { usage: Record<string, number> | null; reason: string }): void {
@@ -598,7 +614,12 @@ export class DroidLiveDriver {
   private clearForeignEnd(all = true): void {
     if (this.foreignEndTimer) clearTimeout(this.foreignEndTimer);
     this.foreignEndTimer = null;
-    if (all) this.foreignEnd = null;
+    if (!all) return;
+    this.foreignEnd = null;
+    // the turn ended, reopened or started a new agent turn of its own (a steer): a provisional end is moot too
+    if (this.provisionalTimer) clearTimeout(this.provisionalTimer);
+    this.provisionalTimer = null;
+    this.provisionalEnd = null;
   }
 
   private emitToolResult(result: Record<string, any>, timestamp?: unknown): void {
