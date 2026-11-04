@@ -132,7 +132,10 @@ describe("removing a worktree through the trash", () => {
     expect(existsSync(nested)).toBe(false);
   });
 
-  test("a sweep asked for while one runs still sees the new entry", async () => {
+  // Concurrent calls share one sweep and it misses nothing. This does not pin
+  // the finishing-sweep window itself (the second entry exists before the
+  // first readdir); that ordering is argued in sweepUntilQuiet's comment.
+  test("concurrent sweeps share one pass and leave nothing behind", async () => {
     const first = join(TRASH_ROOT, `concurrent-a-${Date.now()}`);
     mkdirSync(first, { recursive: true });
     const running = sweepTrash();
@@ -152,6 +155,11 @@ describe("removing a worktree through the trash", () => {
       symlinkSync(outside, TRASH_ROOT);
       await sweepTrash();
       expect(readFileSync(join(outside, "precious.txt"), "utf8")).toBe("keep\n");
+      // nor is anything moved into it, where the sweeper would never reach it
+      const doomed = fixtureDir("wisp-trash-doomed-");
+      expect(await moveToTrash(doomed)).toBeNull();
+      expect(existsSync(doomed)).toBe(true);
+      expect(readdirSync(outside)).toEqual(["precious.txt"]);
     } finally {
       unlinkSync(TRASH_ROOT);
       if (existsSync(aside)) renameSync(aside, TRASH_ROOT);

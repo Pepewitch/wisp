@@ -29,10 +29,13 @@ const SWEEP_INTERVAL_MS = 60_000;
 
 /**
  * Move a directory into the trash. Returns where it went, or null when a rename
- * cannot do it atomically (another volume), so the caller deletes it the old way.
+ * cannot do it atomically (another volume), or the trash is not a directory
+ * Wisp made (a symlink the sweeper refuses to delete through), so the caller
+ * deletes it the old way.
  */
 export async function moveToTrash(path: string): Promise<string | null> {
   await mkdir(TRASH_ROOT, { recursive: true, mode: 0o700 });
+  if (!(await lstat(TRASH_ROOT)).isDirectory()) return null;
   const target = join(TRASH_ROOT, `${basename(path)}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
   try {
     await rename(path, target);
