@@ -42,3 +42,11 @@ export function parseReportText(text: string): ReportText {
   }
   return { facts, quotes }
 }
+
+/** Wisp's report heading, for a daemon that predates the message's `report` field. */
+const REPORT_HEADING = /^\d+ reports? from your subtasks\. Each child's own words sit between <<<report-/
+
+/** A queued delivery of subtask reports: said by the daemon, or by Wisp's own heading on an older one. */
+export function isReportMessage(message: { report?: true; text: string }): boolean {
+  return message.report === true || (message.report === undefined && REPORT_HEADING.test(message.text))
+}

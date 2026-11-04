@@ -355,6 +355,12 @@ export interface ApiTaskMessage {
   delivery_uncertain: boolean;
   /** Held for the next turn by the composer's queue toggle. */
   deferred: boolean;
+  /**
+   * Wisp's delivery of subtask reports, not the person's words: shown as
+   * Wisp's own report block, and only cancellable. Present only when true,
+   * and absent from daemons that predate it.
+   */
+  report?: true;
   attachments: TurnAttachment[];
   created_at: string;
   updated_at: string;

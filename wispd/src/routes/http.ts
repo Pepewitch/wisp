@@ -43,7 +43,7 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
     delivery_uncertain,
     deferred,
     fast,
-    origin: _origin,
+    origin,
     source_json: _source,
     source_seq: _sourceSeq,
     actor: _actor,
@@ -55,6 +55,7 @@ export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
     delivery_uncertain: delivery_uncertain !== 0,
     deferred: deferred === 1,
     fast: fast !== 0,
+    ...(origin === "subtask" ? { report: true as const } : {}),
     attachments: parseAttachmentManifest(attachments_json),
   };
 }

@@ -7,7 +7,8 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { LOG_DIR } from "../src/config";
-import { createTask, createTurn, db, freeSlot, newTaskId, settleTurn } from "../src/store";
+import { apiTaskMessage } from "../src/routes/http";
+import { createTask, createTaskMessage, createTurn, db, freeSlot, getTaskMessage, newTaskId, settleTurn } from "../src/store";
 import { subscribe } from "../src/events";
 import { queueReports, refreshReportText, REPORT_BATCH_MAX_CHARS, REPORT_BATCH_MAX_REPORTS } from "../src/subtask-report-queue";
 import { reportFraming } from "../src/subtask-reports";
@@ -138,5 +139,14 @@ describe("a turn report the child has moved past", () => {
     } finally {
       stop();
     }
+  });
+
+  test("a report message says it is one over the API; a person's message does not", () => {
+    const parent = task(), child = task(parent);
+    report(child, parent, { kind: "closed", pr: 1, head: "abc" }, null);
+    const id = queueReports({ id: parent })!;
+    expect(apiTaskMessage(getTaskMessage(id)!)).toMatchObject({ id, report: true });
+    createTaskMessage({ id: `mperson${parent}`, taskId: parent, text: "my own words", attachmentHash: "" });
+    expect(apiTaskMessage(getTaskMessage(`mperson${parent}`)!)).not.toHaveProperty("report");
   });
 });
