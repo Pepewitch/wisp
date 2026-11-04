@@ -25,7 +25,11 @@ export function queuedReport(parentId: string): string | null {
 
 /** At most this many reports go in one message; the rest wait, in order, for the next (#519). */
 export const REPORT_BATCH_MAX_REPORTS = 10;
-/** And at most about this much of the children's words: a batch stops before the report that would pass it. */
+/**
+ * And at most about this much of the children's words, as stored (a report
+ * later marked superseded still counts its words here): a batch stops before
+ * the report that would pass it.
+ */
 export const REPORT_BATCH_MAX_CHARS = 12_000;
 
 /**
@@ -55,7 +59,7 @@ export function queueReports(parent: Pick<Task, "id">): string | null {
     for (const row of rows) db.run("UPDATE subtask_reports SET state = 'queued', message_id = ?, updated_at = ? WHERE id = ?", [id, at, row.id]);
     const framed = reportFraming(id);
     createTaskMessage({
-      id, taskId: parent.id, text: [...framed.lines, ...(framed.words ? ["", framed.words] : [])].join("\n"),
+      id, taskId: parent.id, text: reportText(framed),
       attachmentHash: "", origin: "subtask", actor: "system",
     });
     return id;
@@ -78,4 +82,20 @@ export function reportBefore(parent: Pick<Task, "id" | "state">, head: Pick<Task
   const row = db.query(`SELECT id FROM task_messages WHERE task_id = ? AND origin = 'subtask' AND status = 'queued' AND claim IS NULL
     AND source_seq < ? ORDER BY source_seq, rowid LIMIT 1`).get(parent.id, head.source_seq ?? 0) as { id: string } | null;
   return row?.id ?? null;
+}
+
+/** A report message's transcript text: Wisp's lines, then the children's fenced words. */
+function reportText(framed: { lines: string[]; words: string }): string {
+  return [...framed.lines, ...(framed.words ? ["", framed.words] : [])].join("\n");
+}
+
+/**
+ * The report message's transcript text, rewritten to the framing its parent
+ * receives now. The framing is built again when the message starts (a turn
+ * report the child has moved past is marked superseded then), so the text
+ * stored at queue time could otherwise show words the parent never got.
+ */
+export function refreshReportText(messageId: string, framed: { lines: string[]; words: string }): void {
+  db.run("UPDATE task_messages SET text = ?, updated_at = ? WHERE id = ? AND origin = 'subtask'",
+    [reportText(framed), new Date().toISOString(), messageId]);
 }

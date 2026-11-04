@@ -1,7 +1,7 @@
 import { assertTaskCapacity, capacityWait, TaskCapacityError } from "./task-admission";
 import { recordSetupFailure, reportFraming } from "./subtask-reports";
 import { liveNonReviewerChildren, parentsWithWaitingChildren } from "./subtasks";
-import { reportBefore } from "./subtask-report-queue";
+import { refreshReportText, reportBefore } from "./subtask-report-queue";
 import { updateTaskAndEmit } from "./task-update";
 import { pauseTaskWorkflows } from "./workflows/store";
 import { backgroundPass, homeIsDraining } from "./home-lifetime";
@@ -145,7 +145,11 @@ function startCapture(
  */
 function framedInput(sourceMessageId: string | undefined, message: string): { framed: ReturnType<typeof framedMessage>; turnOrigin: TurnOrigin | null } {
   const origin = sourceMessageId ? getTaskMessage(sourceMessageId)?.origin : undefined;
-  if (origin === "subtask" && sourceMessageId) return { framed: reportFraming(sourceMessageId), turnOrigin: "report" };
+  if (origin === "subtask" && sourceMessageId) {
+    const framed = reportFraming(sourceMessageId);
+    refreshReportText(sourceMessageId, framed);
+    return { framed, turnOrigin: "report" };
+  }
   return { framed: framedMessage(origin, message), turnOrigin: null };
 }
 

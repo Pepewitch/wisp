@@ -28,9 +28,10 @@ function report(child: string, parent: string, facts: Record<string, unknown>, b
 }
 
 /** A settled turn of the child. */
-function turn(child: string, n: number): void {
+function turn(child: string, n: number, status: "done" | "interrupted" = "done", origin: string | null = null): void {
   const id = createTurn(child, n, "work", null, join(LOG_DIR, `${child}-${n}.log`), null);
-  settleTurn(id, { status: "done", exitCode: 0, result: `turn ${n}` }, child, "done", null);
+  if (origin) db.run("UPDATE turns SET origin = ? WHERE id = ?", [origin, id]);
+  settleTurn(id, { status, exitCode: status === "done" ? 0 : null, result: status === "done" ? `turn ${n}` : null }, child, "done", null);
 }
 
 const states = (parent: string) => db.query("SELECT state, message_id FROM subtask_reports WHERE parent_task_id = ? ORDER BY created_at, rowid").all(parent) as { state: string; message_id: string | null }[];
@@ -91,5 +92,24 @@ describe("a turn report the child has moved past", () => {
     const { lines, words } = reportFraming(queueReports({ id: parent })!);
     expect(lines[1]).not.toContain("superseded");
     expect(words).toContain("the latest finished state");
+  });
+
+  test("an interrupted or background turn is not newer; a turn that ended needing input keeps its words", () => {
+    const parent = task(), child = task(parent);
+    report(child, parent, { kind: "turn", turn: 1, outcome: "done" }, "the only finished result");
+    turn(child, 1);
+    turn(child, 2, "interrupted");
+    turn(child, 3, "done", "background");
+    const first = reportFraming(queueReports({ id: parent })!);
+    expect(first.lines[1]).not.toContain("superseded");
+    expect(first.words).toContain("the only finished result");
+
+    const other = task(), kid = task(other);
+    report(kid, other, { kind: "turn", turn: 1, outcome: "needs input" }, "which database?");
+    turn(kid, 1);
+    turn(kid, 2);
+    const asked = reportFraming(queueReports({ id: other })!);
+    expect(asked.lines[1]).toContain("finished turn 1: needs input, since superseded by its turn 2. Its words are fenced below");
+    expect(asked.words).toContain("which database?");
   });
 });

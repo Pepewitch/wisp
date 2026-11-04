@@ -202,6 +202,32 @@ describe("delivering subtask reports", () => {
     }
   });
 
+  test("a long run of reports goes in bounded batches, each delivered in turn, its transcript what the parent got (#519)", async () => {
+    const adapters = { quick };
+    const parent = await make({ repoPath: await repo() }, adapters);
+    const child = await make({ subtask: { parentId: parent.id, report: true } }, adapters);
+    // twelve more events while the parent is busy: the first message carries ten
+    transition(parent.id, "running", "turn 2");
+    for (let pr = 1; pr <= 12; pr++) recordPrEvent(child.id, `closed:${pr}:abc`, { kind: "closed", pr, head: "abc" });
+    const delivery = new SubtaskDelivery(cfg(), adapters, 0);
+    delivery.deliver(parent.id);
+    transition(parent.id, "done");
+    // meanwhile the child finishes another turn: its first report is history by the time the message starts
+    db.run("INSERT INTO turns (task_id, n, context_n, harness, prompt, status, log_file, started_at, ended_at, result) VALUES (?, 99, 1, 'quick', 'more', 'done', '/dev/null', ?, ?, 'newer')",
+      [child.id, new Date().toISOString(), new Date().toISOString()]);
+    delivery.deliver(parent.id);
+    await until(() => settled(parent.id) && turnsFor(parent.id).length === 2, "the first batch's turn");
+    const [first] = reportMessages(parent.id);
+    const firstText = (db.query("SELECT text FROM task_messages WHERE id = ?").get(first!.id) as { text: string }).text;
+    expect(firstText).toStartWith("10 reports from your subtasks.");
+    expect(firstText).toContain("since superseded by its turn 99");
+    // the next pass delivers the rest
+    delivery.deliver(parent.id);
+    await until(() => settled(parent.id) && turnsFor(parent.id).length === 3, "the second batch's turn");
+    expect(reportMessages(parent.id)).toHaveLength(2);
+    expect(rows(parent.id).every((row) => row.state === "delivered")).toBe(true);
+  }, 20_000);
+
   test("a report queued before a crash is started by id, never queued twice", async () => {
     const adapters = { quick };
     const parent = await make({ repoPath: await repo() }, adapters);

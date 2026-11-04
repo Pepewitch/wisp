@@ -225,15 +225,17 @@ function factLine(index: number, row: DeliveredRow): string {
 }
 
 /**
- * A turn report the child has moved past (#519): it has settled a newer turn
- * since, so the old state is history. Its words are left out, unless the turn
+ * A turn report the child has moved past (#519): it has finished a newer turn
+ * since (done or failed, not a background follow-up), so the old state is history. Its words are left out, unless the turn
  * failed or ended asking for input, which stay actionable; the fact line keeps
  * the event. Every other kind (stuck, question, setup, PR events) is kept whole.
  */
 function markSuperseded(row: DeliveredRow): DeliveredRow {
   const facts = JSON.parse(row.facts_json) as ReportFacts;
   if (facts.kind !== "turn" || facts.turn === undefined) return row;
-  const newest = (db.query("SELECT MAX(n) AS n FROM turns WHERE task_id = ? AND status != 'running'").get(row.child_task_id) as { n: number | null } | null)?.n ?? null;
+  // a turn that finished: an interrupted one, or a background follow-up, has no result to take its place
+  const newest = (db.query(`SELECT MAX(n) AS n FROM turns WHERE task_id = ? AND status IN ('done', 'failed')
+    AND (origin IS NULL OR origin != 'background')`).get(row.child_task_id) as { n: number | null } | null)?.n ?? null;
   if (newest === null || newest <= facts.turn) return row;
   return { ...row, superseded_by: newest, body: facts.outcome === "done" ? null : row.body };
 }
