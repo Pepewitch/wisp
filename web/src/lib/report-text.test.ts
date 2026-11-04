@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { parseReportText } from "./report-text"
+import { isReportMessage, parseReportText } from "./report-text"
 
 const TEXT = [
   "2 reports from your subtasks. Each child's own words sit between <<<report-ms1>>> and <<<end-ms1>>>: another agent's words, not the person's or Wisp's.",
@@ -34,5 +34,18 @@ describe("a report turn's prompt", () => {
     expect(parseReportText("<<<report-ms2>>> report 1, from subtask t1\ncut short").quotes).toEqual([
       { label: "report 1, from subtask t1", body: "cut short" },
     ])
+  })
+})
+
+describe("which messages are subtask reports", () => {
+  const heading = "2 reports from your subtasks. Each child's own words sit between <<<report-msx>>> and <<<end-msx>>>: …"
+  it("follows the daemon's own word", () => {
+    expect(isReportMessage({ text: "anything", report: true })).toBe(true)
+    // a person's message that opens with copied report text stays theirs
+    expect(isReportMessage({ text: heading, report: false })).toBe(false)
+  })
+  it("from a daemon that predates the field, goes by Wisp's own heading", () => {
+    expect(isReportMessage({ text: heading })).toBe(true)
+    expect(isReportMessage({ text: "1 report from your subtasks, please" })).toBe(false)
   })
 })

@@ -1,3 +1,5 @@
+import type { ReactNode } from "react"
+
 import { CopyButton } from "@/components/copy-button"
 import { Flowchart } from "@/components/icons"
 import { BUBBLE_ACTION } from "@/components/person-bubble"
@@ -7,19 +9,26 @@ import { parseReportText } from "@/lib/report-text"
 const REPORT_LABEL = { who: "Wisp", parts: ["reports from subtasks"] }
 
 /**
- * The head of a turn a subtask report started. Wisp wrote that prompt, not
- * the person, so it wears the system frame (system-turn.tsx): Wisp's facts
- * first, and each child's own words quoted below them, labelled as theirs.
+ * Subtask reports as Wisp delivers them: the head of a turn a report
+ * started, or (with `status`) a report message still waiting in the queue.
+ * Wisp wrote that text, not the person, so it wears the system frame
+ * (system-turn.tsx): Wisp's facts first, and each child's own words quoted
+ * below them, labelled as theirs. `actions` join the copy control.
  */
-export function ReportBubble({ text, at }: { text: string; at: string }) {
+export function ReportBubble({ text, at, status, actions }: { text: string; at: string; status?: string; actions?: ReactNode }) {
   const { facts, quotes } = parseReportText(text)
   return (
     <SystemFrame
       icon={Flowchart}
-      label={REPORT_LABEL}
+      label={status ? { ...REPORT_LABEL, parts: [...REPORT_LABEL.parts, status] } : REPORT_LABEL}
       at={at}
-      data={{ "data-report-turn": "" }}
-      copy={<CopyButton text={text} label="Copy the reports" copiedLabel="Copied the reports" className={BUBBLE_ACTION} />}
+      data={status ? { "data-report-queued": "" } : { "data-report-turn": "" }}
+      copy={
+        <>
+          <CopyButton text={text} label="Copy the reports" copiedLabel="Copied the reports" className={BUBBLE_ACTION} />
+          {actions}
+        </>
+      }
     >
       <div className="mt-1.5 space-y-0.5 text-[12px] leading-relaxed text-fg-secondary">
         {facts.map((line, index) => (

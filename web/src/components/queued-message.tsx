@@ -2,6 +2,8 @@ import { useState } from "react"
 
 import { ArrowUp, Dismiss, Pencil } from "@/components/icons"
 import { MessageAttachments } from "@/components/message-attachments"
+import { ReportBubble } from "@/components/report-bubble"
+import { isReportMessage } from "@/lib/report-text"
 import { BUBBLE_ACTION, PersonBubble, UserMessageCopyButton } from "@/components/person-bubble"
 import { useCancelQueuedMessage, useSendQueuedMessageNow, useUpdateQueuedMessage } from "@/hooks/mutations"
 import { useHarnessFeatures } from "@/hooks/queries"
@@ -48,6 +50,47 @@ export function QueuedMessage({
     )
   }
 
+  const where = archived
+    ? "not delivered; task is archived"
+    : cancelled
+      ? "retry cancelled; prior delivery may already have succeeded"
+    : message.delivery_uncertain
+      ? "queued for retry; prior delivery may already have succeeded"
+    : message.deferred
+      ? "held for the next turn"
+      : "queued for the next turn"
+
+  // Wisp's own delivery of subtask reports: its report block, not the person's bubble. The daemon
+  // refuses to edit or rush one, so cancelling is the only control.
+  if (isReportMessage(message)) {
+    return (
+      <article data-message={message.id} data-status={message.status} className="pt-[30px]">
+        <ReportBubble
+          text={message.text}
+          at={message.created_at}
+          status={where}
+          actions={!archived && !cancelled && (
+            <button
+              type="button"
+              disabled={busy}
+              aria-label="Cancel queued reports"
+              title="Cancel these reports: the parent will not receive them"
+              className={BUBBLE_ACTION}
+              onClick={() => cancel.mutate({ taskId, messageId: message.id })}
+            >
+              <Dismiss />
+            </button>
+          )}
+        />
+        {failure && (
+          <div className="mt-1 text-right text-[10.5px] text-state-failed">
+            {failure instanceof Error ? failure.message : "Request failed"}
+          </div>
+        )}
+      </article>
+    )
+  }
+
   return (
     <article data-message={message.id} data-status={message.status} className="pt-[30px]">
       {/* No time to state: this one has not been SENT. What it states instead
@@ -57,19 +100,7 @@ export function QueuedMessage({
           controls. While editing they come back inside — the bubble is a form
           then, and a form owns its own Save. */}
       <PersonBubble
-        caption={
-          <span>
-            {archived
-              ? "not delivered; task is archived"
-              : cancelled
-                ? "retry cancelled; prior delivery may already have succeeded"
-              : message.delivery_uncertain
-                ? "queued for retry; prior delivery may already have succeeded"
-              : message.deferred
-                ? "held for the next turn"
-                : "queued for the next turn"}
-          </span>
-        }
+        caption={<span>{where}</span>}
         actions={
           !editing && (
             <>
