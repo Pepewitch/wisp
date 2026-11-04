@@ -134,6 +134,32 @@ describe("a task's branch pushed under another name", () => {
     expect(await branches(task(repo, base, { id: "tpd03", branch: "wisp/tpd03-d" }))).toEqual(["wisp/tpd03-d"]);
   });
 
+  test("a cherry-pick that only fast-forwards claims nothing", async () => {
+    const { repo, base } = world();
+    git(repo, "checkout", "-q", "-b", "colleague", base);
+    commit(repo, "a colleague's change");
+    git(repo, "push", "-q", "origin", "HEAD:feat/colleague");
+    git(repo, "checkout", "-q", "wisp/tpb01-keen-stork");
+    git(repo, "branch", "-q", "-D", "colleague");
+    git(repo, "cherry-pick", "--ff", "origin/feat/colleague");
+    expect(await branches(task(repo, base))).toEqual(["wisp/tpb01-keen-stork"]);
+  });
+
+  test("a pull --rebase counts, and so does a rebase force-pushed under both the task's names", async () => {
+    const { repo, base } = world();
+    commit(repo, "the task's change");
+    git(repo, "push", "-q", "origin", "HEAD:wisp/tpb01-keen-stork");
+    git(repo, "push", "-q", "origin", "HEAD:fix/b");
+    git(repo, "checkout", "-q", "main");
+    commit(repo, "main moves");
+    git(repo, "push", "-q", "origin", "main");
+    git(repo, "checkout", "-q", "wisp/tpb01-keen-stork");
+    git(repo, "-c", "pull.rebase=true", "pull", "-q", "--rebase", "origin", "main");
+    git(repo, "push", "-q", "--force", "origin", "HEAD:wisp/tpb01-keen-stork");
+    git(repo, "push", "-q", "--force", "origin", "HEAD:fix/b");
+    expect(await branches(task(repo, base))).toEqual(["wisp/tpb01-keen-stork", "fix/b"]);
+  });
+
   test("never claims a sibling task's or a colleague's branch the task merged in", async () => {
     const { repo, base } = world();
     // sibling task A, on its own local branch, pushed under another name

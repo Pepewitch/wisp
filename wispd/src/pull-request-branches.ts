@@ -47,13 +47,16 @@ export const PUSHED_NAME_LIMIT = 2;
 /**
  * How the task branch reached a tip, from its reflog subject: a commit made
  * on it (`commit:`, `commit (amend):`, `commit (merge):`), a cherry-pick, a
- * merge that made a commit, or a rebase. A fast-forward, a reset or the
- * branch's creation brought someone else's commit, never the task's own.
+ * merge that made a commit, or a rebase (`rebase … (finish)`, and the one
+ * `pull --rebase` logs as `pull … (finish)`). Any fast-forward (`merge …:
+ * Fast-forward`, `cherry-pick: fast-forward`), a reset or the branch's
+ * creation brought someone else's commit, never the task's own.
  */
 function arrival(subject: string): "own" | "rebase" | null {
+  if (/fast-forward/i.test(subject)) return null;
   if (/^(commit|cherry-pick)\b/.test(subject)) return "own";
   if (/^(merge|pull)\b[^:]*: Merge made by/.test(subject)) return "own";
-  if (/^rebase( -i)? \(finish\): refs\/heads\//.test(subject)) return "rebase";
+  if (/^(rebase|pull)\b[^:]*\(finish\): refs\/heads\//.test(subject)) return "rebase";
   return null;
 }
 
@@ -110,9 +113,14 @@ async function pushedUnderOtherNames(
     const how = made.get(tip);
     if (!how) continue;
     if (how === "rebase") {
-      // a rebase with nothing of the task's to replay lands on the other branch's own tip
+      // A rebase with nothing of the task's to replay lands on the other branch's own tip. The
+      // task's own branches (its `wisp/<id>-…` pushed by `/push`) hold it too, and do not count.
+      // Any other holder does, which only fails safe (no name): a stacked child's branch built on
+      // it, or the task's own push of the same tip under a second name, which refs alone cannot
+      // tell from someone else's branch at that tip.
       const holders = await git(["for-each-ref", "--format=%(refname:lstrip=3)", `--contains=${tip}`, "refs/remotes/origin/"]);
-      const others = (holders ?? "").split("\n").map((line) => line.trim()).filter((holder) => holder !== "" && holder !== "HEAD" && holder !== name);
+      const others = (holders ?? "").split("\n").map((line) => line.trim()).filter((holder) =>
+        holder !== "" && holder !== "HEAD" && holder !== name && holder !== branch && !holder.startsWith(`wisp/${task.id}-`));
       if (holders === null || others.length > 0) continue;
     }
     names.push(name);
