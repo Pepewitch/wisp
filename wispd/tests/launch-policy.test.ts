@@ -172,6 +172,23 @@ describe("fixtures-only launch policy", () => {
     });
   });
 
+  test("a stand-in may resolve to its GNU build; the prefix smuggles in nothing else", () => {
+    // Ubuntu 26.04's layout, rebuilt where every platform can see it: the
+    // plain name is a link to the gnu-prefixed GNU build.
+    const root = mkdtempSync(join(tmpdir(), "wisp-launch-gnu-"));
+    const gnuTrue = fixtureExecutable(root, "gnutrue");
+    const plainTrue = join(root, "true");
+    symlinkSync(gnuTrue, plainTrue);
+    const disguise = join(root, "bash");
+    symlinkSync(fixtureExecutable(root, "gnuclaude"), disguise);
+    withPolicy(`fixtures:/nonexistent-root;shims:bash,true`, () => {
+      expect(() => assertExecutableAllowed([plainTrue], "fixture harness")).not.toThrow();
+      expect(() => assertExecutableAllowed([disguise, "-c", "echo hi"], "disguised harness")).toThrow(LaunchBlocked);
+      // the prefixed name is not itself on the list
+      expect(() => assertExecutableAllowed([gnuTrue], "fixture harness")).toThrow(LaunchBlocked);
+    });
+  });
+
   test("a relative path cannot climb out of the fixture tree", () => {
     const root = mkdtempSync(join(tmpdir(), "wisp-launch-climb-"));
     const nested = join(root, "bin");

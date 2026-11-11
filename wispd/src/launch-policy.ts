@@ -144,6 +144,16 @@ function resolveExecutable(exe: string, cwd?: string): string | null {
 }
 
 /**
+ * Whether a resolved file is a stand-in: one named on the list, or the GNU
+ * build of one. A distribution that makes another coreutils the default keeps
+ * the GNU tools under a `gnu` prefix and points the plain name at whichever is
+ * selected (Ubuntu 26.04: `true` resolves to `/usr/bin/gnutrue`).
+ */
+function isStandInFile(shims: ReadonlySet<string>, file: string): boolean {
+  return shims.has(file) || (file.startsWith("gnu") && shims.has(file.slice("gnu".length)));
+}
+
+/**
  * Gate a provider/harness executable. `what` names the caller in the error —
  * the sentence lands in a task's state detail, so it has to say which launch
  * was refused and where the policy came from.
@@ -157,7 +167,7 @@ export function assertExecutableAllowed(cmd: readonly string[], what: string, cw
     if (containedBy(resolved, active.roots)) return;
     // A generic stand-in, allowed by name. Both spellings must agree, so a
     // symlink called `bash` cannot smuggle in an installed harness.
-    if (active.shims.has(basename(exe)) && active.shims.has(basename(resolved))) return;
+    if (active.shims.has(basename(exe)) && isStandInFile(active.shims, basename(resolved))) return;
   }
   throw new LaunchBlocked(
     `${what}: ${LAUNCH_POLICY_ENV} refused ${JSON.stringify(exe)}${resolved === null ? " (not found)" : ` (${resolved})`} — only executables inside ${active.roots.length === 0 ? "nothing" : active.roots.join(", ")}${active.shims.size === 0 ? "" : ` (or the stand-ins ${[...active.shims].join(", ")})`} may run`,
