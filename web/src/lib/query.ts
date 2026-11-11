@@ -15,6 +15,11 @@ export const queryClient = new QueryClient({
     // Desktop's loopback proxy also must not depend on browser online status.
     mutations: { networkMode: "always", retry: false },
     queries: {
+      // Reads follow the same rule. Under the default ("online") a browser
+      // that reports offline pauses every fetch, with no error, until it says
+      // online again — while the event stream keeps announcing changes the
+      // sidebar can no longer fetch. The transport answers for reachability.
+      networkMode: "always",
       refetchOnWindowFocus: true,
       retry: (failureCount, error) => {
         // 4xx is an honest answer (unknown task, archived diff) — retrying changes nothing

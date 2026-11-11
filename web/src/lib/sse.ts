@@ -283,14 +283,27 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     // readyState CLOSED means a hard failure (e.g. 401): the stream will not
     // retry on its own — re-check the token, then rebuild the stream once,
     // waiting longer each time the rebuilt one is refused again.
-    if (source && source.readyState === SSE_CLOSED && reconnectTimer === null) {
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        void opts.transport.ensureReady().then(() => {
+    if (source && source.readyState === SSE_CLOSED) scheduleRebuild();
+  }
+
+  /**
+   * One rebuild attempt after the backoff. A readiness check that fails (the
+   * daemon still starting, restarting, or too busy to answer the proxy in
+   * time) schedules the next attempt instead of ending the chain: nothing else
+   * would ever reopen the stream, and the sidebar would stop following task
+   * state until the app restarted.
+   */
+  function scheduleRebuild(): void {
+    if (closed || reconnectTimer !== null) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      opts.transport.ensureReady().then(
+        () => {
           if (!closed) open();
-        });
-      }, reconnectDelay(hardFailures++, reconnectDelayMs));
-    }
+        },
+        () => scheduleRebuild(),
+      );
+    }, reconnectDelay(hardFailures++, reconnectDelayMs));
   }
 
   function open(): void {
