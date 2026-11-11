@@ -30,7 +30,7 @@ function subtaskFields(t: Task): Pick<ApiTask, "parent_task_id" | "subtask_kind"
 }
 
 export function apiTask(t: Task): ApiTask {
-  const { brief_enabled: _brief, brief_generation: _generation, input_seq: _seq, input_rev: _rev, ...row } = t;
+  const { input_seq: _seq, ...row } = t;
   return { ...row, ...subtaskFields(t), ...(t.state === "queued" ? { queue_position: queuePosition(t) } : {}), archived: t.archived !== 0, fast: t.fast !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), turn_input: t.archived ? null : turnInput(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
 }
 

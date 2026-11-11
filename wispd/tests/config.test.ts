@@ -205,8 +205,8 @@ describe("validateConfig (a prior audit)", () => {
             // every value is the built-in default, so nothing is stored for it
             "gpt-5-mini": { autoFix: false },
           },
-          // the retired `brief` switch an older Wisp wrote loads, and is dropped
-          claude: { opus: { brief: false }, sonnet: { brief: "no", autoFix: true } },
+          // a switch this build no longer has loads, whatever its value, and is dropped
+          claude: { opus: { retired: false }, sonnet: { retired: "no", autoFix: true } },
           droid: {},
           // a switch from a newer Wisp is dropped rather than refused
           nosuch: { " x ": { autoMerge: true, someday: true } },

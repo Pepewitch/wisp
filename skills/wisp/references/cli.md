@@ -179,8 +179,7 @@ literally, and the create fails if it does not resolve. It is rejected for
 `--local`, which adopts the branch the checkout is already on. `--auto-merge`
 merges the task's PR once it is ready (below); `--auto-review` has an independent
 reviewer task verify each of its heads first. `--attach` repeats (see
-images.md; `--image` is the old name and still works). Task briefs were
-removed, so `--brief` is refused. Prints
+images.md; `--image` is the old name and still works). Prints
 `created <id> (<harness>[, <model>][, local][, auto-merge][, auto-fix][, auto-review]) — <title>`;
 the model is shown when Wisp received an explicit or configured choice, and
 omitted when the harness will choose its own default.

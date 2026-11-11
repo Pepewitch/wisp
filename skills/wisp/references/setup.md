@@ -193,8 +193,8 @@ harmless preferences.
   auto-fix and auto-merge switches, per harness and model:
   `"modelTaskDefaults": { "codex": { "gpt-5.6-luna": { "autoMerge": true } } }`.
   Only overrides are stored: a model not listed starts with neither autopilot
-  switch. A `brief` key left there by an older Wisp is ignored. Edited from
-  the same Models manager (the `…` on a model's row; a row says how its model
+  switch. A key this build does not know is ignored. Edited from the same
+  Models manager (the `…` on a model's row; a row says how its model
   differs). The composer still lets you switch them for one task, and
   `wisp new` and the API ignore this setting: they only use what they are
   given explicitly.

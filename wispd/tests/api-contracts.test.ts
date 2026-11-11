@@ -643,8 +643,8 @@ describe("model task defaults over the API", () => {
 
     try {
       const updated = await api(base, "/api/settings", "PATCH", {
-        // an older client's retired `brief` switch is accepted and dropped
-        modelTaskDefaults: { codex: { "gpt-5": { brief: false, autoMerge: true, autoFix: false } } },
+        // a switch this build does not know is accepted and dropped
+        modelTaskDefaults: { codex: { "gpt-5": { someday: false, autoMerge: true, autoFix: false } } },
       });
       expect(updated.status).toBe(200);
       expect((await json<{ modelTaskDefaults: unknown }>(updated)).modelTaskDefaults).toEqual({ codex: { "gpt-5": { autoMerge: true } } });

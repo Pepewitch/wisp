@@ -1404,14 +1404,3 @@ describe("validateAdapters: fast mode", () => {
     );
   });
 });
-
-describe("retired adapter keys", () => {
-  test("an adapters.json written for task briefs still loads: `briefs` is an ignored unknown key", () => {
-    const warnings: string[] = [];
-    const loaded = validateAdapters({ foo: { bin: "x", exec: [], parse: { format: "text" }, briefs: true } }, (message) => warnings.push(message));
-    expect(loaded.foo!.bin).toBe("x");
-    expect("briefs" in loaded.foo!).toBe(false);
-    expect(warnings).toHaveLength(1);
-    expect(warnings[0]).toStartWith("adapters.json: adapter 'foo': unknown key 'briefs' — ignoring");
-  });
-});

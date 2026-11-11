@@ -36,6 +36,7 @@ import { REVIEW_NOW } from "./migration-review-now";
 import { TURN_FAILURE } from "./migration-turn-failure";
 import { MESSAGE_REPORT } from "./migration-message-report";
 import { REPORT_STEERED } from "./migration-report-steered";
+import { RETIRED_SCHEMA } from "./migration-retired-schema";
 
 /** `ALTER TABLE … ADD COLUMN`, unless a partly upgraded profile already has the column. */
 function addColumn(db: Database, table: string, column: string, definition: string): void {
@@ -538,59 +539,16 @@ END;
   },
   {
     id: 14,
-    name: "task-briefs",
-    up: (db) => {
-      // Task briefs: a per-task switch, one binding per eligible turn, and at
-      // most one report per source turn. Briefs were removed later; these
-      // columns and tables stay, unread, so a downgrade still opens the
-      // profile.
-      //
-      // brief_generation moves on every off→on, and a binding records the
-      // generation it was issued under, so a disable/re-enable cycle can never
-      // revive a binding an earlier turn was handed. Off for every existing
-      // task: nothing about how an old task runs changes by upgrading.
-      const columns = (db.query(`PRAGMA table_info(tasks)`).all() as { name: string }[]).map((c) => c.name);
-      if (!columns.includes("brief_enabled")) db.exec(`ALTER TABLE tasks ADD COLUMN brief_enabled INTEGER NOT NULL DEFAULT 0`);
-      if (!columns.includes("brief_generation")) db.exec(`ALTER TABLE tasks ADD COLUMN brief_generation INTEGER NOT NULL DEFAULT 0`);
-      db.exec(`
-CREATE TABLE IF NOT EXISTS brief_runs (
-  run_id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  turn_id INTEGER NOT NULL UNIQUE REFERENCES turns(id) ON DELETE CASCADE,
-  turn_n INTEGER NOT NULL,
-  context_n INTEGER NOT NULL,
-  generation INTEGER NOT NULL,
-  instance_id TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_brief_runs_task ON brief_runs(task_id, turn_n);
-CREATE TABLE IF NOT EXISTS task_briefs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  turn_id INTEGER NOT NULL UNIQUE REFERENCES turns(id) ON DELETE CASCADE,
-  turn_n INTEGER NOT NULL,
-  context_n INTEGER NOT NULL,
-  run_id TEXT NOT NULL,
-  generation INTEGER NOT NULL,
-  schema_version INTEGER NOT NULL,
-  revision INTEGER NOT NULL,
-  payload_json TEXT NOT NULL,
-  payload_hash TEXT NOT NULL,
-  source_json TEXT NOT NULL,
-  saved_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_task_briefs_task ON task_briefs(task_id, turn_n);
-`);
-    },
+    name: "retired-14",
+    // This id added a feature Wisp has since removed. A fresh profile has
+    // nothing to create for it; migration 33 drops what it left in older ones.
+    up: () => {},
   },
   {
     id: 15,
-    name: "brief-provenance",
+    name: "message-provenance",
     up: (db) => {
-      // What a brief needed to know about the person's own input, recorded by
-      // Wisp rather than asked of the model. Briefs were removed later;
-      // origin and source_seq outlived them (delivery framing, queue order),
-      // input_rev and task_answer_observations stay unread:
+      // What Wisp records about each person's input rather than asking the model:
       //
       //  - origin: who wrote a message. `workflow_id` cannot answer that — a
       //    finished schedule-steer sets it back to NULL — so it is written
@@ -601,15 +559,11 @@ CREATE INDEX IF NOT EXISTS idx_task_briefs_task ON task_briefs(task_id, turn_n);
       //  - source_seq: the order each input was ADMITTED in, fixed then. A
       //    rowid is not stable and a delivery moves updated_at, so neither can
       //    order "what did I say last" across messages and answers.
-      //  - tasks.input_rev: moves when a human input is added, edited,
-      //    cancelled or changes delivery, so a report can tell it went stale
-      //    without comparing timestamps.
       const messageColumns = (db.query(`PRAGMA table_info(task_messages)`).all() as { name: string }[]).map((c) => c.name);
       if (!messageColumns.includes("origin")) db.exec(`ALTER TABLE task_messages ADD COLUMN origin TEXT NOT NULL DEFAULT 'human'`);
       if (!messageColumns.includes("source_seq")) db.exec(`ALTER TABLE task_messages ADD COLUMN source_seq INTEGER`);
       const taskColumns = (db.query(`PRAGMA table_info(tasks)`).all() as { name: string }[]).map((c) => c.name);
       if (!taskColumns.includes("input_seq")) db.exec(`ALTER TABLE tasks ADD COLUMN input_seq INTEGER NOT NULL DEFAULT 0`);
-      if (!taskColumns.includes("input_rev")) db.exec(`ALTER TABLE tasks ADD COLUMN input_rev INTEGER NOT NULL DEFAULT 0`);
       db.exec(`
 UPDATE task_messages SET origin = COALESCE((
   SELECT CASE WHEN type IN ('heartbeat', 'pr-autopilot') THEN 'workflow' WHEN type = 'schedule-steer' THEN 'scheduled' ELSE 'plugin' END
@@ -626,21 +580,6 @@ UPDATE task_messages SET source_seq = (
 ) WHERE source_seq IS NULL;
 UPDATE tasks SET input_seq = COALESCE((SELECT MAX(source_seq) FROM task_messages WHERE task_id = tasks.id), 0);
 CREATE INDEX IF NOT EXISTS idx_task_messages_source ON task_messages(task_id, source_seq);
-CREATE TABLE IF NOT EXISTS task_answer_observations (
-  id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-  turn_id INTEGER NOT NULL,
-  turn_n INTEGER NOT NULL,
-  context_n INTEGER NOT NULL,
-  source_seq INTEGER NOT NULL,
-  question_id TEXT NOT NULL,
-  question_text TEXT NOT NULL,
-  answers_json TEXT NOT NULL,
-  state TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_task_answer_observations_task ON task_answer_observations(task_id, source_seq);
 `);
     },
   },
@@ -669,6 +608,7 @@ CREATE INDEX IF NOT EXISTS idx_task_answer_observations_task ON task_answer_obse
   TURN_FAILURE,
   MESSAGE_REPORT,
   REPORT_STEERED,
+  RETIRED_SCHEMA,
 ];
 
 /** The newest schema this build knows how to run. */

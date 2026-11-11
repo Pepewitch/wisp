@@ -103,13 +103,6 @@ export interface Task {
   purge_pending?: number;
   /** NULL in rows written before the column existed — read it through taskMode() */
   mode: TaskMode | null;
-  /**
-   * Retired with task briefs: the columns stay so a downgrade still opens the
-   * profile, but nothing reads or writes them. apiTask strips them.
-   */
-  brief_enabled?: number;
-  brief_generation?: number;
-  input_rev?: number;
   /** The last admission order handed to a message (store-messages admitTaskInput). */
   input_seq?: number;
   /**

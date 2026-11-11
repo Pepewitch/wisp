@@ -147,11 +147,6 @@ export async function purgeTask(task: Task): Promise<void> {
       // but permanent deletion states what it deletes rather than relying on
       // a pragma being on.
       db.query("DELETE FROM turn_texts WHERE task_id = ?").run(task.id);
-      // Retired task-brief tables: no longer written, but an older Wisp may
-      // have left rows that permanent deletion must not keep.
-      db.query("DELETE FROM task_briefs WHERE task_id = ?").run(task.id);
-      db.query("DELETE FROM brief_runs WHERE task_id = ?").run(task.id);
-      db.query("DELETE FROM task_answer_observations WHERE task_id = ?").run(task.id);
       // Who did what to it (task-audit.ts) goes with it.
       db.query("DELETE FROM task_audit WHERE task_id = ?").run(task.id);
       // What it reported to a parent; what was reported to it (subtasks_delete drops those still undelivered).

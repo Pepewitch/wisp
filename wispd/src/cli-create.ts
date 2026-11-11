@@ -12,11 +12,6 @@ import type { ApiTask } from "./types";
 const COMMAND = wispCommand();
 
 export async function createCommand(positional: string[], flags: Flags): Promise<void> {
-  // refused, not ignored: a script that asked for a brief must learn it gets none
-  if (flags.brief !== undefined) {
-    printError("--brief is no longer supported: Wisp removed task briefs. Run the command again without it.");
-    process.exit(1);
-  }
   // a subtask's repository is its parent's, so the current directory is no default for one
   const subtask = subtaskFlags(flags);
   let repo: string | null, prompt: string;
