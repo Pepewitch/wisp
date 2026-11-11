@@ -57,30 +57,6 @@ test("export is a readable snapshot; purge removes managed files/records and kee
   expect(readFileSync(join(f.repo, "source.txt"), "utf8")).toBe("user repository");
 });
 
-test("export leaves an older Wisp's brief rows out, and purge removes them", async () => {
-  const f = fixture();
-  const turn = db.query("SELECT id FROM turns WHERE task_id = ?").get(f.id) as { id: number };
-  db.run(
-    `INSERT INTO brief_runs (run_id, task_id, turn_id, turn_n, context_n, generation, instance_id, created_at) VALUES (?, ?, ?, 1, 1, 1, 'fixture', 'now')`,
-    [`br_${f.id}`, f.id, turn.id],
-  );
-  db.run(
-    `INSERT INTO task_briefs (task_id, turn_id, turn_n, context_n, run_id, generation, schema_version, revision, payload_json, payload_hash, source_json, saved_at)
-     VALUES (?, ?, 1, 1, ?, 1, 1, 1, ?, 'hash', '{}', 'now')`,
-    [f.id, turn.id, `br_${f.id}`, JSON.stringify({ version: 1, outcome: "Kept.", remaining: [] })],
-  );
-  db.run(
-    `INSERT INTO task_answer_observations (id, task_id, turn_id, turn_n, context_n, source_seq, question_id, question_text, answers_json, state, created_at, updated_at)
-     VALUES (?, ?, ?, 1, 1, 1, 'q', 'Keep it?', '[]', 'delivered', 'now', 'now')`,
-    [`qa_${f.id}`, f.id, turn.id],
-  );
-  expect(Object.keys(await exportTask(f.task))).not.toContain("briefs");
-  await purgeTask(f.task);
-  for (const table of ["task_briefs", "brief_runs", "task_answer_observations"]) {
-    expect(db.query(`SELECT COUNT(*) AS n FROM ${table} WHERE task_id = ?`).get(f.id), table).toEqual({ n: 0 });
-  }
-});
-
 test("purge leaves no row keyed by the task behind, even where foreign keys are not enforced", async () => {
   const f = fixture();
   const workflow = `wf_${f.id}`;

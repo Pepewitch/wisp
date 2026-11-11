@@ -172,6 +172,34 @@ describe("useLogStream", () => {
     expect(connectionStore(connectionId).isLive()).toBe(true)
   })
 
+  it("a hard failure whose readiness check fails keeps trying until a stream opens", async () => {
+    vi.useFakeTimers()
+    try {
+      const sources = [createFakeSse(), createFakeSse()]
+      let opened = 0
+      const ensureReady = vi.fn<() => Promise<void>>()
+        .mockRejectedValueOnce(new Error("upstream unavailable"))
+        .mockResolvedValue(undefined)
+      const transport = fakeDaemonTransport("connection-log-rebuild", {
+        ensureReady,
+        openEventStream: () => sources[opened++]!.source,
+      })
+      renderHook(() => useLogStream("task-1", "activity", 0), {
+        wrapper: runtimeWrapper(transport),
+      })
+      act(() => sources[0]!.fail())
+
+      await act(() => vi.advanceTimersByTimeAsync(3_000))
+      expect(ensureReady).toHaveBeenCalledTimes(1)
+      expect(opened).toBe(1)
+      await act(() => vi.advanceTimersByTimeAsync(3_000))
+      expect(ensureReady).toHaveBeenCalledTimes(2)
+      expect(opened).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it("closes malformed frames as versioned protocol errors without retrying them", async () => {
     const fake = createFakeSse()
     const ensureReady = vi.fn(async () => undefined)

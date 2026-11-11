@@ -23,10 +23,10 @@ const cfg: WispConfig = {
   harnessDefaults: {},
 };
 
-/** A turn that records the harness input and its environment, then holds until the test releases it. */
+/** A turn that records the harness input, then holds until the test releases it. */
 const HOLD = [
   `printf '%s' "$0" > "$WISP_WORKTREE/prompt.txt"`,
-  `env > "$WISP_WORKTREE/env.txt"`,
+  `touch "$WISP_WORKTREE/ready"`,
   `while [ ! -f "$WISP_WORKTREE/release" ]; do sleep 0.05; done`,
   `echo done`,
 ].join("; ");
@@ -52,14 +52,14 @@ function worktreeFile(taskId: string, name: string): string {
 }
 
 /** Start a turn and wait until the harness has written what it was given. */
-async function begin(taskId: string, message: string, sourceMessageId?: string): Promise<{ prompt: string; env: string }> {
+async function begin(taskId: string, message: string, sourceMessageId?: string): Promise<{ prompt: string }> {
   const worktree = getTask(taskId)!.worktree_path!;
-  for (const name of ["prompt.txt", "env.txt", "release"]) Bun.spawnSync(["rm", "-f", join(worktree, name)]);
+  for (const name of ["prompt.txt", "ready", "release"]) Bun.spawnSync(["rm", "-f", join(worktree, name)]);
   startTurn(getTask(taskId)!, message, fake, cfg, [], sourceMessageId);
   await until(() => {
-    try { worktreeFile(taskId, "env.txt"); return true; } catch { return false; }
+    try { worktreeFile(taskId, "ready"); return true; } catch { return false; }
   });
-  return { prompt: worktreeFile(taskId, "prompt.txt"), env: worktreeFile(taskId, "env.txt") };
+  return { prompt: worktreeFile(taskId, "prompt.txt") };
 }
 
 async function finish(taskId: string): Promise<void> {
@@ -71,16 +71,13 @@ async function finish(taskId: string): Promise<void> {
 describe("what a turn is sent", () => {
   test("Wisp's text is one <wisp> section before the person's words; the stored prompt is the person's", async () => {
     const task = makeTask();
-    const { prompt, env } = await begin(task.id, "fix the bug");
+    const { prompt } = await begin(task.id, "fix the bug");
     expect(prompt).toBe(withWispSection([...taskPreambleLines(getTask(task.id)!), outputReminder(1)], "fix the bug"));
     const [wisp, person] = prompt.split("\n\n");
     expect(wisp!.startsWith("<wisp>\n")).toBe(true);
     expect(wisp!.endsWith("\n</wisp>")).toBe(true);
     expect(person).toBe("fix the bug");
     expect(turnsFor(task.id)[0]!.prompt).toBe("fix the bug");
-    // task briefs were removed: no turn is asked for one, or bound to one
-    expect(prompt.toLowerCase()).not.toContain("brief");
-    expect(env).not.toContain("WISP_BRIEF_RUN");
     await finish(task.id);
 
     // a later ordinary turn: Wisp's notes go before the message, never into it

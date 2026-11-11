@@ -77,7 +77,7 @@ export function listTasksRoute(url: URL): Response {
   );
 }
 
-/** A field this build does not read — an older client's `briefEnabled`, say — is ignored, never refused. */
+/** A field this build does not read — one an older or newer client sends — is ignored, never refused. */
 interface CreateTaskBody extends SubtaskBody {
   repoPath?: unknown;
   prompt?: unknown;

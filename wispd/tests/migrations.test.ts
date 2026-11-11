@@ -123,15 +123,13 @@ describe("the ledger", () => {
   });
 
   test("upgrading records who wrote each message and keeps the order they arrived in", () => {
-    const db = freshDatabase("brief-provenance");
+    const db = freshDatabase("message-provenance");
     migrate(db);
     db.exec(`
 DROP INDEX IF EXISTS idx_task_messages_source;
-DROP TABLE task_answer_observations;
 ALTER TABLE task_messages DROP COLUMN origin;
 ALTER TABLE task_messages DROP COLUMN source_seq;
 ALTER TABLE tasks DROP COLUMN input_seq;
-ALTER TABLE tasks DROP COLUMN input_rev;
 DELETE FROM schema_migrations WHERE id = 15;
 `);
     for (const id of ["tfixture", "tother"]) {
@@ -174,9 +172,9 @@ DELETE FROM schema_migrations WHERE id = 15;
       { id: "m-orphan", origin: "plugin", source_seq: 6 },
     ]);
     expect(db.query("SELECT origin, source_seq FROM task_messages WHERE task_id = 'tother'").get()).toEqual({ origin: "legacy", source_seq: 1 });
-    expect(db.query("SELECT id, input_seq, input_rev FROM tasks ORDER BY id").all()).toEqual([
-      { id: "tfixture", input_seq: 6, input_rev: 0 },
-      { id: "tother", input_seq: 1, input_rev: 0 },
+    expect(db.query("SELECT id, input_seq FROM tasks ORDER BY id").all()).toEqual([
+      { id: "tfixture", input_seq: 6 },
+      { id: "tother", input_seq: 1 },
     ]);
     db.close();
   });

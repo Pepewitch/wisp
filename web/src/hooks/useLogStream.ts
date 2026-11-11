@@ -50,6 +50,21 @@ export function useLogStream(
     let errored = false;
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
+    // A readiness check that fails (the daemon restarting, or too busy to
+    // answer in time) tries again rather than leaving the pane with no stream.
+    const scheduleRebuild = () => {
+      if (closed || reconnectTimer !== null) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        runtime.transport.ensureReady().then(
+          () => {
+            if (!closed) open("connecting…");
+          },
+          scheduleRebuild,
+        );
+      }, 3_000);
+    };
+
     const open = (note: string) => {
       source?.close();
       conn.opening("log");
@@ -115,15 +130,8 @@ export function useLogStream(
         errored = true;
         conn.set("log", false);
         // a hard failure (e.g. 401) never reconnects on its own — re-check the
-        // token and rebuild once, not on a loop
-        if (next.readyState === SSE_CLOSED && reconnectTimer === null) {
-          reconnectTimer = setTimeout(() => {
-            reconnectTimer = null;
-            void runtime.transport.ensureReady().then(() => {
-              if (!closed) open("connecting…");
-            });
-          }, 3_000);
-        }
+        // token, then rebuild
+        if (next.readyState === SSE_CLOSED) scheduleRebuild();
       };
       source = next;
     };

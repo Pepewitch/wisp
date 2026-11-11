@@ -26,3 +26,11 @@ it("allows a reachable Desktop proxy even when the browser reports offline", asy
   await expect(mutation.execute(undefined)).resolves.toEqual({ accepted: true })
   expect(command).toHaveBeenCalledTimes(1)
 })
+
+it("still reads a reachable daemon when the browser reports offline", async () => {
+  onlineManager.setOnline(false)
+  const read = vi.fn().mockResolvedValue([{ id: "t1", state: "done" }])
+  await expect(queryClient.fetchQuery({ queryKey: ["local", "tasks", { archived: false }], queryFn: read }))
+    .resolves.toEqual([{ id: "t1", state: "done" }])
+  expect(read).toHaveBeenCalledTimes(1)
+})

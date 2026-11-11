@@ -404,6 +404,41 @@ describe("the /api/events → queryClient bridge", () => {
     h.close();
   });
 
+  it("a hard failure whose readiness check also fails keeps trying until the stream is back", async () => {
+    const h = bridge("t1");
+    // the daemon is still restarting: the proxy refuses the health check twice
+    h.ensureSession
+      .mockRejectedValueOnce(new Error("upstream unavailable"))
+      .mockRejectedValueOnce(new Error("upstream unavailable"));
+    h.sources[0]!.hardError();
+
+    await vi.waitFor(() => {
+      expect(h.sources.length).toBe(2);
+    });
+    expect(h.ensureSession).toHaveBeenCalledTimes(3);
+    h.client.setQueryData(h.qk.tasksList(false), []);
+    h.sources[1]!.openUp();
+    // the reopen resyncs the sidebar the outage left stale
+    expect(invalidated(h.client, h.qk.tasksList(false))).toBe(true);
+    expect(h.connectionLog).toEqual([false, true]);
+    h.close();
+  });
+
+  it("a readiness check that fails after teardown schedules nothing", async () => {
+    const h = bridge("t1");
+    let refuse!: (error: Error) => void;
+    h.ensureSession.mockImplementationOnce(() => new Promise((_, reject) => { refuse = reject; }));
+    h.sources[0]!.hardError();
+    await vi.waitFor(() => {
+      expect(h.ensureSession).toHaveBeenCalledTimes(1);
+    });
+    h.close();
+    refuse(new Error("upstream unavailable"));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.ensureSession).toHaveBeenCalledTimes(1);
+    expect(h.sources.length).toBe(1);
+  });
+
   it("closing the bridge stops the stream and never reconnects after teardown", async () => {
     const h = bridge("t1");
     const first = h.sources[0]!;

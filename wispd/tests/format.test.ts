@@ -91,8 +91,8 @@ describe("formatEvent", () => {
    * stuck turn. Every shape below came from a real log, never from docs.
    */
   test("droid reasoning becomes a ~ line, carrying its text", () => {
-    expect(formatEvent(`{"type":"reasoning","text":"Let me read the brief first."}`, droid)).toBe(
-      "~ Let me read the brief first.",
+    expect(formatEvent(`{"type":"reasoning","text":"Let me read the notes first."}`, droid)).toBe(
+      "~ Let me read the notes first.",
     );
     expect(formatEvent(JSON.stringify({ type: "reasoning", text: "\nFirst thought\n\n- supporting detail\n" }), droid)).toBe(
       "~ First thought\n~\n~ - supporting detail",

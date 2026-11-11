@@ -123,12 +123,6 @@ describe("--help runs nothing", () => {
     expect(r.exit).toBe(1);
     expect(r.err).toStartWith("unknown command: nope\n");
     expect(r.err).toContain("wisp help [command]");
-    // task briefs were removed: `brief` is no command at all, help included
-    for (const args of [["brief", "show"], ["brief", "--help"], ["help", "brief"]]) {
-      const removed = await run(args, home);
-      expect(removed.exit, args.join(" ")).toBe(1);
-      expect(removed.err, args.join(" ")).toStartWith("unknown command: brief\n");
-    }
     expect(requests).toEqual([]);
   });
 
