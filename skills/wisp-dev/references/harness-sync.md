@@ -142,6 +142,11 @@ Update the builtin and every direct contract pin. Common locations:
 - `wispd/tests/harness-facts/<harness>.json` (rewritten by `harness:snapshot`);
 - `wispd/tests/adapters.test.ts`;
 - `wispd/tests/api-contracts.test.ts`;
+- `wispd/tests/models.test.ts` (the lineup appears in a warning string and in
+  the `wisp models` report text, so a refreshed list changes expected output);
+- `web/src/components/model-visibility-specimen.tsx` — the UI specimen hard-codes
+  a lineup and nothing ties it to `BUILTIN_ADAPTERS`, so a missed edit passes
+  every gate silently. The last two model refreshes both had to touch it;
 - the nearest strategy tests and `wispd/tests/fixtures/README.md`;
 - user or contributor guidance that names the old verified version.
 

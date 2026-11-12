@@ -109,9 +109,12 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     auth: { check: ["auth", "status"], fix: "run 'claude auth login'" },
     // Required for the structured activity stream: without it claude emits
     // only the outer Task call/result and Wisp cannot show what the child did.
-    // Reverified against claude-code 2.1.285: print/stream-json, verbose,
+    // Reverified against claude-code 2.1.322: print/stream-json, verbose,
     // subagent forwarding, permission bypass, resume, model and effort retain
-    // the same headless contract.
+    // the same headless contract (the `flags` surface of
+    // tests/harness-facts/claude.json re-read clean at that version — it
+    // records flag TOKENS, so `--output-format`'s own choices were checked
+    // separately: its help still lists "text", "json", "stream-json").
     exec: [
       "-p",
       "--output-format",
@@ -130,7 +133,8 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // listed in its `/effort` "Valid options" ("…, max, auto, ultracode
     // [on|off]"). On 2.1.291 `--effort ultracode` sets xhigh effort with
     // ultracode (a multi-agent workflow on every substantive task). `get_settings`
-    // reports it applied on opus-5-5, sonnet-5 and fable-5-1, and again on
+    // reports it applied on opus-5-5, sonnet-5 and fable-5-1 (the lineup then
+    // current — not the one staticModels offers today), and again on
     // `--resume`. haiku-4-5 reports it unavailable and runs as if unset, the
     // way it already ignores every effort level. A pass-through like the rest:
     // claude does the mapping, so no client has to know what the level means.
@@ -139,11 +143,31 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // the documented exception. Full ids only — `--model` also takes the
     // aliases 'opus'/'sonnet'/'fable', but an alias silently re-points at
     // whatever is newest, and wisp policy is an EXPLICIT model per task.
-    // Baked ids rechecked on claude-code 2.1.311; the zero-token `/model`
-    // read accepted Sonnet 5.5 and Haiku 5.5 on that version. Fable 5.1
-    // replaced legacy Fable 5, Opus 5.5 replaced Opus 5, and Sonnet 5.5 and
-    // Haiku 5.5 replaced Sonnet 5 and Haiku 4.5 in the curated current lineup.
-    staticModels: ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+    // Baked ids rechecked on claude-code 2.1.322; the zero-token `/model`
+    // read accepted all four on that version (init event named the id back,
+    // num_turns 0, duration_api_ms 0, every usage counter 0).
+    //
+    // THIS LIST IS A FIELD THE BINARY SHIPS, read off it verbatim: the baked
+    // catalog carries `latest_per_family`, and it moved between the two
+    // versions while nothing else in the lineup did —
+    //   2.1.311  {fable:"claude-fable-5-1",opus:"claude-opus-5-5",
+    //             sonnet:"claude-sonnet-5-5",haiku:"claude-haiku-5-5"}
+    //   2.1.322  {fable:"claude-fable-5-2",opus:"claude-opus-5-5",
+    //             sonnet:"claude-sonnet-5-5",haiku:"claude-haiku-5-5"}
+    // which is why Fable 5.2 REPLACES Fable 5.1 rather than joining it: one
+    // current id per family, the same shape by which Fable 5.1 replaced Fable
+    // 5, Opus 5.5 replaced Opus 5, and Sonnet 5.5 and Haiku 5.5 replaced
+    // Sonnet 5 and Haiku 4.5. Prefer this field over per-entry hints like
+    // `advisor_rank` or `fallback_3p`: claude-mythos-5-2 also tops its family
+    // by advisor_rank and is offered to approved organizations only.
+    //
+    // Fable 5.2's id is absent from 2.1.311 and present in 2.1.322, so an
+    // older CLI cannot run it. It is not rejected pre-flight — claude
+    // validates no `--model` string (both versions recognize any /^claude-\S+$/)
+    // — so the turn fails at the API, which surfaces as the task's state
+    // detail. The default below stays an id the older CLI knows, so only a
+    // deliberate pick can hit that.
+    staticModels: ["claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
     // Wisp's default for new claude tasks (owner decision, 2026-09-30).
     defaultModel: "claude-opus-5-5",
     // images arrive via the stdin envelope, not argv (spike ts7efd): on an
@@ -186,11 +210,23 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     limitMarkers: ["usage limit", "rate limit", "credit balance", "you've reached your"],
     attach: ["--resume", "{session}"],
     // task env reaches the agent's tool shell: tests/harness-facts/claude.json taskEnv
-    // no modelDiscovery (researched on claude-code 2.1.240): the CLI exposes
-    // no model list and names no default — `--help` has no models subcommand
-    // (running `claude models` starts an interactive session), and the
-    // --model help text only gives alias EXAMPLES ('opus', 'sonnet', …).
-    // `wisp models` says exactly that rather than scraping example prose.
+    // no modelDiscovery (researched on claude-code 2.1.240; `--help` and the
+    // baked catalog rechecked on 2.1.322): the CLI still exposes no model list
+    // and names no default — `models` is absent from `--help`'s Commands on
+    // 2.1.322 (on 2.1.240, running `claude models` started an interactive
+    // session), and the --model help text only gives alias EXAMPLES ('fable',
+    // 'opus', 'sonnet'). `wisp models` says exactly that rather than scraping
+    // example prose.
+    //
+    // The shipped binary DOES carry a structured catalog ({id, family,
+    // display_name, latest_per_family, …}) — that is where staticModels above
+    // comes from. harness:snapshot does NOT read it: `claudeModels` greps the
+    // WHOLE executable for the id pattern, which is why its list carries
+    // string-table and release-note noise (see the `models` surface note in
+    // tests/harness-facts/claude.json). Either way the catalog is a bundled
+    // blob behind no CLI contract, so it stays evidence for a curated
+    // staticModels edit rather than a discovery strategy that would re-parse
+    // an unversioned internal shape on every probe.
     // A3 (SP1, live-verified 2.1.251): /context and /usage are local commands
     // that print mode answers with zero model tokens, report as markdown.
     probe: "print-slash",

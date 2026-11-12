@@ -557,7 +557,7 @@ Six contract rules the modal must keep:
 - **The one exception lives in the adapter, never here.** `claude-code`
   enumerates no models and validates no `--model` string, so
   `AdapterDef.staticModels` carries a curated list for it (verified against
-  2.1.258) and the daemon serves that under the same shape as a probe. A real
+  2.1.322) and the daemon serves that under the same shape as a probe. A real
   probe always wins. The exception is claude's alone and must not spread — any
   harness that *can* be asked keeps `modelDiscovery`.
 - **Every create sends an explicit model** (wisp policy). Submit is blocked

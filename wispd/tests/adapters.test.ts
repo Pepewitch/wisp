@@ -114,7 +114,7 @@ describe("buildArgv", () => {
   // to probe. It must stay claude-only.
   test("only claude carries a curated staticModels list", () => {
     expect(claude.staticModels).toEqual([
-      "claude-fable-5-1",
+      "claude-fable-5-2",
       "claude-opus-5-5",
       "claude-sonnet-5-5",
       "claude-haiku-5-5",
@@ -123,6 +123,20 @@ describe("buildArgv", () => {
     expect(codex.staticModels).toBeUndefined();
     // a harness that CAN be probed must never carry one
     expect(claude.modelDiscovery).toBeUndefined();
+  });
+
+  // The curated lineup is REPLACED on a refresh, never grown: it mirrors
+  // claude's own baked `latest_per_family`, which holds exactly one id per
+  // family. Stated as a rule so a refresh that appends the new Fable beside
+  // the old one fails here rather than passing the exact-array pin above by
+  // being edited to match.
+  test("claude's curated lineup holds one id per model family", () => {
+    const families = claude.staticModels!.map((id) => /^claude-(fable|opus|sonnet|haiku)-/.exec(id)?.[1]);
+    expect(families).toEqual(["fable", "opus", "sonnet", "haiku"]);
+    expect(new Set(families).size).toBe(families.length);
+    // and the pinned default must be one of them (types.ts: a default no
+    // newer than the lineup itself)
+    expect(claude.staticModels).toContain(claude.defaultModel);
   });
 
   test("codex effort uses the model_reasoning_effort config key", () => {

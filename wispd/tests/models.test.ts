@@ -332,11 +332,11 @@ describe("defaultModel in adapters.json overrides", () => {
   });
 
   test("a named default the builtin's refreshed lineup dropped falls back to Wisp's default instead of failing the boot", () => {
-    for (const stale of ["claude-sonnet-5", "claude-haiku-4-5-20251001"]) {
+    for (const stale of ["claude-fable-5-1", "claude-sonnet-5", "claude-haiku-4-5-20251001"]) {
       const { out, warnings } = validate({ claude: { defaultModel: stale } });
       expect(out.claude!.defaultModel).toBe("claude-opus-5-5");
       expect(warnings).toEqual([
-        `adapters.json: adapter 'claude': Wisp no longer offers '${stale}' (offered: claude-fable-5-1, claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5) — using Wisp's default 'claude-opus-5-5'; set defaultModel to one of your models to pin one, or to null for none`,
+        `adapters.json: adapter 'claude': Wisp no longer offers '${stale}' (offered: claude-fable-5-2, claude-opus-5-5, claude-sonnet-5-5, claude-haiku-5-5) — using Wisp's default 'claude-opus-5-5'; set defaultModel to one of your models to pin one, or to null for none`,
       ]);
     }
     expect(validate({ claude: { defaultModel: "claude-sonnet-5-5" } })).toEqual({
@@ -421,7 +421,7 @@ describe("formatModelsReport — the effective-choice line", () => {
     );
     // claude pins a curated list but no default, so the list shows and the
     // default is still honestly absent.
-    expect(lines.join("\n")).toContain("models (4, pinned by the adapter): claude-fable-5-1");
+    expect(lines.join("\n")).toContain("models (4, pinned by the adapter): claude-fable-5-2");
   });
 
   test("cursor reports its whole discovered catalog and CLI default", async () => {
