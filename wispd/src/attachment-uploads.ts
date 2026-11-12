@@ -145,6 +145,17 @@ export async function stageAttachmentUpload(
   const path = uploadPath(uploadId);
   inFlight.add(path);
   const output = createWriteStream(path, { flags: "wx", mode: 0o600 });
+  // Every abort path below calls output.destroy(). A write still queued at
+  // that moment is rejected with ERR_STREAM_DESTROYED, which the stream emits
+  // as 'error' — and an unhandled 'error' event is a process-level crash, not
+  // a failed upload. The `once()` awaits only cover the instants they are
+  // pending, so own the listener for the stream's whole life: it keeps the
+  // abort paths quiet AND surfaces a genuine write failure (ENOSPC) that no
+  // pending `once()` happened to catch, instead of staging a truncated file.
+  let writeError: Error | null = null;
+  output.on("error", (error: Error) => {
+    writeError ??= error;
+  });
   const reader = request.body.getReader();
   const head = Buffer.alloc(SNIFF_WINDOW_BYTES);
   const hash = createHash("sha256");
@@ -182,6 +193,7 @@ export async function stageAttachmentUpload(
         }
       }
       if (!output.write(value)) await once(output, "drain");
+      if (writeError) throw writeError;
     }
     if (size === 0) throw new AttachmentUploadError(`${name}: empty file`);
     if (validText) {
@@ -195,6 +207,9 @@ export async function stageAttachmentUpload(
     const mediaType = sniffed === "text/plain" && !validText ? null : sniffed;
     if (!mediaType) throw new AttachmentUploadError(`${name}: not a supported attachment (magic-byte sniff)`);
     await closeWriteStream(output);
+    // A failure that landed while the last write drained would otherwise
+    // stage a file shorter than the size and hash recorded beside it.
+    if (writeError) throw writeError;
     const staged: UploadRecord = {
       uploadId,
       name,

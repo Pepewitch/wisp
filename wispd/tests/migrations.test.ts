@@ -125,8 +125,16 @@ describe("the ledger", () => {
   test("upgrading records who wrote each message and keeps the order they arrived in", () => {
     const db = freshDatabase("message-provenance");
     migrate(db);
+    // Every index and trigger that mentions these columns goes FIRST. SQLite
+    // re-validates the whole schema on each DROP COLUMN (3.54 reports "error
+    // in index … after drop column"), so a drop that leaves one dangling does
+    // not fail itself — it fails the NEXT drop. Older SQLite did not check, so
+    // this block used to pass while building a schema no real profile had.
     db.exec(`
 DROP INDEX IF EXISTS idx_task_messages_source;
+DROP TRIGGER IF EXISTS subtask_reports_started;
+DROP TRIGGER IF EXISTS subtask_reports_cancelled;
+DROP TRIGGER IF EXISTS subtasks_parent_archived;
 ALTER TABLE task_messages DROP COLUMN origin;
 ALTER TABLE task_messages DROP COLUMN source_seq;
 ALTER TABLE tasks DROP COLUMN input_seq;
@@ -184,12 +192,15 @@ DELETE FROM schema_migrations WHERE id = 15;
     migrate(db);
     // the shape release 0.5.12 left behind: no tier anywhere, and a trigger
     // whose body never mentions one
+    // The trigger that mentions `fast` is dropped BEFORE the columns, not
+    // after: SQLite re-validates the whole schema on each DROP COLUMN, so
+    // leaving it dangling fails the next drop rather than this one.
     db.exec(`
+DROP TRIGGER IF EXISTS workflows_context;
 ALTER TABLE tasks DROP COLUMN fast;
 ALTER TABLE task_contexts DROP COLUMN fast;
 ALTER TABLE task_messages DROP COLUMN fast;
 ALTER TABLE turns DROP COLUMN requested_fast;
-DROP TRIGGER IF EXISTS workflows_context;
 CREATE TRIGGER workflows_context AFTER UPDATE OF context_n, harness, model, effort ON tasks
 WHEN NEW.context_n != OLD.context_n OR NEW.harness != OLD.harness OR NEW.model IS NOT OLD.model OR NEW.effort IS NOT OLD.effort BEGIN
   UPDATE workflows SET state = 'paused', reason = 'Task agent or context changed; review and resume', revision = revision + 1 WHERE task_id = NEW.id AND state = 'active';
