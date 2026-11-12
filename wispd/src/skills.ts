@@ -15,6 +15,7 @@ import {
   ProbeError,
   type AdapterDef,
   type ProbeIo,
+  type SkillCtx,
   type SkillDiscoveryResult,
 } from "./adapters";
 import { bunProbeSpawn, bunRpcFactory } from "./probes";
@@ -23,6 +24,13 @@ import type { Task } from "./types";
 
 export const SKILL_TIMEOUT_MS = 30_000; // droid's session open alone is ~10–12s (SP1)
 export const SKILL_CACHE_TTL_MS = 120_000; // the probe TTL — a second ask is a second process otherwise
+
+/**
+ * The task id a project-scoped answer is filed under. Task ids are lowercase
+ * alphanumeric, so this sentinel cannot collide with one — a task's deletion
+ * or a bulk purge never evicts a project's list.
+ */
+const PROJECT_CACHE_TASK_ID = "\0project";
 
 /** What the route answers with: the list, when it was taken, and whether the cache served it. */
 export interface SkillAnswer {
@@ -68,7 +76,44 @@ export class TaskSkillCache {
   }
 
   skills(task: Task, def: AdapterDef): Promise<SkillAnswer> {
-    const key = task.id;
+    return this.discover(task.id, task.id, task.harness, def, {
+      sessionId: task.session_id,
+      cwd: task.worktree_path ?? task.repo_path,
+      initSkills: parseInitSkills(task.skills_json),
+    });
+  }
+
+  /**
+   * The same discovery for a PROJECT and a harness, with no task behind it:
+   * what the create composer's palette can offer before the task it is
+   * describing exists. The context is honestly empty — no session (droid's
+   * strategy refuses with its own 409, and the palette says so) and no init
+   * list (claude answers with its "user and project skills only" note) — and
+   * the cwd is the project itself, so its `.claude/skills` are found.
+   *
+   * Keyed per project AND harness under a sentinel task id, so no task's
+   * deletion or purge evicts it and two harnesses never share an answer.
+   */
+  projectSkills(repoPath: string, harness: string, def: AdapterDef): Promise<SkillAnswer> {
+    return this.discover(`${PROJECT_CACHE_TASK_ID}\0${harness}\0${repoPath}`, PROJECT_CACHE_TASK_ID, harness, def, {
+      sessionId: null,
+      cwd: repoPath,
+      initSkills: null,
+    });
+  }
+
+  /**
+   * One discovery, whatever asked for it: the TTL cache, the shared in-flight
+   * promise, the timeout that aborts the child, and the rule that a failure is
+   * never cached.
+   */
+  private discover(
+    key: string,
+    taskId: string,
+    harness: string,
+    def: AdapterDef,
+    ctx: Omit<SkillCtx, "signal">,
+  ): Promise<SkillAnswer> {
     const hit = this.entries.get(key, this.now().getTime());
     if (hit) {
       return Promise.resolve({ result: hit.value, probedAt: new Date(hit.at).toISOString(), cached: true });
@@ -81,24 +126,19 @@ export class TaskSkillCache {
     let timeout: ReturnType<typeof setTimeout> | null = null;
     const timedOut = new Promise<never>((_, reject) => {
       timeout = setTimeout(() => {
-        const error = new ProbeError(`the ${task.harness} skill discovery timed out after ${this.timeoutMs / 1000}s`, 504);
+        const error = new ProbeError(`the ${harness} skill discovery timed out after ${this.timeoutMs / 1000}s`, 504);
         reject(error);
         controller.abort(error);
       }, this.timeoutMs);
     });
 
     const attempt = Promise.race([
-      discoverSkills(def, {
-        sessionId: task.session_id,
-        cwd: task.worktree_path ?? task.repo_path,
-        initSkills: parseInitSkills(task.skills_json),
-        signal: controller.signal,
-      }, this.io),
+      discoverSkills(def, { ...ctx, signal: controller.signal }, this.io),
       timedOut,
     ])
       .then((result): SkillAnswer => {
         const at = this.now();
-        if (!state.deleted) this.entries.set(task.id, key, result, at.getTime());
+        if (!state.deleted) this.entries.set(taskId, key, result, at.getTime());
         return { result, probedAt: at.toISOString(), cached: false };
       })
       .finally(() => {

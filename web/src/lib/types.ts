@@ -487,6 +487,12 @@ export interface HarnessesResponse {
     subtasks?: boolean;
     /** PUT /api/repos/order: the configured projects can be reordered. Absent: the sidebar offers no reorder. */
     projectOrder?: boolean;
+    /**
+     * GET /api/projects/skills: a project's skills and custom commands for a
+     * harness, with no task behind them. Absent: the create composer's `/`
+     * palette has no registry to read and offers nothing.
+     */
+    projectSkills?: boolean;
   };
 }
 

@@ -430,6 +430,27 @@ export function useProjectEntries(project: string | null, dir: string, filter: s
   });
 }
 
+/**
+ * GET /api/projects/skills — the same registry `useTaskSkills` reads, for a
+ * project and a harness with no task yet: the create composer's `/` palette.
+ * Asked only while a slash token is open, and never retried on its own — a
+ * harness that needs a session (droid) refuses with a 409 the palette shows
+ * as its own footer rather than as an error surface.
+ */
+export function useProjectSkills(project: string | null, harness: string | null, enabled: boolean) {
+  const { transport, qk } = useDaemonRuntime();
+  return useQuery({
+    queryKey: [...qk.repos, "skills", project ?? "", harness ?? ""],
+    queryFn: () =>
+      transport.request<TaskSkills>(
+        `/api/projects/skills?project=${encodeURIComponent(project ?? "")}&harness=${encodeURIComponent(harness ?? "")}`,
+      ),
+    enabled: enabled && project !== null && harness !== null,
+    staleTime: 120_000, // the daemon's own skill-cache TTL: a reopened palette is free
+    retry: false,
+  });
+}
+
 /** GET /api/settings — daemon-wide preferences shared by every client. */
 export function useWispSettings() {
   const { transport, qk } = useDaemonRuntime();

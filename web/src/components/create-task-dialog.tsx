@@ -9,7 +9,9 @@ import { BasePicker } from "@/components/base-picker"
 import { PromptField } from "@/components/create-prompt-field"
 import { POPOVER_SURFACE } from "@/components/primitives"
 import { useCreateTask, useReprobeHarnesses } from "@/hooks/mutations"
+import { useHarnessFeatures } from "@/hooks/queries"
 import { useCreateTaskComposer } from "@/hooks/useCreateTaskComposer"
+import { useDialogSubmitShortcut } from "@/hooks/useDialogSubmitShortcut"
 import { failureReason } from "@/lib/api"
 import { discardAttachmentPayloads } from "@/lib/attachments"
 import { clearCreateTaskDraft, readCreateTaskProject, writeCreateTaskProject } from "@/lib/drafts"
@@ -161,6 +163,9 @@ function ProjectForm({
 
   const createTask = useCreateTask()
   const reprobe = useReprobeHarnesses()
+  // `features.projectSkills`: an older daemon has no project registry for the
+  // `/` palette to read, so the palette offers nothing rather than guessing
+  const canReadProjectSkills = useHarnessFeatures().data?.projectSkills === true
   // the three refusals below are the form's own, not the daemon's, so they are
   // the one piece of write state the mutation cannot hold
   const [validationError, setValidationError] = useState<string | null>(null)
@@ -172,9 +177,6 @@ function ProjectForm({
   // that closes; the frame defers past base-ui's own focus restore.
   const restoreComposer = () => requestAnimationFrame(() => box.current?.focus())
 
-  // Keep `submit` reachable from the key listener below without re-binding it
-  // on every keystroke.
-  const submitRef = useRef<() => void>(() => {})
   /**
    * A create is in flight, from the FIRST click rather than from the mutation.
    *
@@ -264,36 +266,9 @@ function ProjectForm({
     )
   }
 
-  // Refreshed after every render (no dep array): writing a ref DURING render
-  // is a purity violation, and the whole point of this ref is that the key
-  // listener below reads the latest closure without re-binding per keystroke.
-  useEffect(() => {
-    submitRef.current = () => {
-      if (ready) submit()
-    }
-  })
-
-  /**
-   * ⌘↵ belongs to the DIALOG, not to whichever element has focus.
-   *
-   * Focus legitimately sits outside the <form> at times — base-ui parks it on
-   * the popup, which is the form's PARENT, so a handler on the form never sees
-   * the event and the shortcut silently dies. This listener lives exactly as
-   * long as the open composer, and the dialog is modal, so it competes with
-   * nothing. (The steer box's palette bug was the mirror image of this: a
-   * document handler that outlived its owner.)
-   */
-  useEffect(() => {
-    if (suffixPromptModalOpen) return
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-        e.preventDefault()
-        submitRef.current()
-      }
-    }
-    document.addEventListener("keydown", onKey)
-    return () => document.removeEventListener("keydown", onKey)
-  }, [suffixPromptModalOpen])
+  useDialogSubmitShortcut(() => {
+    if (ready) submit()
+  }, suffixPromptModalOpen)
 
   return (
     <form
@@ -342,7 +317,15 @@ function ProjectForm({
       </div>
 
       {/* the prompt — the reason the modal exists, so it gets the room */}
-      <PromptField box={box} prompt={prompt} setPrompt={setPrompt} attachments={attachments} />
+      <PromptField
+        box={box}
+        prompt={prompt}
+        setPrompt={setPrompt}
+        attachments={attachments}
+        repoPath={repoPath || null}
+        harness={choice?.harness ?? null}
+        canReadSkills={canReadProjectSkills}
+      />
 
       <CreateTaskNotices
         error={error}

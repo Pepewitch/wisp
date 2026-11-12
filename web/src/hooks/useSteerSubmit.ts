@@ -10,7 +10,6 @@ import {
 import { useDaemonTransport } from "@/lib/runtime"
 import { COMPACTING_TEXT } from "@/lib/compaction"
 import type { ApiTask, SendResponse, SendWhen } from "@/lib/types"
-import type { SlashToken } from "@/lib/slash"
 
 interface PendingSend {
   taskId: string
@@ -59,7 +58,7 @@ export function useSteerSubmit({
   setValue,
   setSending,
   setNote,
-  setPalette,
+  closePalette,
 }: {
   task: ApiTask | null
   canSend: boolean
@@ -80,7 +79,8 @@ export function useSteerSubmit({
   setValue: Dispatch<SetStateAction<string>>
   setSending: Dispatch<SetStateAction<boolean>>
   setNote: Dispatch<SetStateAction<SteerNote | null>>
-  setPalette: Dispatch<SetStateAction<SlashToken | null>>
+  /** the open `/` palette, closed by a send or a stop — neither leaves a list floating */
+  closePalette: () => void
 }) {
   const sendMessage = useSendMessage()
   const interruptTask = useInterruptTask()
@@ -93,7 +93,7 @@ export function useSteerSubmit({
     if (!canSend || !task) return
     const id = task.id
     const message = value
-    setPalette(null)
+    closePalette()
     setNote(null)
     setSending(true)
     // Raw bytes stream only when the user asks for work; no base64 copy enters
@@ -200,7 +200,7 @@ export function useSteerSubmit({
   const stop = () => {
     if (!canStop || !task) return
     const id = task.id
-    setPalette(null)
+    closePalette()
     setNote({ taskId: id, tone: "muted", text: "Stopping…" })
     setSending(true)
     const request = onInterrupt ? Promise.resolve().then(onInterrupt) : interruptTask.mutateAsync(id)

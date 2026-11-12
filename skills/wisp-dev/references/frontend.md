@@ -591,6 +591,31 @@ Six contract rules the modal must keep:
   save re-reads the stored map and changes only its own pair, and an open
   composer picks up another tab's stars from the `storage` event.
 
+`@` and `/` work in the create composer exactly as they do in the steer box,
+through the same two hooks (`useComposerMentions`, `useComposerSlash`): the
+first task you describe is the one most likely to name a file or ask for a
+skill, and a composer without them sends you to the steer box to retype what
+you already typed. Two things differ, both because there is no task yet.
+
+- **Every `/` pick is prompt text.** The Wisp tier (`/status`, `/archive`),
+  the harness's out-of-turn reads and the tool panel all act on a task that
+  does not exist, so they are ABSENT rather than offered and refused. What is
+  left is the registry: `Skills` and `Commands`.
+- **The registry is the PROJECT's**, read for the harness picked in the bar
+  below — `GET /api/projects/skills?project=…&harness=…`, advertised by
+  `features.projectSkills`, asked for when the palette opens rather than when
+  the dialog does. A harness that enumerates only from a live session (droid)
+  refuses with its own reason, which becomes the group's footer; an older
+  daemon has no registry to read, so `/` opens nothing at all. A palette with
+  neither a row nor a footer never floats: an empty box over the control bar
+  is a promise this harness cannot keep.
+
+Both lists float BELOW the textarea, over the notices and the control bar —
+the modal's own top edge is a few pixels above the prompt, and a list opening
+upwards would be clipped by it. Escape belongs to the open list and stops
+there (`stopPropagation`): dismissing a completion must never also throw away
+the draft behind it. With nothing floating, Escape is the dialog's again.
+
 An unfinished create composer stays in webview memory when the dialog closes:
 prompt, raw pending files and task choices restore for the same project on the
 same connection. Switching projects opens that project's own draft, and the
@@ -786,6 +811,12 @@ always the first row of the first group. A tie keeps the order the tier
 declared. The floor is not decoration either: cmdk scores `usage` against
 `status` at ~0.004, and every one of those is a row you have to look past.
 
+`useComposerSlash` owns all of this, for BOTH composers: which token the
+caret is in, which dismissal is still in force, what a pick writes, and the
+key forwarding. The steer box adds the tiers that need a task and the local
+actions a pick may run; the create composer adds nothing (§5c). One hook, so
+`/` cannot drift into meaning two things.
+
 Four dismissals — Escape, a space (commands take no arguments), the caret
 leaving the token, and picking an item — and one rule that makes them bearable:
 **the palette never deletes typed text.** A dismissal also suppresses reopening
@@ -800,8 +831,9 @@ Three tiers, and the tier is information rather than decoration:
 | 2 — harness reads | the harness's name | no — an out-of-band probe |
 | 3 — skills | `Skills` | **yes** — it is prompt text the harness honors |
 
-Tier 3's entries are the harness's OWN registry, enumerated per task by the
-daemon (`GET /api/tasks/:id/skills`): claude's init-event list unioned with
+Tier 3's entries are the harness's OWN registry, enumerated by the daemon —
+per task here (`GET /api/tasks/:id/skills`), per project and harness for the
+create composer (`GET /api/projects/skills`), one discovery either way: claude's init-event list unioned with
 the frontmatter scan, droid's `list_skills` filtered by its own
 `userInvocable`, codex's `skills/list`. Never a hardcoded list — droid's was
 stale within one release, which is the rot discovery deletes. A name-only

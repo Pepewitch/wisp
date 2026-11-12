@@ -8,9 +8,10 @@ import { CreateTaskNotices } from "@/components/create-task-notices"
 import { Flowchart } from "@/components/icons"
 import { Menu, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
 import { POPOVER_SURFACE, SwitchTrack } from "@/components/primitives"
-import { useHarnesses } from "@/hooks/queries"
+import { useHarnesses, useHarnessFeatures } from "@/hooks/queries"
 import { useCreateTask, useReprobeHarnesses } from "@/hooks/mutations"
 import { useCreateTaskComposer } from "@/hooks/useCreateTaskComposer"
+import { useDialogSubmitShortcut } from "@/hooks/useDialogSubmitShortcut"
 import { failureReason } from "@/lib/api"
 import { discardAttachmentPayloads } from "@/lib/attachments"
 import { clearCreateTaskDraft } from "@/lib/drafts"
@@ -100,6 +101,8 @@ function SubtaskForm({ parent, harnesses, harnessesError, onClose }: {
   const [suffixModalOpen, setSuffixModalOpen] = useState(false)
   const createTask = useCreateTask()
   const reprobe = useReprobeHarnesses()
+  // the parent's project, read for the agent picked here (`features.projectSkills`)
+  const canReadProjectSkills = useHarnessFeatures().data?.projectSkills === true
   const [uploading, setUploading] = useState(false)
   const [validationError, setValidationError] = useState<string | null>(null)
   const error = validationError ?? (createTask.error ? failureReason(createTask.error) : null)
@@ -160,21 +163,7 @@ function SubtaskForm({ parent, harnesses, harnessesError, onClose }: {
       },
     )
   }
-  const submitRef = useRef(submit)
-  useEffect(() => {
-    submitRef.current = submit
-  })
-  useEffect(() => {
-    if (suffixModalOpen) return
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-        e.preventDefault()
-        submitRef.current()
-      }
-    }
-    document.addEventListener("keydown", onKey)
-    return () => document.removeEventListener("keydown", onKey)
-  }, [suffixModalOpen])
+  useDialogSubmitShortcut(submit, suffixModalOpen)
 
   return (
     <form onSubmit={(e) => { e.preventDefault(); submit() }}>
@@ -200,7 +189,15 @@ function SubtaskForm({ parent, harnesses, harnessesError, onClose }: {
         {KIND_WORDS[kind]} Starts from {base.trim() ? <span className="font-mono">{base.trim()}</span> : subtaskBasePreview(kind, parent)}.
       </p>
 
-      <PromptField box={box} prompt={prompt} setPrompt={setPrompt} attachments={attachments} />
+      <PromptField
+        box={box}
+        prompt={prompt}
+        setPrompt={setPrompt}
+        attachments={attachments}
+        repoPath={parent.repo_path}
+        harness={choice?.harness ?? null}
+        canReadSkills={canReadProjectSkills}
+      />
 
       <CreateTaskNotices
         error={error}

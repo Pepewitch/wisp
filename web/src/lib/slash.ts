@@ -7,6 +7,7 @@ import type {
   SlashCommandEntry,
   SkillEntry,
   StatusEntry,
+  TaskSkills,
 } from "@/lib/types";
 import type { ToolName } from "@/lib/tools";
 
@@ -366,6 +367,41 @@ export function commandEntries(commands: SlashCommandEntry[] | undefined): Slash
       costLabel: command.executable ? "may run a script" : "runs a turn",
     };
   });
+}
+
+/**
+ * The two registry groups every composer shows: the harness's own skills and
+ * its custom commands, each carrying A4's honesty footer — the skills the
+ * harness skipped, the note that says a list is partial, the command registry
+ * that failed without erasing a valid skill list.
+ *
+ * `note` is the palette's own line for a list that is not there yet: the
+ * create composer asks for the registry when the palette opens, and a harness
+ * that enumerates only from a session refuses before the first turn. It is
+ * never allowed to overwrite something the harness itself said.
+ */
+export function registryGroups(skills: TaskSkills | undefined, note: string | null = null): SlashGroup[] {
+  const skillGroup: SlashGroup = {
+    label: "Skills",
+    entries: tier3Entries(skills?.skills, skills?.invoke),
+    costsTurn: true,
+  };
+  if (skills?.errors.length) {
+    skillGroup.footer = `${skills.errors.length} skill${skills.errors.length === 1 ? "" : "s"} skipped by the harness`;
+    skillGroup.footerTitle = skills.errors.join("\n");
+  } else if (skills?.partialNote) {
+    skillGroup.footer = skills.partialNote;
+  } else if (note) {
+    skillGroup.footer = note;
+  }
+  const commandGroup: SlashGroup = { label: "Commands", entries: commandEntries(skills?.commands) };
+  if (skills?.commandError) commandGroup.footer = skills.commandError;
+  return [skillGroup, commandGroup];
+}
+
+/** True when a palette has something to show: a row, or an honest line about why there is none. */
+export function hasSlashRows(groups: SlashGroup[]): boolean {
+  return groups.some((group) => group.entries.length > 0 || Boolean(group.footer));
 }
 
 /**
