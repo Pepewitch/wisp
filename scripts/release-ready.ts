@@ -8,29 +8,21 @@
 import { relative } from "node:path";
 import { todoLines } from "./check-release-docs";
 import {
-  RELEASE_COMMIT_CHECKS,
   REPOSITORY,
   ROOT,
   command,
-  checkVerdicts,
-  commitCheckRuns,
   fetchMainAndTags,
   formatVerdicts,
   git,
   localTagExists,
   remoteTagExists,
-  rerunAdvice,
-  settleFailures,
-  sleep,
   versionArgument,
+  waitForCommitChecks,
   waitMinutes,
-  workflowRunState,
-  type CheckVerdict,
 } from "./release-github";
 import { releaseNotesPath } from "./release-promotion";
 import { SOURCE_SITE, assertTaggableVersion } from "./release-versions";
 
-const POLL_MS = 20_000;
 const HISTORY_LIMIT = 50;
 
 /**
@@ -54,12 +46,6 @@ function versionAt(sha: string): string | null {
   return typeof version === "string" ? version : null;
 }
 
-export function progressLine(verdicts: readonly CheckVerdict[]): string {
-  const waiting = verdicts.filter((verdict) => verdict.state === "pending" || verdict.state === "missing");
-  const passed = verdicts.filter((verdict) => verdict.state === "passed").length;
-  return `  ${passed}/${verdicts.length} passed${waiting.length ? `; waiting for ${waiting.map((verdict) => verdict.name).join(", ")}` : ""}`;
-}
-
 /** Problems that make tagging wrong no matter what the checks say. */
 function commitProblems(sha: string, version: string): string[] {
   const tag = `v${version}`;
@@ -75,29 +61,6 @@ function commitProblems(sha: string, version: string): string[] {
     }
   }
   return problems;
-}
-
-async function waitForChecks(sha: string, minutes: number): Promise<CheckVerdict[] | null> {
-  const deadline = Date.now() + minutes * 60_000;
-  let last = "";
-  for (;;) {
-    const verdicts = settleFailures(checkVerdicts(commitCheckRuns(sha), RELEASE_COMMIT_CHECKS), workflowRunState);
-    const line = progressLine(verdicts);
-    if (line !== last) console.log(line);
-    last = line;
-    if (verdicts.some((verdict) => verdict.state === "failed")) {
-      console.error(formatVerdicts(verdicts));
-      console.error(rerunAdvice(verdicts));
-      return null;
-    }
-    if (verdicts.every((verdict) => verdict.state === "passed")) return verdicts;
-    if (Date.now() >= deadline) {
-      console.error(formatVerdicts(verdicts));
-      console.error(`The checks are still running after ${minutes} minutes. Run this command again to keep waiting.`);
-      return null;
-    }
-    await sleep(POLL_MS);
-  }
 }
 
 async function main(): Promise<number> {
@@ -128,7 +91,7 @@ async function main(): Promise<number> {
   const later = git(["log", "--oneline", `${sha}..origin/main`]);
   if (later) console.log(`  These commits landed after it and will ship in the next release, not this one:\n${later.replace(/^/gm, "    ")}`);
 
-  const verdicts = await waitForChecks(sha, waitMinutes(args, 30));
+  const verdicts = await waitForCommitChecks(sha, waitMinutes(args, 30));
   if (!verdicts) return 1;
   console.log(formatVerdicts(verdicts));
   const annotated = localTagExists(tag);

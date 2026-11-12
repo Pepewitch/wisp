@@ -50,10 +50,9 @@ Commit the release preparation before moving on.
 
 ### 2. Open the release PR, then gate the branch
 
-Push the branch and open the PR first, so its CI runs while the local gate
-does: title it `release: prepare <version>`, and have the body say what the
-release ships. The macOS Desktop job takes the longest, and it finishes in
-about the time the local gate takes. Then run the gate on the same commit:
+Push the branch and open the PR FIRST — the gate now reads that commit's CI
+rather than re-running it. Title it `release: prepare <version>`, and have the
+body say what the release ships. Then gate the same commit:
 
 ```sh
 git push -u origin "release/$version"
@@ -67,11 +66,33 @@ rerun on the new commit.
 It refuses the mistakes that are expensive once a tag exists — a reused or
 non-newer version, a branch behind `origin/main`, unfinished `TODO`s, an
 install document that still names the previous release, a Bun that is not the
-pinned one — then runs the source gates cheapest first: whitespace, brand
-assets, the evaluator suite,
-`bun run check` (docs, version pins, workflow pins, lint, types, all tests),
-the smoke test, and a full build. Each gate logs to
-`dist/release-check/<gate>.log`; only a failing gate's tail is printed.
+pinned one, a commit that is not on `origin` — then runs the gates **no CI job
+runs**: whitespace, the brand PNG render, and the evaluator suite. Finally it
+waits for this commit's five release checks (`test`, `browser-security`,
+`supply-chain`, `linux-contract`, `update-verifier`) and fails unless they are
+green. Each gate logs to `dist/release-check/<gate>.log`; only a failing
+gate's tail is printed. `--wait-minutes <n>` bounds the wait (default 30).
+
+That split is deliberate, and it is why the gate takes seconds instead of
+minutes. ci.yml's `test` job is `needs: [checks, daemon, web, smoke, bench]`
+under `if: always()` and fails on anything that is not an explicit success, so
+a green `test` already proves lint, types, the pin gates, `test:root`, all six
+daemon shards, both web shards, the smoke run, the compiled-binary checks and
+the Linux artifact — on the identical commit. Running them again locally
+proved the same thing twice and measured about five minutes, nearly all of it
+the daemon suite run serially.
+
+Use `--full` when you want this machine to prove the release by itself — no
+network, no CI, nothing trusted but the code in front of you:
+
+```sh
+bun run release:check "$version" --full
+```
+
+That adds `check:fast`, the test suites, smoke and the build, and skips the CI
+read entirely. The daemon suite is sharded six ways even here (49s against
+240s serial for the same files, using the sharder and duration table CI uses),
+so `--full` costs roughly a minute and a half rather than five.
 
 The brand gate rasterizes the PNG assets with headless Chrome, and no CI job
 renders them, so `release:check` decides: when nothing the PNGs are drawn from

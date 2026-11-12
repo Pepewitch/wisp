@@ -9,6 +9,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:f
 import { join, relative } from "node:path";
 import { todoLines } from "./check-release-docs";
 import {
+  RELEASE_COMMIT_CHECKS,
   ROOT,
   command,
   fetchMainAndTags,
@@ -20,6 +21,8 @@ import {
   releaseTags,
   remoteTagExists,
   versionArgument,
+  waitForCommitChecks,
+  waitMinutes,
 } from "./release-github";
 import { releaseNotesPath } from "./release-promotion";
 import { SOURCE_SITE, assertTaggableVersion, sourceVersion } from "./release-versions";
@@ -61,7 +64,19 @@ export function pngInputChanges(changedPaths: readonly string[], dependencyDiff:
   return changes;
 }
 
-export function sourceGates(previousTag: string, pngChanges: readonly string[]): Gate[] {
+/**
+ * The gates no CI job runs, so this machine is the only place they happen.
+ *
+ * `brand` is here for its PNG render specifically: CI runs `brand:check`
+ * without Chrome (ci.yml says so in as many words), so the SVGs and the
+ * inlined favicon are checked there and the two rasterized PNGs are not.
+ * `test:evaluator` appears in no workflow at all. `whitespace` is a diff
+ * against origin/main, which a per-commit CI job has no reason to do.
+ *
+ * Measured on an M-series laptop: 1 second for the three of them together,
+ * plus a few seconds when the PNG render actually runs.
+ */
+export function localOnlyGates(previousTag: string, pngChanges: readonly string[]): Gate[] {
   const brand: Gate =
     pngChanges.length === 0
       ? {
@@ -75,10 +90,36 @@ export function sourceGates(previousTag: string, pngChanges: readonly string[]):
     { id: "whitespace", cmd: ["git", "diff", "--check", "origin/main", "HEAD"] },
     brand,
     { id: "evaluator", cmd: ["bun", "run", "test:evaluator"] },
-    { id: "check", cmd: ["bun", "run", "check"] },
+  ];
+}
+
+/**
+ * What CI already proves on this very commit — run locally only for `--full`.
+ *
+ * ci.yml's `test` job is `needs: [checks, daemon, web, smoke, bench]` under
+ * `if: always()`, and fails on anything that is not an explicit success. So a
+ * green `test` means lint, typecheck, the doc/version/toolchain/workflow pin
+ * gates, `test:root`, all six daemon shards, both web shards, the smoke run,
+ * the compiled-binary checks and the Linux artifact all passed. Re-running
+ * that here proved the same thing twice and cost about five minutes, which is
+ * why the default mode reads the verdict instead.
+ *
+ * The daemon suite is sharded even here: six shards measured 49s against 240s
+ * serial for the identical files, and the sharder (and its duration table) is
+ * the one CI uses.
+ */
+export function ciCoveredGates(): Gate[] {
+  return [
+    { id: "check", cmd: ["bun", "run", "check:fast"], note: "lint, types, and the doc/version/toolchain/workflow pins" },
+    { id: "tests", cmd: ["bun", "run", "test:all:sharded"], note: "daemon suite in 6 parallel shards, then web" },
     { id: "smoke", cmd: ["bun", "run", "smoke"] },
     { id: "build", cmd: ["bun", "run", "build"] },
   ];
+}
+
+export function sourceGates(previousTag: string, pngChanges: readonly string[], full: boolean): Gate[] {
+  const local = localOnlyGates(previousTag, pngChanges);
+  return full ? [...local, ...ciCoveredGates()] : local;
 }
 
 function relativePath(path: string): string {
@@ -90,9 +131,18 @@ function workingTreeChanges(): string {
 }
 
 /** Everything wrong with the branch at once, so one pass can fix it all. */
-export function preconditionProblems(version: string, previous: string): string[] {
+export function preconditionProblems(version: string, previous: string, full = false): string[] {
   const tag = `v${version}`;
   const problems: string[] = [];
+  // Reading CI's verdict needs a commit CI has seen. An unpushed HEAD would
+  // otherwise sit in "missing" until the wait timed out, 30 minutes later,
+  // with nothing wrong except the order the operator did things in.
+  if (!full && git(["branch", "--remotes", "--contains", "HEAD"]).trim() === "") {
+    problems.push(
+      "this commit is not on origin, so CI has no verdict for it; push the release branch first " +
+        "(releasing.md step 2 pushes before gating), or pass --full to gate without CI",
+    );
+  }
   const changes = workingTreeChanges();
   if (changes) problems.push(`commit the release preparation first; the working tree has changes:\n${changes}`);
   const current = sourceVersion(ROOT);
@@ -177,7 +227,12 @@ async function runGate(gate: Gate): Promise<boolean> {
 }
 
 async function main(): Promise<number> {
-  const version = versionArgument(process.argv.slice(2), "bun run release:check <version>");
+  const args = process.argv.slice(2);
+  const full = args.includes("--full");
+  const version = versionArgument(
+    args.filter((arg) => arg !== "--full"),
+    "bun run release:check <version> [--full] [--wait-minutes <n>]",
+  );
   assertTaggableVersion(version);
   fetchMainAndTags();
   const tags = releaseTags();
@@ -189,7 +244,7 @@ async function main(): Promise<number> {
   }
   console.log(`release:check ${version} (previous release ${previous})`);
 
-  const problems = preconditionProblems(version, previous);
+  const problems = preconditionProblems(version, previous, full);
   if (problems.length > 0) {
     for (const problem of problems) console.error(`  - ${problem}`);
     console.error(`release:check stopped before the gates: fix the ${problems.length} problem(s) above, commit, and run it again.`);
@@ -203,7 +258,7 @@ async function main(): Promise<number> {
   const changed = git(["diff", "--name-only", previousTag, "HEAD"]).split("\n").filter(Boolean);
   const dependencies = git(["diff", previousTag, "HEAD", "--", "bun.lock", "web/package.json"]);
   mkdirSync(join(ROOT, LOG_DIR), { recursive: true });
-  for (const gate of sourceGates(previousTag, pngInputChanges(changed, dependencies))) {
+  for (const gate of sourceGates(previousTag, pngInputChanges(changed, dependencies), full)) {
     if (await runGate(gate)) continue;
     console.error(
       "Read the log above. If the failure is in code this release did not change (a flaky test),\n" +
@@ -217,8 +272,25 @@ async function main(): Promise<number> {
     console.error(`a gate changed tracked or untracked files, so the commit is not what was checked:\n${leftovers}`);
     return 1;
   }
-  const head = git(["rev-parse", "--short", "HEAD"]);
-  console.log(`release:check passed for ${version} at ${head}.`);
+
+  const sha = git(["rev-parse", "HEAD"]);
+  const head = sha.slice(0, 7);
+  if (!full) {
+    // The release's own five checks, on this exact commit — the same set
+    // release:ready refuses to tag without. Reading them is what lets the
+    // gates above be only the ones CI does not run.
+    console.log(`  ..    reading CI for ${head}: ${RELEASE_COMMIT_CHECKS.join(", ")}`);
+    if (await waitForCommitChecks(sha, waitMinutes(args, 30)) === null) {
+      console.error(
+        `\nCI is not green for ${head}, so this release is not validated. Fix it and run release:check again,\n` +
+          "or pass --full to run every gate on this machine instead of reading CI's verdict.",
+      );
+      return 1;
+    }
+    console.log(`  ok    CI is green for ${head}: ${RELEASE_COMMIT_CHECKS.join(", ")}`);
+  }
+
+  console.log(`release:check passed for ${version} at ${head}${full ? " (--full: every gate ran here)" : ""}.`);
   console.log("Next: add this result to the release PR, and land it once every check is green (releasing.md, step 3).");
   return 0;
 }
