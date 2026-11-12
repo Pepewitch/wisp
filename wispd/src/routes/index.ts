@@ -21,7 +21,7 @@ import { getTask, listTasks } from "../store";
 import { harnessesRoute, outboxRoute } from "./harnesses";
 import { diagnosticsRoute } from "./diagnostics";
 import { err, json } from "./http";
-import { addProjectRoute, copyPreviewRoute, projectEntriesRoute, removeProjectRoute, reorderReposRoute, reposRoute, statusRoute } from "./projects";
+import { addProjectRoute, copyPreviewRoute, projectEntriesRoute, projectSkillsRoute, removeProjectRoute, reorderReposRoute, reposRoute, statusRoute } from "./projects";
 import { eventStream, logStream } from "./stream";
 import {
   createSuffixPromptRoute,
@@ -99,6 +99,7 @@ function projectRoutes(
   method: string,
   cfg: WispConfig,
   adapters: Record<string, AdapterDef>,
+  skills: TaskSkillCache,
 ): Response | Promise<Response> | null {
   if (path === "/api/status" && method === "GET") return statusRoute(req);
   if (path === "/api/repos" && method === "GET") return reposRoute(cfg);
@@ -106,6 +107,8 @@ function projectRoutes(
   if (path === "/api/projects" && method === "POST") return addProjectRoute(req, cfg, adapters);
   if (path === "/api/projects/copy-preview" && method === "POST") return copyPreviewRoute(req);
   if (path === "/api/projects/entries" && method === "GET") return projectEntriesRoute(new URL(req.url), cfg, req.signal);
+  // the create composer's `/` palette, which has a project and a harness but no task yet
+  if (path === "/api/projects/skills" && method === "GET") return projectSkillsRoute(new URL(req.url), cfg, adapters, skills);
   if (path === "/api/projects" && method === "DELETE") return removeProjectRoute(req, cfg);
   return null;
 }
@@ -176,7 +179,7 @@ export function route(req: Request, url: URL, path: string, ctx: RouteContext): 
   const verificationResponse = verificationRoute(req, url, path, m, cfg, adapters, models);
   if (verificationResponse !== null) return verificationResponse;
 
-  const projectResponse = projectRoutes(req, path, m, cfg, adapters);
+  const projectResponse = projectRoutes(req, path, m, cfg, adapters, skills);
   if (projectResponse !== null) return projectResponse;
 
   const suffixPromptResponse = suffixPromptRoutes(req, path, m);

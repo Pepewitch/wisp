@@ -331,6 +331,15 @@ address's last new wrong token. The web UI is served at `/`.
   `POST /api/projects/copy-preview` ·
   `PUT /api/repos/order` (`{paths}`: every configured project once, by
   absolute path, in the new order; 409 when the list changed meanwhile)
+- `GET /api/projects/skills?project=<path>&harness=<name>` — the harness's own
+  skills and custom commands for a project, with no task behind them (the
+  create composer's `/` palette). Same body as `GET /api/tasks/:id/skills`. A
+  missing or relative `project`, or a missing `harness`, is `400`; a path that
+  is not one of this daemon's project paths (configured, or carried by a task
+  in its history, like the entries route) and a harness this daemon has not
+  loaded are both `404`; a harness that enumerates only from a live session
+  answers `409` with its own reason, and one with no discovery strategy
+  answers an empty list with `partialNote`.
 - `GET /api/projects/entries?project=<path>&dir=<relative>[&q=<text>]` — one
   folder of a registered project for the composer's `@` list: `{project, dir,
   entries: [{name, kind: "dir"|"file"}], truncated, incompleteAfter}`,

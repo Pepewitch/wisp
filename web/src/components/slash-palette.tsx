@@ -39,6 +39,10 @@ export function SlashPaletteList({
   // is selected. See `rankSlashGroups`.
   const ranked = useMemo(() => rankSlashGroups(groups, query), [groups, query])
   const shown = ranked.filter((group) => group.entries.length > 0 || Boolean(group.footer))
+  // "No matching command" answers a QUERY that matched nothing. A list with no
+  // rows at all has already said why in its footer — a registry that refused,
+  // or has not arrived — and saying it twice contradicts the honest line.
+  const anyEntries = shown.some((group) => group.entries.length > 0)
   return (
     <Command
       ref={commandRef}
@@ -53,7 +57,7 @@ export function SlashPaletteList({
     >
       <CommandInput value={query} onValueChange={() => {}} aria-hidden />
       <CommandList>
-        <CommandEmpty>No matching command</CommandEmpty>
+        {anyEntries && <CommandEmpty>No matching command</CommandEmpty>}
         {shown.map((group) => (
           <CommandGroup key={group.label} heading={<Eyebrow>{group.label}</Eyebrow>}>
             {group.entries.map((entry) => (

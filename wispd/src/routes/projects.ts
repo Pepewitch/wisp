@@ -1,4 +1,5 @@
 import { basename, isAbsolute, resolve } from "node:path";
+import { ProbeError, type AdapterDef } from "../adapters";
 import { patchConfig, type RepoConfig, type WispConfig } from "../config";
 import { validateVerifyAgent } from "../config-verify";
 import { hasDraft, recipeActivatedAt, recipeSummary } from "../verify/recipe";
@@ -15,7 +16,9 @@ import { typeName } from "../validate";
 import { matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
 import { archiveTaskRows } from "../domain/archive";
 import { requestActor } from "../task-audit";
+import type { TaskSkillCache } from "../skills";
 import { err, json, jsonObjectBody } from "./http";
+import type { TaskSkills } from "../../../shared/api/harness";
 import { STALE_ORDER } from "../../../shared/api/projects";
 
 export type RepoEntry = string | RepoConfig;
@@ -222,6 +225,59 @@ export async function projectEntriesRoute(url: URL, cfg: WispConfig, signal?: Ab
   if (root === undefined) return err(`not a Wisp project: ${project}`, 404);
   const listing = await listProjectEntries(root, url.searchParams.get("dir") ?? "", url.searchParams.get("q") ?? "", undefined, signal);
   return "error" in listing ? err(listing.error, listing.status) : json(listing);
+}
+
+/**
+ * GET /api/projects/skills?project=<path>&harness=<name> — the harness's own
+ * skills and custom commands for a project, with no task behind them: the
+ * create composer's `/` palette, which describes a task that does not exist
+ * yet. The answer carries the same shape and the same honesty as
+ * GET /api/tasks/:id/skills, and every task-scoped tier is simply absent.
+ *
+ * A harness that needs a session to enumerate (droid) refuses here with its
+ * own named reason rather than an invented list, exactly as it would before a
+ * task's first turn.
+ */
+export async function projectSkillsRoute(
+  url: URL,
+  cfg: WispConfig,
+  adapters: Record<string, AdapterDef>,
+  skills: TaskSkillCache | undefined,
+): Promise<Response> {
+  const project = url.searchParams.get("project");
+  if (!project || !isAbsolute(project)) return err("project must be a project's absolute path", 400);
+  const root = projectList(cfg)
+    .map(({ path }) => resolve(path))
+    .find((path) => path === resolve(project));
+  if (root === undefined) return err(`not a Wisp project: ${project}`, 404);
+  const harness = url.searchParams.get("harness");
+  if (!harness) return err("harness is required", 400);
+  // `hasOwn`, not a truthy lookup: `harness` is a raw query parameter, and
+  // `adapters.constructor` would otherwise answer for a harness nobody loaded
+  const def = Object.hasOwn(adapters, harness) ? adapters[harness] : undefined;
+  if (!def) return err(`unknown harness: ${harness}`, 404);
+  if (!skills) return err("skill discovery is not available on this daemon", 500);
+  if (!def.skillDiscovery) {
+    return json<TaskSkills>({
+      skills: [],
+      commands: [],
+      commandError: null,
+      errors: [],
+      partialNote: `harness '${harness}' declares no skill discovery`,
+      invoke: null,
+      probedAt: new Date().toISOString(),
+      cached: false,
+    });
+  }
+  // awaited inside the try, so a strategy that throws SYNCHRONOUSLY lands on
+  // the same ladder as one that rejects — the task route's own posture
+  try {
+    const answer = await skills.projectSkills(root, harness, def);
+    return json<TaskSkills>({ ...answer.result, probedAt: answer.probedAt, cached: answer.cached });
+  } catch (e) {
+    if (e instanceof ProbeError) return err(e.message, e.status);
+    throw e;
+  }
 }
 
 interface ProjectUpdateBody {

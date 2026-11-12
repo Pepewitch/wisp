@@ -26,7 +26,9 @@ import {
   type AgentSubmission,
 } from "@/hooks/useSteerSubmit"
 import { useAutosizeTextarea } from "@/hooks/useAutosizeTextarea"
+import { useCaretRestore } from "@/hooks/useCaretRestore"
 import { useComposerMentions, type ComposerMentions } from "@/hooks/useComposerMentions"
+import { useComposerSlash, type ComposerSlash } from "@/hooks/useComposerSlash"
 import { useSteerDelivery, type QueueToggleState } from "@/hooks/useSteerDelivery"
 import { hasCoarsePointer } from "@/hooks/useMediaQuery"
 import { useTaskAgentSelection } from "@/hooks/useTaskAgentSelection"
@@ -48,18 +50,15 @@ import { uiIntentsFor } from "@/lib/ui-intents"
 import { handleComposerPaste } from "@/lib/paste-links"
 import type { SteerAction } from "@/lib/steer-delivery"
 import {
-  commandEntries,
   compactEntry,
   isTier1Command,
   limitsEntry,
-  slashTokenAt,
+  registryGroups,
   TIER1_ENTRIES,
   tier2Entries,
-  tier3Entries,
   toolEntries,
   type SlashEntry,
   type SlashGroup,
-  type SlashToken,
   type Tier1CommandName,
 } from "@/lib/slash"
 import type {
@@ -136,17 +135,6 @@ function useComposerFocusRequests(box: RefObject<HTMLTextAreaElement | null>): v
   }, [box, requests])
 }
 
-/** Put the caret where a pick that rewrote the draft asked for it, after that render. */
-function useCaretRestore(boxRef: RefObject<HTMLTextAreaElement | null>, caretRef: RefObject<number | null>): void {
-  useEffect(() => {
-    const pos = caretRef.current
-    if (pos === null) return
-    caretRef.current = null
-    boxRef.current?.focus()
-    boxRef.current?.setSelectionRange(pos, pos)
-  })
-}
-
 /**
  * The footer pads top and bottom across the pane; the column pads its own
  * sides. A phone's composer takes 6px more each side than the transcript's
@@ -202,8 +190,6 @@ export function SteerBox({
   }
   const choice = canSwitchAgent ? agent.choice : null
   const delivery = useSteerDelivery({ task, taskId, blocked, supported: canChooseDelivery, choice })
-  /** the slash token the palette is bound to; null = closed */
-  const [palette, setPalette] = useState<SlashToken | null>(null)
   /** One task-keyed report: either a harness probe or Wisp's task-level tokens. */
   const [report, setReport] = useState<ReportState>(null)
   const dismissReport = useCallback(() => setReport(null), [])
@@ -211,12 +197,6 @@ export function SteerBox({
   const command = useRef<HTMLDivElement>(null)
   /** where the caret goes after a pick rewrote the draft */
   const caret = useRef<number | null>(null)
-  /**
-   * The token start a dismissal applies to. Escape has to mean "leave me
-   * alone": without this, the very next keystroke inside `/st` would reopen the
-   * list the user just closed.
-   */
-  const suppressed = useRef<number | null>(null)
 
   const attachments = useDesktopPendingAttachments({
     taskId,
@@ -228,6 +208,7 @@ export function SteerBox({
   const tools = useToolPanelControls()
   const archive = commands.archive
   const mentions = useComposerMentions({ boxRef: box, caretRef: caret, value, setValue })
+  const slash = useComposerSlash({ value, setValue, caretRef: caret, commandRef: command, mentions, disabled })
   useCaretRestore(box, caret)
   useComposerFocusRequests(box)
 
@@ -248,42 +229,18 @@ export function SteerBox({
     setValue,
     setSending,
     setNote,
-    setPalette,
+    closePalette: slash.close,
   })
 
-  /** Recompute what the caret is sitting in. The one place the palette opens. */
-  const track = (value: string, at: number | null) => {
-    if (disabled) return
-    const token = at === null ? null : slashTokenAt(value, at)
-    // a `/` word is never an `@` one: only one list is bound at a time
-    mentions.track(value, token ? null : at)
-    if (!token) {
-      // the token is gone, so the dismissal that suppressed it is spent
-      suppressed.current = null
-      setPalette(null)
-      return
-    }
-    if (suppressed.current === token.start) {
-      setPalette(null)
-      return
-    }
-    setPalette(token)
-  }
-
-  const dismiss = () => {
-    if (palette) suppressed.current = palette.start
-    setPalette(null)
-  }
   const pick = (entry: SlashEntry) => {
-    const token = palette
-    setPalette(null)
-    if (!token || !task) return
+    if (!slash.token || !task) {
+      slash.close()
+      return
+    }
     const tier1Command = isTier1Command(entry.name) ? entry.name : null
     if (tier1Command || entry.probe || entry.compact || entry.externalHref || entry.tool) {
       // Local actions consume the token without sending it to the harness.
-      setValue(value.slice(0, token.start) + value.slice(token.end))
-      caret.current = token.start
-      suppressed.current = null
+      slash.consume(null)
       runLocalSlashAction(entry, tier1Command, commands, tools)
       return
     }
@@ -291,10 +248,7 @@ export function SteerBox({
     // prefill WITHOUT sending, and let the user review what costs a turn. The
     // text is the entry's own — `/name` on slash harnesses, a plain-text ask
     // on codex, which has no headless slash surface (SP2).
-    const text = entry.prefill ?? `/${entry.name}`
-    setValue(value.slice(0, token.start) + text + value.slice(token.end))
-    caret.current = token.start + text.length
-    suppressed.current = token.start
+    slash.consume(entry.prefill ?? `/${entry.name}`)
   }
 
   const groups = slashGroups(task, probeCommands, skills, compact, tools)
@@ -324,7 +278,7 @@ export function SteerBox({
             task={task}
             turns={turns}
             onDismissReport={dismissReport}
-            palette={palette}
+            palette={slash.token}
             groups={groups}
             onPick={pick}
             commandRef={command}
@@ -351,21 +305,18 @@ export function SteerBox({
             canSend={canSend}
             canStop={canStop}
             touch={touch}
-            palette={palette}
+            slash={slash}
             mentions={mentions}
             reportOpen={shownReport !== null}
             suffixPromptId={suffixPromptId}
             boxRef={box}
             caretRef={caret}
-            commandRef={command}
             attachments={attachments}
             harnesses={harnesses}
             canSwitchAgent={canSwitchAgent}
             agentChoice={agent.choice}
             delivery={delivery}
             onValueChange={setValue}
-            onTrack={track}
-            onDismissPalette={dismiss}
             onDismissReport={dismissReport}
             onSuffixPromptChange={(value) => setSuffixSelection({ taskId, value })}
             onAgentChange={agent.setChoice}
@@ -425,24 +376,7 @@ function slashGroups(
       ],
     })
   }
-  const skillGroup: SlashGroup = {
-    label: "Skills",
-    entries: tier3Entries(skills?.skills, skills?.invoke),
-    costsTurn: true,
-  }
-  if (skills?.errors.length) {
-    skillGroup.footer = `${skills.errors.length} skill${skills.errors.length === 1 ? "" : "s"} skipped by the harness`
-    skillGroup.footerTitle = skills.errors.join("\n")
-  } else if (skills?.partialNote) {
-    skillGroup.footer = skills.partialNote
-  }
-  groups.push(skillGroup)
-  const commandGroup: SlashGroup = {
-    label: "Commands",
-    entries: commandEntries(skills?.commands),
-  }
-  if (skills?.commandError) commandGroup.footer = skills.commandError
-  groups.push(commandGroup)
+  groups.push(...registryGroups(skills))
   return groups
 }
 
@@ -456,21 +390,18 @@ function SteerComposer({
   canSend,
   canStop,
   touch,
-  palette,
+  slash,
   mentions,
   reportOpen,
   suffixPromptId,
   boxRef,
   caretRef,
-  commandRef,
   attachments,
   harnesses,
   canSwitchAgent,
   agentChoice,
   delivery,
   onValueChange,
-  onTrack,
-  onDismissPalette,
   onDismissReport,
   onSuffixPromptChange,
   onAgentChange,
@@ -486,21 +417,18 @@ function SteerComposer({
   canSend: boolean
   canStop: boolean
   touch: boolean
-  palette: SlashToken | null
+  slash: ComposerSlash
   mentions: ComposerMentions
   reportOpen: boolean
   suffixPromptId: string | null
   boxRef: RefObject<HTMLTextAreaElement | null>
   caretRef: RefObject<number | null>
-  commandRef: RefObject<HTMLDivElement | null>
   attachments: PendingAttachments
   harnesses: HarnessInfo[]
   canSwitchAgent: boolean
   agentChoice: TaskAgentChoice | null
   delivery: { action: SteerAction | null; queue: QueueToggleState | null }
   onValueChange: (value: string) => void
-  onTrack: (value: string, caret: number | null) => void
-  onDismissPalette: () => void
   onDismissReport: () => void
   onSuffixPromptChange: (value: string | null) => void
   onAgentChange: (choice: TaskAgentChoice) => void
@@ -542,13 +470,13 @@ function SteerComposer({
         disabled={disabled}
         onChange={(event) => {
           onValueChange(event.target.value)
-          onTrack(event.target.value, event.target.selectionStart)
+          slash.track(event.target.value, event.target.selectionStart)
         }}
         onKeyUp={(event) =>
-          onTrack(event.currentTarget.value, event.currentTarget.selectionStart)
+          slash.track(event.currentTarget.value, event.currentTarget.selectionStart)
         }
         onClick={(event) =>
-          onTrack(event.currentTarget.value, event.currentTarget.selectionStart)
+          slash.track(event.currentTarget.value, event.currentTarget.selectionStart)
         }
         onPaste={(event) =>
           handleComposerPaste(event, {
@@ -558,7 +486,7 @@ function SteerComposer({
             onChange: (next, pos) => {
               caretRef.current = pos
               onValueChange(next)
-              onTrack(next, pos)
+              slash.track(next, pos)
             },
           })
         }
@@ -567,20 +495,7 @@ function SteerComposer({
         {...mentions.aria}
         onKeyDown={(event) => {
           if (mentions.onKeyDown(event)) return
-          if (palette && !event.nativeEvent.isComposing) {
-            if (event.key === "Escape") {
-              event.preventDefault()
-              onDismissPalette()
-              return
-            }
-            if (PALETTE_KEYS.has(event.key) && !event.shiftKey) {
-              event.preventDefault()
-              commandRef.current?.dispatchEvent(
-                new KeyboardEvent("keydown", { key: event.key, bubbles: true })
-              )
-              return
-            }
-          }
+          if (slash.onKeyDown(event)) return
           if (event.key === "Escape" && reportOpen) {
             event.preventDefault()
             onDismissReport()
@@ -651,6 +566,3 @@ function SteerComposer({
     </div>
   )
 }
-
-/** Forwarded to cmdk while the palette is open; Enter must not send. */
-const PALETTE_KEYS = new Set(["ArrowDown", "ArrowUp", "Home", "End", "Enter"])

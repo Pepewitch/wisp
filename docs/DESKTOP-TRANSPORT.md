@@ -59,6 +59,10 @@ The UI reads or mutates these route families:
   `/api/projects/entries?project=…&dir=…&q=…`, whose query a proxy forwards
   verbatim like search's; an older daemon answers 404, which the list shows as
   a folder it could not list;
+- a project's skills and custom commands for the create composer's `/`
+  palette: `/api/projects/skills?project=…&harness=…`, whose query a proxy
+  forwards the same way; an older daemon omits `features.projectSkills`, and
+  the palette then offers nothing rather than guessing;
 - cross-task text search: `/api/search?q=…`, whose query string a proxy must
   forward verbatim — the search term is percent-encoded user text, not a path;
 - task content: diffs, skills, probes, queued messages, and attachment bytes.

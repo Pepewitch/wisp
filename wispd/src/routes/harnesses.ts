@@ -70,6 +70,9 @@ export function harnessesRoute(
       subtasks: subtasksEnabled(cfg),
       // PUT /api/repos/order: the sidebar reorders the configured projects
       projectOrder: true,
+      // GET /api/projects/skills: the create composer's `/` palette, which
+      // has a project and a harness to ask about but no task yet
+      projectSkills: true,
     },
     harnesses: Object.entries(adapters).map(([name, def]) => ({
       name,
