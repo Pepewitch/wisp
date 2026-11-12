@@ -23,6 +23,7 @@ import {
 } from "./release-github";
 import { releaseNotesPath } from "./release-promotion";
 import { SOURCE_SITE, assertTaggableVersion, sourceVersion } from "./release-versions";
+import { checkRunningBun, checkToolchainPins } from "./toolchain-pins";
 
 /** Prose that names the current release. version:set rewrites the pinned sites in them. */
 export const CURRENT_RELEASE_DOCUMENTS = ["README.md", "SECURITY.md", "docs/INSTALL.md", "docs/INSTALL-MACOS.md"];
@@ -96,6 +97,17 @@ export function preconditionProblems(version: string, previous: string): string[
   if (changes) problems.push(`commit the release preparation first; the working tree has changes:\n${changes}`);
   const current = sourceVersion(ROOT);
   if (current !== version) problems.push(`${SOURCE_SITE} says ${current}; run: bun run version:set ${version}`);
+  // The toolchain, before any gate spends time on the wrong one. An operator
+  // Bun that differs from the pin produces failures in code the release never
+  // touched (a newer SQLite, a changed stream behaviour), and the gate cannot
+  // tell you that from a test log — so it says it here, in one line.
+  for (const check of [() => checkToolchainPins(ROOT), () => checkRunningBun(ROOT)]) {
+    try {
+      check();
+    } catch (error) {
+      problems.push(error instanceof Error ? error.message : String(error));
+    }
+  }
   if (localTagExists(tag) || remoteTagExists(tag)) {
     problems.push(`${tag} already exists, and a release version is never reused; choose the next unused version`);
   }
@@ -184,6 +196,7 @@ async function main(): Promise<number> {
     return 1;
   }
   console.log(`  ok    ${version} is committed on a branch that contains origin/main, and v${version} is unused`);
+  console.log(`  ok    this Bun is ${Bun.version}, the version every pin site and CI job names`);
   console.log("  ok    the release notes have no TODO markers, and no document still names the previous release");
 
   const previousTag = `v${previous}`;

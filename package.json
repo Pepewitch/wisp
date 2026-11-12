@@ -11,7 +11,7 @@
     "url": "https://github.com/Pepewitch/wisp/issues"
   },
   "type": "module",
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.4.4",
   "workspaces": [
     "web",
     "wispd"
@@ -34,7 +34,7 @@
     "lint": "bunx eslint bench scripts tests wispd/src wispd/tests wispd/scripts",
     "lint:ui": "bun run --cwd web lint",
     "lint:all": "bun run --parallel lint lint:ui",
-    "check": "bun run docs:check && bun run version:check && bun run workflows:check && bun run lint:all && bun run typecheck:all && bun run test:all",
+    "check": "bun run docs:check && bun run version:check && bun run toolchain:check && bun run workflows:check && bun run lint:all && bun run typecheck:all && bun run test:all",
     "smoke": "bun run build:web && bash wispd/scripts/smoke.sh",
     "bench": "bun run build:all-ui && bun bench/run.ts",
     "check:browser-security": "bun run build:web && bun run scripts/browser-security-check.ts",
@@ -56,6 +56,7 @@
     "docs:check": "bun run scripts/check-doc-links.ts && bun run scripts/check-release-docs.ts && bun run scripts/changelog.ts --check",
     "changelog": "bun run scripts/changelog.ts",
     "version:check": "bun run scripts/version-check.ts",
+    "toolchain:check": "bun run scripts/toolchain-pins.ts",
     "version:set": "bun run scripts/version-set.ts",
     "release:notes": "bun run scripts/release-notes.ts",
     "release:check": "bun run scripts/release-check.ts",
@@ -75,7 +76,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tauri-apps/cli": "2.11.4",
-    "@types/bun": "^1.4.2",
+    "@types/bun": "^1.4.4",
     "eslint": "^10.9.1",
     "globals": "^17.11.0",
     "typescript": "~6.0.3",

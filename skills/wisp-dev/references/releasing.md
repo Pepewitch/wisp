@@ -66,8 +66,9 @@ rerun on the new commit.
 
 It refuses the mistakes that are expensive once a tag exists — a reused or
 non-newer version, a branch behind `origin/main`, unfinished `TODO`s, an
-install document that still names the previous release — then runs the source
-gates cheapest first: whitespace, brand assets, the evaluator suite,
+install document that still names the previous release, a Bun that is not the
+pinned one — then runs the source gates cheapest first: whitespace, brand
+assets, the evaluator suite,
 `bun run check` (docs, version pins, workflow pins, lint, types, all tests),
 the smoke test, and a full build. Each gate logs to
 `dist/release-check/<gate>.log`; only a failing gate's tail is printed.
