@@ -13,6 +13,12 @@ import { useEffect, useRef } from "react"
  * `paused` is for a nested dialog of its own — the suffix-prompt editor —
  * whose ⌘↵ must never leak into the composer underneath it.
  *
+ * A key the composer already answered is NOT the dialog's. `preventDefault`
+ * does not stop propagation, so without the `defaultPrevented` check a ⌘↵
+ * that picked a row in the `/` palette — or that an open `@` list swallowed
+ * on purpose — would reach this listener too and create the task from the
+ * draft as it stood BEFORE the pick.
+ *
  * The submit closure is refreshed after every render with no dep array:
  * writing a ref DURING render is a purity violation, and the whole point of
  * the ref is that the listener reads the latest closure without re-binding
@@ -26,6 +32,7 @@ export function useDialogSubmitShortcut(submit: () => void, paused = false): voi
   useEffect(() => {
     if (paused) return
     const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented) return
       if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
         e.preventDefault()
         latest.current()

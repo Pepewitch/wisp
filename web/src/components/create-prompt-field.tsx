@@ -108,6 +108,9 @@ export function PromptField({
   // nothing to show is no floating box: an empty palette over the controls
   // would be a promise this harness cannot keep
   const paletteOpen = slash.token !== null && hasSlashRows(groups)
+  // a palette showing only its footer has nothing to pick, so ↑/↓/↵ stay the
+  // textarea's — Return goes on being the newline it always was
+  const pickable = groups.some((group) => group.entries.length > 0)
 
   const pick = (entry: SlashEntry) => {
     // Every row here is reviewable prompt text — `/name` where the harness
@@ -161,9 +164,9 @@ export function PromptField({
             // completion must not also throw away the draft behind it.
             if (open && e.key === "Escape") e.stopPropagation()
             if (mentions.onKeyDown(e)) return
-            if (paletteOpen && slash.onKeyDown(e)) return
-            // a slash token with nothing to offer keeps Escape for the dialog
-            // and Enter for the newline it always was
+            if (paletteOpen && slash.onKeyDown(e, pickable)) return
+            // a slash token with nothing floating at all keeps Escape for the
+            // dialog, and Enter for the newline it always was
             if (slash.token && e.key === "Escape") slash.dismiss()
           }}
           placeholder="What do you want to work on?"

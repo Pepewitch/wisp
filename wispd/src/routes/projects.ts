@@ -238,12 +238,12 @@ export async function projectEntriesRoute(url: URL, cfg: WispConfig, signal?: Ab
  * own named reason rather than an invented list, exactly as it would before a
  * task's first turn.
  */
-export function projectSkillsRoute(
+export async function projectSkillsRoute(
   url: URL,
   cfg: WispConfig,
   adapters: Record<string, AdapterDef>,
   skills: TaskSkillCache | undefined,
-): Response | Promise<Response> {
+): Promise<Response> {
   const project = url.searchParams.get("project");
   if (!project || !isAbsolute(project)) return err("project must be a project's absolute path", 400);
   const root = projectList(cfg)
@@ -252,7 +252,9 @@ export function projectSkillsRoute(
   if (root === undefined) return err(`not a Wisp project: ${project}`, 404);
   const harness = url.searchParams.get("harness");
   if (!harness) return err("harness is required", 400);
-  const def = adapters[harness];
+  // `hasOwn`, not a truthy lookup: `harness` is a raw query parameter, and
+  // `adapters.constructor` would otherwise answer for a harness nobody loaded
+  const def = Object.hasOwn(adapters, harness) ? adapters[harness] : undefined;
   if (!def) return err(`unknown harness: ${harness}`, 404);
   if (!skills) return err("skill discovery is not available on this daemon", 500);
   if (!def.skillDiscovery) {
@@ -267,13 +269,15 @@ export function projectSkillsRoute(
       cached: false,
     });
   }
-  return skills.projectSkills(root, harness, def).then(
-    (answer) => json<TaskSkills>({ ...answer.result, probedAt: answer.probedAt, cached: answer.cached }),
-    (e: unknown) => {
-      if (e instanceof ProbeError) return err(e.message, e.status);
-      throw e;
-    },
-  );
+  // awaited inside the try, so a strategy that throws SYNCHRONOUSLY lands on
+  // the same ladder as one that rejects — the task route's own posture
+  try {
+    const answer = await skills.projectSkills(root, harness, def);
+    return json<TaskSkills>({ ...answer.result, probedAt: answer.probedAt, cached: answer.cached });
+  } catch (e) {
+    if (e instanceof ProbeError) return err(e.message, e.status);
+    throw e;
+  }
 }
 
 interface ProjectUpdateBody {

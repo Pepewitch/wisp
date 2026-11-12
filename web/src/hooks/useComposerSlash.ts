@@ -13,8 +13,13 @@ export interface ComposerSlash {
   track: (value: string, at: number | null) => void
   /** Escape: close the palette and leave the token alone until the caret leaves it. */
   dismiss: () => void
-  /** True when the open palette took the key; the textarea then does nothing else with it. */
-  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>) => boolean
+  /**
+   * True when the open palette took the key; the textarea then does nothing
+   * else with it. `pickable` is false for a palette showing only its honest
+   * footer (a registry that refused, or has not arrived): Escape still closes
+   * it, but ↑/↓/↵ belong to the textarea, because there is nothing to pick.
+   */
+  onKeyDown: (event: KeyboardEvent<HTMLTextAreaElement>, pickable?: boolean) => boolean
   /**
    * A pick: write `text` over the token, or drop the token alone (`null`) for
    * a local action that never reaches the harness. Returns the token it
@@ -99,14 +104,14 @@ export function useComposerSlash({
     return token
   }
 
-  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+  const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>, pickable = true): boolean => {
     if (!token || event.nativeEvent.isComposing) return false
     if (event.key === "Escape") {
       event.preventDefault()
       dismiss()
       return true
     }
-    if (!PALETTE_KEYS.has(event.key) || event.shiftKey) return false
+    if (!pickable || !PALETTE_KEYS.has(event.key) || event.shiftKey) return false
     event.preventDefault()
     commandRef.current?.dispatchEvent(new KeyboardEvent("keydown", { key: event.key, bubbles: true }))
     return true

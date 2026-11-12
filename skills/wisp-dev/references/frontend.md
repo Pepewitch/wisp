@@ -612,9 +612,24 @@ you already typed. Two things differ, both because there is no task yet.
 
 Both lists float BELOW the textarea, over the notices and the control bar —
 the modal's own top edge is a few pixels above the prompt, and a list opening
-upwards would be clipped by it. Escape belongs to the open list and stops
-there (`stopPropagation`): dismissing a completion must never also throw away
-the draft behind it. With nothing floating, Escape is the dialog's again.
+upwards would be clipped by it.
+
+The modal's own keys yield to an open list, and that is load-bearing here in a
+way it never was in the steer box, which has no document-level handler at all:
+
+- **Escape** belongs to the open list and stops there (`stopPropagation`):
+  dismissing a completion must never also throw away the draft behind it. With
+  nothing floating, Escape is the dialog's again.
+- **⌘↵** that a list already answered is not the dialog's. `preventDefault`
+  does not stop propagation, so `useDialogSubmitShortcut` ignores a
+  `defaultPrevented` key — otherwise picking a row with ⌘↵ would ALSO create
+  the task, from the draft as it stood before the pick, and the dialog would
+  close over the prefill it just wrote.
+- **↵ stays the newline** when the palette is showing only its footer (a
+  registry that refused, or has not arrived): there is nothing to pick, so
+  `onKeyDown(event, pickable)` forwards nothing. The footer is also the only
+  line in that case — `No matching command` answers a query that matched
+  nothing, and saying it over "no session yet" contradicts it.
 
 An unfinished create composer stays in webview memory when the dialog closes:
 prompt, raw pending files and task choices restore for the same project on the
@@ -814,8 +829,9 @@ declared. The floor is not decoration either: cmdk scores `usage` against
 `useComposerSlash` owns all of this, for BOTH composers: which token the
 caret is in, which dismissal is still in force, what a pick writes, and the
 key forwarding. The steer box adds the tiers that need a task and the local
-actions a pick may run; the create composer adds nothing (§5c). One hook, so
-`/` cannot drift into meaning two things.
+actions a pick may run; the create composer adds only what a modal needs —
+the `pickable` gate and its Escape handling (§5c). One hook, so `/` cannot
+drift into meaning two things.
 
 Four dismissals — Escape, a space (commands take no arguments), the caret
 leaving the token, and picking an item — and one rule that makes them bearable:

@@ -164,6 +164,34 @@ describe("GET /api/projects/skills", () => {
     expect(claude.skills).toEqual([{ name: "code-review", description: "from disk" }]);
   });
 
+  test("each project gets its own answer: one project's list is never served for another", async () => {
+    const one = projectDir({ "code-review": "---\nname: code-review\ndescription: project one\n---\n" });
+    const two = projectDir({ shipit: "---\nname: shipit\ndescription: project two\n---\n" });
+    const base = await startServer([one, two]);
+
+    const first = await (await api(base, `/api/projects/skills?project=${encodeURIComponent(one)}&harness=claude`)).json();
+    expect(first.skills).toEqual([{ name: "code-review", description: "project one" }]);
+
+    const second = await (await api(base, `/api/projects/skills?project=${encodeURIComponent(two)}&harness=claude`)).json();
+    expect(second.cached).toBe(false); // a second project is a second question, not a cache hit
+    expect(second.skills).toEqual([{ name: "shipit", description: "project two" }]);
+
+    // and the first project still answers with its own
+    const again = await (await api(base, `/api/projects/skills?project=${encodeURIComponent(one)}&harness=claude`)).json();
+    expect(again.cached).toBe(true);
+    expect(again.skills).toEqual([{ name: "code-review", description: "project one" }]);
+  });
+
+  test("an unloaded harness is 404, including a name that is an Object.prototype key", async () => {
+    const project = projectDir();
+    const base = await startServer([project]);
+    for (const harness of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      const res = await api(base, `/api/projects/skills?project=${encodeURIComponent(project)}&harness=${encodeURIComponent(harness)}`);
+      expect(res.status).toBe(404);
+      expect((await res.json()).error).toBe(`unknown harness: ${harness}`);
+    }
+  });
+
   test("a harness with no discovery strategy gets an honest empty answer, not an error", async () => {
     writeFileSync(
       ADAPTERS_PATH,

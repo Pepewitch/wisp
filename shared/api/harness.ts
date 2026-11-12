@@ -1,7 +1,9 @@
 /**
  * What the daemon reads out of band from a harness, as the API serves it:
  * plan limits (GET /api/harness-limits), a task's probes
- * (POST /api/tasks/:id/probe) and its skills (GET /api/tasks/:id/skills).
+ * (POST /api/tasks/:id/probe) and its skills (GET /api/tasks/:id/skills, or
+ * GET /api/projects/skills for a project and harness with no task behind
+ * them).
  * Every number is copied from the harness, never computed or invented.
  */
 

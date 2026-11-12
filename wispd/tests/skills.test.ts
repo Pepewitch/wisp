@@ -348,6 +348,20 @@ describe("TaskSkillCache", () => {
     expect(calls.filter((call) => call === "droid.list_skills")).toHaveLength(2);
   });
 
+  test("a project's answer outlives the tasks beside it: no deletion or purge evicts it", async () => {
+    const cache = new TaskSkillCache();
+    const task = skillTask("claude", null, ["a-skill"]);
+    await cache.skills(task, claude);
+    const first = await cache.projectSkills("/tmp/repo", "claude", claude);
+    expect(first.cached).toBe(false);
+
+    // deleting the task clears the task's entry and leaves the project's alone:
+    // a project is not a task, and nothing deletes it
+    cache.deleteTask(task.id);
+    expect((await cache.skills(task, claude)).cached).toBe(false);
+    expect((await cache.projectSkills("/tmp/repo", "claude", claude)).cached).toBe(true);
+  });
+
   test("a failure is NOT cached — the next ask retries", async () => {
     let opens = 0;
     const io: ProbeIo = {

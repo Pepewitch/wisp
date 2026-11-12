@@ -76,7 +76,7 @@ export class TaskSkillCache {
   }
 
   skills(task: Task, def: AdapterDef): Promise<SkillAnswer> {
-    return this.discover(task.id, task.id, task.harness, def, {
+    return this.discover({ key: task.id, taskId: task.id, harness: task.harness, def }, {
       sessionId: task.session_id,
       cwd: task.worktree_path ?? task.repo_path,
       initSkills: parseInitSkills(task.skills_json),
@@ -95,11 +95,10 @@ export class TaskSkillCache {
    * deletion or purge evicts it and two harnesses never share an answer.
    */
   projectSkills(repoPath: string, harness: string, def: AdapterDef): Promise<SkillAnswer> {
-    return this.discover(`${PROJECT_CACHE_TASK_ID}\0${harness}\0${repoPath}`, PROJECT_CACHE_TASK_ID, harness, def, {
-      sessionId: null,
-      cwd: repoPath,
-      initSkills: null,
-    });
+    return this.discover(
+      { key: `${PROJECT_CACHE_TASK_ID}\0${harness}\0${repoPath}`, taskId: PROJECT_CACHE_TASK_ID, harness, def },
+      { sessionId: null, cwd: repoPath, initSkills: null },
+    );
   }
 
   /**
@@ -108,10 +107,10 @@ export class TaskSkillCache {
    * never cached.
    */
   private discover(
-    key: string,
-    taskId: string,
-    harness: string,
-    def: AdapterDef,
+    // one object, not four positional strings: `key` and `taskId` are the same
+    // value on the task path, so a transposition would be silent there and
+    // wrong only for a project
+    { key, taskId, harness, def }: { key: string; taskId: string; harness: string; def: AdapterDef },
     ctx: Omit<SkillCtx, "signal">,
   ): Promise<SkillAnswer> {
     const hit = this.entries.get(key, this.now().getTime());

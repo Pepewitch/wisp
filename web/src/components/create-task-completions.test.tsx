@@ -1,11 +1,11 @@
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 import type { ProjectEntriesResponse } from "../../../shared/api/project-entries"
 import { ApiError } from "@/lib/api"
 import { clearRememberedAttachments } from "@/lib/attachments"
 import { clearConnectionDrafts } from "@/lib/drafts"
-import type { DaemonTransport } from "@/lib/transport"
+import type { DaemonRequestOptions, DaemonTransport } from "@/lib/transport"
 import type { HarnessInfo, RepoInfo, TaskSkills } from "@/lib/types"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
@@ -78,9 +78,16 @@ function mount({
   skills = SKILLS,
   skillsError = null,
   projectSkills = true,
-}: { skills?: TaskSkills; skillsError?: ApiError | null; projectSkills?: boolean } = {}) {
+  created = [],
+}: {
+  skills?: TaskSkills
+  skillsError?: ApiError | null
+  projectSkills?: boolean
+  /** every prompt POST /api/tasks was asked to create, in order */
+  created?: string[]
+} = {}) {
   const paths: string[] = []
-  const request: DaemonTransport["request"] = async <T,>(path: string) => {
+  const request: DaemonTransport["request"] = async <T,>(path: string, init?: DaemonRequestOptions) => {
     paths.push(path)
     if (path === "/api/repos") return { repos: [repo] } as T
     if (path.startsWith("/api/harnesses")) {
@@ -90,6 +97,10 @@ function mount({
     if (path.startsWith("/api/projects/skills?")) {
       if (skillsError) throw skillsError
       return skills as T
+    }
+    if (path === "/api/tasks" && init?.method === "POST") {
+      created.push((init.body as { prompt: string }).prompt)
+      return { id: "tcreated", title: "created" } as T
     }
     throw new ApiError("not found", 404)
   }
@@ -106,6 +117,11 @@ function mount({
     { wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", { request })) },
   )
   return paths
+}
+
+/** Let an upload-then-create that WOULD have started actually land before asserting it did not. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 5; i += 1) await act(async () => {})
 }
 
 function box(): HTMLTextAreaElement {
@@ -228,12 +244,57 @@ describe("the create composer's completions", () => {
     expect(onOpenChange).toHaveBeenCalledWith(false, expect.objectContaining({ reason: "escape-key" }))
   })
 
+  it("⌘↵ while the palette is open picks the row and creates nothing", async () => {
+    const created: string[] = []
+    mount({ created })
+    type("/sec")
+    const palette = await screen.findByTestId("slash-palette")
+    await waitFor(() => expect(within(palette).getAllByRole("option").length).toBeGreaterThan(0))
+
+    key("Enter", { metaKey: true })
+    expect(box().value).toBe("/security-review")
+    // the key the palette answered is not the dialog's: a task made from the
+    // half-typed `/sec` would cost a real turn and discard the prefill
+    await waitFor(() => expect(screen.queryByTestId("slash-palette")).toBeNull())
+    await settle()
+    expect(created).toEqual([])
+  })
+
+  it("⌘↵ while the `@` list is open creates nothing either", async () => {
+    const created: string[] = []
+    mount({ created })
+    type("look at @wi")
+    await screen.findByTestId("mention-list")
+
+    key("Enter", { metaKey: true })
+    await settle()
+    expect(created).toEqual([])
+    expect(box().value).toBe("look at @wi")
+  })
+
   it("says why a registry could not be read, instead of an empty list", async () => {
     mount({ skillsError: new ApiError("no session yet — the first turn creates one", 409) })
     type("/")
     const palette = await screen.findByTestId("slash-palette")
     await waitFor(() => expect(palette.textContent).toContain("no session yet"))
     expect(within(palette).queryAllByRole("option")).toHaveLength(0)
+    // the footer already said why there are no rows; "No matching command"
+    // on top of it would contradict it
+    expect(palette.textContent).not.toContain("No matching command")
+  })
+
+  it("a palette with only a footer leaves ↵ the newline it always was", async () => {
+    mount({ skillsError: new ApiError("no session yet — the first turn creates one", 409) })
+    type("/release")
+    const palette = await screen.findByTestId("slash-palette")
+    await waitFor(() => expect(palette.textContent).toContain("no session yet"))
+
+    const enter = fireEvent.keyDown(box(), { key: "Enter" })
+    expect(enter).toBe(true) // not prevented: there is nothing to pick
+    // Escape still belongs to the one thing that IS floating
+    key("Escape")
+    expect(screen.queryByTestId("slash-palette")).toBeNull()
+    expect(box().value).toBe("/release")
   })
 
   it("opens no palette at all on a daemon with no project registry", async () => {
