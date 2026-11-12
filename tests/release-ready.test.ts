@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { progressLine, releaseCommit } from "../scripts/release-ready";
-import type { CheckVerdict } from "../scripts/release-github";
+import { releaseCommit } from "../scripts/release-ready";
+import { progressLine, type CheckVerdict } from "../scripts/release-github";
 
 describe("releaseCommit", () => {
   test("walks back to the commit that set the version, not the newest touch of the file", () => {

@@ -225,6 +225,45 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
 }
 
+export const CHECK_POLL_MS = 20_000;
+
+export function progressLine(verdicts: readonly CheckVerdict[]): string {
+  const waiting = verdicts.filter((verdict) => verdict.state === "pending" || verdict.state === "missing");
+  const passed = verdicts.filter((verdict) => verdict.state === "passed").length;
+  return `  ${passed}/${verdicts.length} passed${waiting.length ? `; waiting for ${waiting.map((verdict) => verdict.name).join(", ")}` : ""}`;
+}
+
+/**
+ * Wait until this commit's release checks all pass, or one fails.
+ *
+ * Shared by `release:ready`, which will not tag without them, and
+ * `release:check`, which no longer re-runs locally what they already prove on
+ * the same commit. One implementation, so the two commands cannot come to
+ * disagree about what "green" means.
+ */
+export async function waitForCommitChecks(sha: string, minutes: number): Promise<CheckVerdict[] | null> {
+  const deadline = Date.now() + minutes * 60_000;
+  let last = "";
+  for (;;) {
+    const verdicts = settleFailures(checkVerdicts(commitCheckRuns(sha), RELEASE_COMMIT_CHECKS), workflowRunState);
+    const line = progressLine(verdicts);
+    if (line !== last) console.log(line);
+    last = line;
+    if (verdicts.some((verdict) => verdict.state === "failed")) {
+      console.error(formatVerdicts(verdicts));
+      console.error(rerunAdvice(verdicts));
+      return null;
+    }
+    if (verdicts.every((verdict) => verdict.state === "passed")) return verdicts;
+    if (Date.now() >= deadline) {
+      console.error(formatVerdicts(verdicts));
+      console.error(`The checks are still running after ${minutes} minutes. Run this command again to keep waiting.`);
+      return null;
+    }
+    await sleep(CHECK_POLL_MS);
+  }
+}
+
 /** A public URL read without credentials, the way a user's machine reads it. */
 export async function anonymousText(url: string): Promise<string> {
   const response = await fetch(url, { headers: { "cache-control": "no-cache" } });

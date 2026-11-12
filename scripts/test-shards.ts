@@ -113,10 +113,60 @@ function shardFiles(spec: string): string[] {
   return mine;
 }
 
+/**
+ * Every shard at once, in this one process's children.
+ *
+ * CI gets its parallelism from six runners; a developer's machine has the
+ * cores sitting right here. The release gate ran this suite serially, which
+ * measured 240s against 49s for the same files sharded six ways — the single
+ * largest cost in `release:check`. Output is collected per shard and printed
+ * when that shard finishes, rather than interleaved line by line from six
+ * writers into one terminal.
+ */
+async function runAllShards(count: number): Promise<number> {
+  const started = Date.now();
+  const children = Array.from({ length: count }, (_, i) =>
+    Bun.spawn([process.execPath, import.meta.path, "--run", `${i + 1}/${count}`], {
+      cwd: join(import.meta.dir, ".."),
+      stdio: ["ignore", "pipe", "pipe"],
+    }),
+  );
+  const results = await Promise.all(
+    children.map(async (child, i) => {
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ]);
+      return { shard: i + 1, stdout, stderr, exitCode };
+    }),
+  );
+  for (const { shard, stdout, stderr, exitCode } of results) {
+    console.log(`${"=".repeat(20)} shard ${shard}/${count} ${exitCode === 0 ? "passed" : `FAILED (exit ${exitCode})`}`);
+    if (exitCode !== 0 || process.env.SHARD_VERBOSE) process.stdout.write(stdout);
+    process.stderr.write(stderr);
+  }
+  const failed = results.filter((result) => result.exitCode !== 0);
+  const seconds = ((Date.now() - started) / 1000).toFixed(1);
+  if (failed.length > 0) {
+    console.error(`${failed.length}/${count} shard(s) failed in ${seconds}s: ${failed.map((f) => f.shard).join(", ")}`);
+    return 1;
+  }
+  console.log(`all ${count} shards passed in ${seconds}s`);
+  return 0;
+}
+
 if (import.meta.main) {
   const [first, second] = process.argv.slice(2);
   if (first === "--record" && second) {
     record(second);
+  } else if (first === "--all") {
+    const count = Number.parseInt(second ?? "6", 10);
+    if (!Number.isInteger(count) || count < 1) {
+      console.error(`--all needs a positive shard count, got ${JSON.stringify(second)}`);
+      process.exit(2);
+    }
+    process.exit(await runAllShards(count));
   } else if (first === "--run" && second) {
     // `./` makes each argument a path; a bare name is a substring filter.
     const files = shardFiles(second).map((file) => `./${file}`);
