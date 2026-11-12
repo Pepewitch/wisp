@@ -4,7 +4,7 @@
   "surfaces": {
     "effortLevels": {
       "cost": "free",
-      "verifiedAgainst": "2.1.311",
+      "verifiedAgainst": "2.1.322",
       "source": "the '--effort <level>' line of 'claude --help', plus 'ultracode' when the binary's /effort options name it",
       "lists": {
         "observed": [
@@ -32,7 +32,7 @@
     },
     "flags": {
       "cost": "free",
-      "verifiedAgainst": "2.1.311",
+      "verifiedAgainst": "2.1.322",
       "source": "flag tokens parsed out of 'claude --help'",
       "lists": {
         "values": [
@@ -118,7 +118,7 @@
     },
     "markerPresence": {
       "cost": "free",
-      "verifiedAgainst": "2.1.311",
+      "verifiedAgainst": "2.1.322",
       "source": "case-insensitive fixed-string search of the installed claude binary",
       "note": "'missing' markers cannot fire: the phrase no longer appears in the shipped CLI",
       "lists": {
@@ -133,15 +133,17 @@
     },
     "models": {
       "cost": "free",
-      "verifiedAgainst": "2.1.311",
+      "verifiedAgainst": "2.1.322",
       "source": "model ids matching /claude-(fable|opus|sonnet|haiku)-[0-9a-z.-]+/ in the installed claude binary",
       "note": "an unfiltered binary scan: it includes legacy, dated and vendor-suffixed ids the picker never offers. Sound for proving a pinned id still exists; NOT a list to add from.",
       "lists": {
         "ids": [
           "claude-fable-5",
           "claude-fable-5-1",
+          "claude-fable-5-2",
           "claude-fable-5-mythos-5",
           "claude-haiku-3-5",
+          "claude-haiku-3-55",
           "claude-haiku-4-5",
           "claude-haiku-4-5-20251001",
           "claude-haiku-4-5-20251001-v1",
@@ -160,6 +162,7 @@
           "claude-opus-4-6-v1",
           "claude-opus-4-7",
           "claude-opus-4-8",
+          "claude-opus-4.8",
           "claude-opus-5",
           "claude-opus-5-5",
           "claude-sonnet-3-7",

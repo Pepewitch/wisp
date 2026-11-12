@@ -114,7 +114,7 @@ describe("buildArgv", () => {
   // to probe. It must stay claude-only.
   test("only claude carries a curated staticModels list", () => {
     expect(claude.staticModels).toEqual([
-      "claude-fable-5-1",
+      "claude-fable-5-2",
       "claude-opus-5-5",
       "claude-sonnet-5-5",
       "claude-haiku-5-5",
