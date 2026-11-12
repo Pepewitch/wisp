@@ -2,20 +2,82 @@
 
 This ledger separates release evidence from the version label. The 0.8 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.8.7 is the current release; earlier 0.8 records are retained
+coverage. 0.8.8 is the current release; earlier 0.8 records are retained
 below. The 0.7 records remain in
 [the 0.7 ledger](../v0.7/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
 recorded for 0.5 under
 [Still unqualified or outside scope](../v0.5/QUALIFICATION.md#still-unqualified-or-outside-scope)
-still apply to 0.8.7.
+still apply to 0.8.8.
+
+## 0.8.8 publication
+
+**Published and promoted on 2026-11-12.**
+[Wisp 0.8.8](https://github.com/Pepewitch/wisp/releases/tag/v0.8.8) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 12:06:55 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`c9fac28b8f9529078ed265707cde8accffbd05e9`](https://github.com/Pepewitch/wisp/commit/c9fac28b8f9529078ed265707cde8accffbd05e9),
+landed through [PR #543](https://github.com/Pepewitch/wisp/pull/543). It carries
+Fable 5.2 in Claude's curated model lineup
+([#538](https://github.com/Pepewitch/wisp/pull/538)), `@` mentions and the `/`
+palette in the New task composer
+([#537](https://github.com/Pepewitch/wisp/pull/537)), a sidebar that keeps
+following task state after a login-time start raced its daemon
+([#536](https://github.com/Pepewitch/wisp/pull/536)), and the other changes
+listed in the release notes since 0.8.7.
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/43213209150)
+completed every job successfully on its first run:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, supply-chain, update-verifier, and public-promotion dry-run checks passed; the exact-main [release candidate](https://github.com/Pepewitch/wisp/actions/runs/43212853190) also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |
+| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit `c9fac28` were verified |
+| Homebrew installability | The Formula and Cask were audited offline before publication, and the published Formula was installed the way a user does before the tap advanced |
+
+Promotion completed at 12:13:59 UTC with Homebrew tap commit
+[`9ccbb5db064acec52eaf6970c687c4e30b895007`](https://github.com/Pepewitch/homebrew-tap/commit/9ccbb5db064acec52eaf6970c687c4e30b895007).
+The Formula, Cask, daemon update channel, and Desktop update channel all serve
+0.8.8.
+
+0.8.8 adds database migration 33, so a 0.8.7 daemon cannot reopen a profile that
+0.8.8 has opened. No PNG asset or brand-generator input changed since 0.8.7, so
+the PNG assets were not re-rendered. This is a fully automated publication: no
+maintainer qualification — fresh-install or upgrade receipts, a Desktop updater
+journey across this version, the token-spending harness probes, or the paid
+evaluator panel — was performed, and this record does not claim them. The
+published assets and release body remain immutable; this ledger records the
+completed outcome separately.
+
+Two checks specific to this release were not run, and this record does not
+claim them. **No Wisp task has run on `claude-fable-5-2`.** Its argv acceptance
+was proven without spending a turn — print-mode `/model` on claude-code 2.1.322
+echoed the id back with `num_turns: 0`, `duration_api_ms: 0` and every usage
+counter zero — and the stream, usage and settlement contracts it would exercise
+are per-harness rather than per-model, pinned at 2.1.240–2.1.283 and untouched
+here. The minimal live turn
+[harness sync §5](../../skills/wisp-dev/references/harness-sync.md#5-escalate-to-one-minimal-live-turn)
+prescribes for a new id was therefore waived deliberately, not overlooked; the
+first real Fable 5.2 turn will be a user's. **No Desktop updater journey was
+observed across this version**, which matters more than usual because 0.8.8
+moves `tauri-plugin-updater` from 2.11.0 to 2.14.1
+([#541](https://github.com/Pepewitch/wisp/pull/541)) — a change inside the
+component that performs the update. Its signature verification, altered-archive
+rejection and channel contents were verified by the release workflow and the
+independent update verifier, but an in-app 0.8.7 → 0.8.8 update was not
+performed by hand.
 
 ## 0.8.7 publication
 
 **Published and promoted on 2026-11-04.**
-[Wisp 0.8.7](https://github.com/Pepewitch/wisp/releases/tag/v0.8.7) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.8.7](https://github.com/Pepewitch/wisp/releases/tag/v0.8.7) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 10:30:48 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`04ffbf64420f307128a5bcad9b72c4076a34cddb`](https://github.com/Pepewitch/wisp/commit/04ffbf64420f307128a5bcad9b72c4076a34cddb),
@@ -43,8 +105,8 @@ completed every job successfully on its first run:
 
 Promotion completed at 10:32:55 UTC with Homebrew tap commit
 [`fc301cb160043ff236281fdc01441d4657608b78`](https://github.com/Pepewitch/homebrew-tap/commit/fc301cb160043ff236281fdc01441d4657608b78).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.8.7.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.8.7 until 0.8.8 was promoted.
 
 0.8.7 adds database migration 32, so a 0.8.6 daemon cannot reopen a profile that
 0.8.7 has opened. No PNG asset or brand-generator input changed since 0.8.6, so
