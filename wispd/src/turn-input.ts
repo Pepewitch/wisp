@@ -138,7 +138,7 @@ export function outputReminder(turn: number): string {
   return `To show an image you created as a file in the task reply, run ${wispCommand()} output add <image-path> --turn ${turn}. This copies it into task-owned storage for inline preview and download. Publish only images you intend to share (PNG, JPEG, GIF or WebP, up to 8 MiB each).`;
 }
 
-/** The first turn's framing, in Wisp's voice; the runner puts it in the turn's one Wisp section. */
+/** A conversation's framing, in Wisp's voice; the runner puts it in the turn's one Wisp section. */
 export function taskPreambleLines(task: Task): string[] {
   return [
     `You are working on task ${task.id}, managed by Wisp, in a dedicated git worktree.`,

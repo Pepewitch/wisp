@@ -5,7 +5,7 @@ import { describe, expect, test } from "bun:test";
 import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { startTurn } from "../src/runner";
-import { createTask, freeSlot, getTask, newTaskId, setTaskFields, turnsFor } from "../src/store";
+import { createTask, freeSlot, getTask, newTaskId, setTaskContextFields, setTaskFields, switchTaskAgent, turnsFor } from "../src/store";
 import { createTaskMessage } from "../src/store-messages";
 import { deliveredMessage, framedMessage, outputReminder, taskPreambleLines, wispSection, withWispSection } from "../src/turn-input";
 
@@ -80,9 +80,33 @@ describe("what a turn is sent", () => {
     expect(turnsFor(task.id)[0]!.prompt).toBe("fix the bug");
     await finish(task.id);
 
-    // a later ordinary turn: Wisp's notes go before the message, never into it
+    // a later turn of the same conversation: Wisp's notes go before the message, never into it
+    setTaskContextFields(task.id, task.context_n, { session_id: "s1" });
     const second = await begin(task.id, "and the autosave path");
     expect(second.prompt).toBe(withWispSection([outputReminder(2)], "and the autosave path"));
+    await finish(task.id);
+  });
+
+  test("a harness with no session to resume opens a conversation every turn, and is told the task each time", async () => {
+    const task = makeTask();
+    await begin(task.id, "start");
+    await finish(task.id);
+    const { prompt } = await begin(task.id, "again");
+    expect(prompt).toBe(withWispSection([...taskPreambleLines(getTask(task.id)!), outputReminder(2)], "again"));
+    await finish(task.id);
+  });
+
+  test("a fresh context starts with the preamble, though it is not the task's first turn", async () => {
+    const task = makeTask();
+    await begin(task.id, "start");
+    await finish(task.id);
+    setTaskContextFields(task.id, task.context_n, { session_id: "s1" });
+    expect((await begin(task.id, "more")).prompt).toBe(withWispSection([outputReminder(2)], "more"));
+    await finish(task.id);
+    // `/fresh`: a new context with no session
+    switchTaskAgent(task.id, { harness: "fake", model: null, effort: null, fast: false }, true);
+    const fresh = await begin(task.id, "and now this");
+    expect(fresh.prompt).toBe(withWispSection([...taskPreambleLines(getTask(task.id)!), outputReminder(3)], "and now this"));
     await finish(task.id);
   });
 
@@ -123,6 +147,7 @@ describe("what a turn is sent", () => {
     await finish(task.id);
     const id = crypto.randomUUID();
     createTaskMessage({ id, taskId: task.id, text: "Use the staged rollout", attachmentHash: "", origin: "scheduled" }, false);
+    setTaskContextFields(task.id, task.context_n, { session_id: "s1" });
     const { prompt } = await begin(task.id, "Use the staged rollout", id);
     expect(prompt).toBe(withWispSection([outputReminder(2), "scheduled steer"], "Use the staged rollout"));
     expect(turnsFor(task.id).at(-1)!.prompt).toBe("Use the staged rollout");

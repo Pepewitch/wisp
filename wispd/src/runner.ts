@@ -200,7 +200,11 @@ export function startTurn(
   const autopilot = standingNotes(task.id, n, command);
   const notes = [...(autopilot?.notes ?? []), ...(command ? [] : [outputReminder(n)])];
   const { framed, turnOrigin } = framedInput(sourceMessageId, message);
-  const prompt = withWispSection([...(n === 1 ? taskPreambleLines(task) : []), ...notes, ...framed.lines, ...attached], framed.words);
+  // The preamble opens every conversation, not only the task's first turn: a
+  // turn with no session to resume (a fresh context after `/fresh` or a
+  // harness switch) starts one, and its agent has never been told the task.
+  const opens = !command && !task.session_id;
+  const prompt = withWispSection([...(opens ? taskPreambleLines(task) : []), ...notes, ...framed.lines, ...attached], framed.words);
   if (lingering) {
     adoptTurn(lingering, task, n, message, prompt, attachments, autopilot, sourceMessageId, turnOrigin);
     return;
