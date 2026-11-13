@@ -268,6 +268,12 @@ describe("GET /api/search", () => {
     }
   });
 
+  test("a query holding a NUL is answered, not a server error", async () => {
+    const base = await startServer();
+    const response = await get(base, `/api/search?q=${encodeURIComponent("nul\u0000word")}`);
+    expect(response.status).toBe(200);
+  });
+
   test("trims a trailing keystroke rather than answering nothing", async () => {
     const base = await startServer();
     const id = task("a trimmed-needle title");
