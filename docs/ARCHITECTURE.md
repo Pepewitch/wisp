@@ -61,7 +61,8 @@ a client can say which will happen before the person sends.
 
 A turn's input carries Wisp's own text in one `<wisp>` section before the
 person's words. The task preamble opens each conversation (any turn with no
-session to resume). Standing notes, such as the image-output reminder and
+session to resume, or the first plain turn of a context that only slash
+commands have run in). Standing notes, such as the image-output reminder and
 autopilot's switches, go into a conversation once and again only when their
 text changes, after a compaction or slash command, after a turn that failed,
 or after a daemon restart. Long-running tasks are mostly turns Wisp starts

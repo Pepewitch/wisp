@@ -142,7 +142,9 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
     no standing notes either: a harness reads it as a command only when the
     input starts with `/`.
   - The preamble opens every conversation: any turn with no session to
-    resume, so a fresh context after `/fresh` or a harness switch too.
+    resume, so a fresh context after `/fresh` or a harness switch too, and
+    the first plain turn of a context whose turns so far were all commands
+    (`/fresh`, then a skill): the command started the session without it.
   - Standing notes (the image-output reminder, autopilot's notes) go into a
     conversation once (`standing-notes.ts`): again only when their text
     changes (sent whole, replacing the earlier ones), after a compaction, a
