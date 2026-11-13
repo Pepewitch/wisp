@@ -1,8 +1,13 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { QueryClient } from "@tanstack/react-query"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, expect, it, vi } from "vitest"
 import type { OutputImage } from "../../../shared/api/outputs"
 import { clearAssetCache } from "@/lib/asset-src"
 import { createDesktopTransport } from "@/lib/desktop-transport"
+import { createConnectionQueryKeys } from "@/lib/query"
+import { connectEventsBridge, type SseLike } from "@/lib/sse"
+import { LOCAL_CONNECTION_ID } from "@/lib/transport"
+import type { WispEvent } from "@/lib/types"
 import { completeAuth, sameOriginWebTransport } from "@/lib/web-transport"
 import { runtimeWrapper } from "@/test/runtime"
 import { OutputImagePreview, TurnOutputs } from "./turn-outputs"
@@ -64,6 +69,44 @@ it("reports a missing Browser image and disables actions instead of hiding its m
   await screen.findByText("Image unavailable")
   expect(screen.getByRole("button", { name: "Expand plot.png" })).toBeDisabled()
   expect(screen.queryByRole("button", { name: "Download" })).not.toBeInTheDocument()
+})
+
+/**
+ * A running task announces every state change. Each one used to revoke the
+ * open task's blobs, so every image on screen refetched and collapsed while it
+ * did; an output's path is its content hash, so none of them can have changed.
+ */
+it("Browser keeps an image on screen, without refetching, through task and message events", async () => {
+  completeAuth("synthetic-output-token")
+  const fetch = vi.fn().mockImplementation(async () => new Response("synthetic png", { headers: { "content-type": "image/png" } }))
+  vi.stubGlobal("fetch", fetch)
+  let blobs = 0
+  vi.spyOn(URL, "createObjectURL").mockImplementation(() => `blob:output-${++blobs}`)
+  vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {})
+  const stream: SseLike = { onmessage: null, onopen: null, onerror: null, readyState: 1, addEventListener() {}, close() {} }
+  const close = connectEventsBridge({
+    client: new QueryClient(),
+    qk: createConnectionQueryKeys(LOCAL_CONNECTION_ID),
+    transport: { ensureReady: () => Promise.resolve(), openEventStream: () => stream },
+    getSelectedId: () => "tfixture",
+    tasksDebounceMs: 0, statusDebounceMs: 0, detailDebounceMs: 0,
+  })
+  render(<TurnOutputs taskId="tfixture" turn={2} outputs={[image]} />, { wrapper: runtimeWrapper(sameOriginWebTransport) })
+  await waitFor(() => expect(screen.getByRole("img")).toHaveAttribute("src", "blob:output-1"))
+
+  const emit = (event: WispEvent) => act(() => stream.onmessage?.({ data: JSON.stringify(event) }))
+  emit({ type: "task", taskId: "tfixture", state: "running", stateDetail: null, seq: 2 })
+  emit({ type: "message", taskId: "tfixture", messageId: "m1" })
+  emit({ type: "turn", taskId: "tfixture", n: 3, status: "running" })
+
+  expect(screen.getByRole("img")).toHaveAttribute("src", "blob:output-1")
+  expect(fetch).toHaveBeenCalledTimes(1)
+  close()
+})
+
+it("keeps a box for an image whose bytes have not arrived", () => {
+  render(<OutputImagePreview image={image} src={null} ratio={2} />, { wrapper: runtimeWrapper(sameOriginWebTransport) })
+  expect(screen.getByRole("img")).toHaveStyle({ aspectRatio: "2" })
 })
 
 it("old archives retain a named placeholder and never request removed image bytes", () => {

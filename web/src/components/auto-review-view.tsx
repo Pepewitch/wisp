@@ -343,7 +343,8 @@ function ReviewEvidence({
  */
 function EvidenceThumb({ image, taskId, src: given }: { image: AutoReviewEvidence; taskId: string | null; src: string | null }) {
   const path = taskId ? outputImageUrl(taskId, image.turn, image.id) : null
-  const { src: loaded, failed } = useAssetStatus(given ? null : path)
+  // lazy, and its box is fixed: a long review fetches only what is scrolled near
+  const { src: loaded, failed, ref } = useAssetStatus(given ? null : path, { lazy: true })
   const src = given ?? loaded
   const [open, setOpen] = useState(false)
   const [broken, setBroken] = useState(false)
@@ -367,6 +368,7 @@ function EvidenceThumb({ image, taskId, src: given }: { image: AutoReviewEvidenc
           <span className="text-[10.5px] text-faint">Image unavailable</span>
         ) : (
           <img
+            ref={ref}
             src={src ?? undefined}
             alt={image.name}
             loading="lazy"

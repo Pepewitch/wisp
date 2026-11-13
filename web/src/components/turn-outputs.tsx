@@ -6,17 +6,27 @@ import { formatBytes } from "@/lib/attachments"
 import { saveOutputImage } from "@/lib/output-download"
 import { cn } from "@/lib/utils"
 
+/**
+ * The box an image holds before its bytes arrive when it has never loaded
+ * here: a screenshot's usual shape, capped by the card's height like the
+ * image itself. Once it has loaded, its own shape is remembered instead.
+ */
+const UNKNOWN_RATIO = 16 / 10
+
 function OutputCard({ taskId, turn, image, removed, compact = false, caption }: { taskId: string; turn: number; image: OutputImage; removed: boolean; compact?: boolean; caption?: string }) {
   const path = outputImageUrl(taskId, turn, image.id)
-  const { src, failed } = useAssetStatus(removed ? null : path)
-  return <OutputImagePreview image={image} src={src} unavailable={failed} removed={removed} compact={compact} caption={caption} />
+  // lazy: a long transcript fetches only the images scrolled near
+  const { src, failed, ratio, ref } = useAssetStatus(removed ? null : path, { lazy: true })
+  return <OutputImagePreview image={image} src={src} unavailable={failed} removed={removed} compact={compact} caption={caption} imageRef={ref} ratio={ratio} />
 }
 
 /**
  * `compact` is the thumbnail an image gets under the step that produced it;
- * `caption` names where a shared image came from.
+ * `caption` names where a shared image came from. Until `src` arrives the
+ * image keeps a box of its own shape (`ratio`), so a card neither collapses
+ * nor pushes the transcript when it loads.
  */
-export function OutputImagePreview({ image, src, unavailable = false, removed = false, compact = false, caption }: { image: OutputImage; src: string | null; unavailable?: boolean; removed?: boolean; compact?: boolean; caption?: string }) {
+export function OutputImagePreview({ image, src, unavailable = false, removed = false, compact = false, caption, imageRef, ratio = null }: { image: OutputImage; src: string | null; unavailable?: boolean; removed?: boolean; compact?: boolean; caption?: string; imageRef?: (element: HTMLImageElement | null) => void; ratio?: number | null }) {
   const [open, setOpen] = useState(false)
   const [failed, setFailed] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -27,7 +37,7 @@ export function OutputImagePreview({ image, src, unavailable = false, removed = 
       {removed ? <p className="text-[11.5px] text-faint">{image.name} · removed when this task was archived</p> : (
         <>
           <button type="button" onClick={() => setOpen(true)} disabled={!src || missing} aria-label={`Expand ${image.name}`} className="block w-full cursor-zoom-in rounded-md focus-visible:outline focus-visible:outline-ring disabled:cursor-default">
-            <img src={src ?? undefined} alt={image.name} loading="lazy" onLoad={() => setFailed(false)} onError={() => setFailed(true)} className={cn("w-full rounded-md object-contain object-left", compact ? "max-h-[140px]" : "max-h-[320px]")} />
+            <img ref={imageRef} src={src ?? undefined} alt={image.name} loading="lazy" onLoad={() => setFailed(false)} onError={() => setFailed(true)} style={missing ? undefined : src ? (ratio ? { aspectRatio: ratio } : undefined) : { aspectRatio: ratio ?? UNKNOWN_RATIO }} className={cn("w-full rounded-md object-contain object-left", compact ? "max-h-[140px]" : "max-h-[320px]", !src && !missing && "bg-surface")} />
           </button>
           <figcaption className={cn("mt-1 flex items-center gap-2 text-muted-foreground", compact ? "text-[11px]" : "text-[11.5px]")}>
             <span className="truncate">{image.name}</span>

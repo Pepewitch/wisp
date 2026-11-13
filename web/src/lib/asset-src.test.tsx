@@ -1,7 +1,8 @@
-import { act, renderHook, waitFor } from "@testing-library/react"
+import { act, render, renderHook, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { clearAssetCache, useAssetSrc } from "./asset-src"
+import { clearAssetCache, refreshAssets, useAssetSrc, useAssetStatus, type AssetStatus } from "./asset-src"
+import type { DaemonTransport } from "./transport"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
 const PATH = "/api/tasks/t1/attachments/1/shot.png"
@@ -163,4 +164,107 @@ it("evicts oversized cached bytes once their last viewer unmounts", async () => 
   expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(original)
   view.unmount()
   expect(URL.revokeObjectURL).toHaveBeenCalledWith(original)
+})
+
+/** A refresh keeps the card's bytes on screen until the daemon answers; it never collapses it. */
+it("keeps showing the previous bytes while a refresh refetches, then swaps them", async () => {
+  let resolveNext!: (blob: Blob) => void
+  const fetchAsset = vi.fn().mockResolvedValueOnce(new Blob(["first"]))
+    .mockImplementationOnce(() => new Promise<Blob>((resolve) => { resolveNext = resolve }))
+  const view = renderHook(() => useAssetSrc(PATH), { wrapper: runtimeWrapper(fakeDaemonTransport("local", { fetchAsset })) })
+  await waitFor(() => expect(view.result.current).toMatch(/^blob:/))
+  const original = view.result.current
+
+  act(() => refreshAssets("local", "/api/tasks/t1/"))
+  await waitFor(() => expect(fetchAsset).toHaveBeenCalledTimes(2))
+  expect(view.result.current).toBe(original)
+  expect(URL.revokeObjectURL).not.toHaveBeenCalledWith(original)
+
+  await act(async () => resolveNext(new Blob(["second"])))
+  expect(view.result.current).toMatch(/^blob:/)
+  expect(view.result.current).not.toBe(original)
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith(original)
+})
+
+it("drops the previous bytes when a refresh finds them deleted", async () => {
+  const fetchAsset = vi.fn().mockResolvedValueOnce(new Blob(["first"])).mockRejectedValue(new Error("410"))
+  const view = renderHook(() => useAssetStatus(PATH), { wrapper: runtimeWrapper(fakeDaemonTransport("local", { fetchAsset })) })
+  await waitFor(() => expect(view.result.current.src).toMatch(/^blob:/))
+  const original = view.result.current.src
+  act(() => refreshAssets("local", "/api/tasks/t1/"))
+  await waitFor(() => expect(view.result.current.failed).toBe(true))
+  expect(view.result.current.src).toBeNull()
+  expect(URL.revokeObjectURL).toHaveBeenCalledWith(original)
+})
+
+it("leaves what a refresh skips untouched", async () => {
+  const fetchAsset = vi.fn().mockResolvedValue(new Blob(["bytes"]))
+  const view = renderHook(() => useAssetSrc(PATH), { wrapper: runtimeWrapper(fakeDaemonTransport("local", { fetchAsset })) })
+  await waitFor(() => expect(view.result.current).toMatch(/^blob:/))
+  act(() => refreshAssets("local", "", (path) => path === PATH))
+  expect(fetchAsset).toHaveBeenCalledTimes(1)
+})
+
+describe("a lazy image", () => {
+  /** A hand-driven IntersectionObserver: `move` brings one target into range or out of it. */
+  let targets: Map<Element, IntersectionObserverCallback>
+  beforeEach(() => {
+    targets = new Map()
+    vi.stubGlobal("IntersectionObserver", class {
+      readonly callback: IntersectionObserverCallback
+      constructor(callback: IntersectionObserverCallback) { this.callback = callback }
+      observe(target: Element) { targets.set(target, this.callback) }
+      unobserve(target: Element) { targets.delete(target) }
+      disconnect() {}
+    })
+  })
+  const move = (target: Element, isIntersecting: boolean) =>
+    act(() => targets.get(target)?.([{ target, isIntersecting } as IntersectionObserverEntry], {} as IntersectionObserver))
+
+  function lazyImage(path: string, fetchAsset: DaemonTransport["fetchAsset"]) {
+    const view = { result: { current: null as unknown as AssetStatus } }
+    function Probe() {
+      const status = useAssetStatus(path, { lazy: true })
+      view.result.current = status
+      return <img ref={status.ref} src={status.src ?? undefined} alt="" />
+    }
+    const { container } = render(<Probe />, { wrapper: runtimeWrapper(fakeDaemonTransport("local", { fetchAsset })) })
+    return { element: container.querySelector("img")!, view }
+  }
+
+  it("fetches only once it is near the viewport", async () => {
+    const fetchAsset = vi.fn().mockResolvedValue(new Blob(["bytes"]))
+    const { element, view } = lazyImage(PATH, fetchAsset)
+    await waitFor(() => expect(targets.has(element)).toBe(true))
+    expect(fetchAsset).not.toHaveBeenCalled()
+    expect(view.result.current.src).toBeNull()
+
+    move(element, true)
+    await waitFor(() => expect(view.result.current.src).toMatch(/^blob:/))
+    expect(fetchAsset).toHaveBeenCalledTimes(1)
+  })
+
+  /** Mounted history no longer pins its bytes: only what is near the viewport is held. */
+  it("lets eviction release it once it is far off screen, and fetches it again on the way back", async () => {
+    const fetchAsset = vi.fn().mockImplementation(() => Promise.resolve(new Blob(["bytes"])))
+    const { element, view } = lazyImage("/api/tasks/t1/attachments/1/far.png", fetchAsset)
+    await waitFor(() => expect(targets.has(element)).toBe(true))
+    move(element, true)
+    await waitFor(() => expect(view.result.current.src).toMatch(/^blob:/))
+    const far = view.result.current.src
+    move(element, false)
+
+    for (let index = 0; index < 40; index++) {
+      const passing = renderHook(() => useAssetSrc(`/api/tasks/t1/attachments/1/passing-${index}.png`), {
+        wrapper: runtimeWrapper(fakeDaemonTransport("local", { fetchAsset })),
+      })
+      await waitFor(() => expect(passing.result.current).toMatch(/^blob:/))
+      passing.unmount()
+    }
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith(far)
+    expect(view.result.current.src).toBeNull()
+    move(element, true)
+    await waitFor(() => expect(view.result.current.src).toMatch(/^blob:/))
+  })
 })

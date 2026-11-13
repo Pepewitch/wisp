@@ -29,6 +29,7 @@ import { Prose } from "@/components/prose"
 import { QuestionnaireProvider } from "@/components/questionnaire-context"
 import { TurnAttachments } from "@/components/turn-attachments"
 import { TurnProgress } from "@/components/turn-progress"
+import { AssetScrollRoot, clearAssetCache } from "@/lib/asset-src"
 import { revealFileHandler } from "@/lib/external-links"
 import { useFindInTask } from "@/hooks/useFindInTask"
 import { useRevealMessage } from "@/hooks/useRevealMessage"
@@ -167,6 +168,15 @@ export function Conversation({
     taskId ? scheduleConversationPaint() : undefined
   ), [taskId])
 
+  // An archive that did not keep the task's files deleted them: what this
+  // client still holds of them goes too, on screen or not. The SSE bridge no
+  // longer clears on every task event, so this is where the detail saying so
+  // lands.
+  const assetsRemoved = Boolean(task?.archived && !task.attachmentsRetained)
+  useEffect(() => {
+    if (taskId && assetsRemoved) clearAssetCache(runtime.connectionId, `/api/tasks/${taskId}/`)
+  }, [assetsRemoved, runtime.connectionId, taskId])
+
   // A project-search hit names its turn. Pull cursor pages until that turn is
   // mounted, then the existing find hook reveals activity and walks the match.
   const revealTurn = find.revealTurn
@@ -199,6 +209,7 @@ export function Conversation({
       onReveal={revealFileHandler(runtime.connectionId, task?.worktree_path ?? null)}
     >
       <QuestionnaireProvider value={questionnaire}>
+      <AssetScrollRoot.Provider value={viewport}>
       {/* Out under the summary card's gutter, so the scrollbar sits at the
           pane's edge; the scroller pads its content back by the same width. */}
       <div className="relative -mr-(--summary-gutter) flex min-h-0 flex-1 flex-col">
@@ -308,6 +319,7 @@ export function Conversation({
           </div>
         )}
       </div>
+      </AssetScrollRoot.Provider>
       </QuestionnaireProvider>
     </FileViewerProvider>
   )
