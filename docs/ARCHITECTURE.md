@@ -83,6 +83,16 @@ them.
 See the [CLI reference](../skills/wisp/references/cli.md) for the user-facing
 states, diagnostics, and stop behavior.
 
+A Claude turn settles on its answer. When nothing it started still runs in
+the background, its process stays warm for up to 10 minutes and takes the
+task's next turn on the same stdin, instead of a resumed spawn paying the
+CLI's boot, a cold first call and its exit again. The daemon keeps at most
+`warmHarnessProcesses` (4) of these, least recently used first. A warm
+process is not background work, so it holds up no workflow, subtask report
+or autopilot step. A different model or effort, `/fresh`, an error answer,
+Stop, archive, or the daemon's exit ends it, and the next turn resumes on a
+new process.
+
 ## The shared client contract
 
 `web/src/lib/transport.ts` defines `DaemonTransport`. UI code receives a

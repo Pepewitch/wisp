@@ -55,6 +55,13 @@ export interface LingerHooks {
   wake(reason: string): LiveTurn | null;
   /** The settle finished and nothing woke the process, so the next queued message may start. */
   idle(): void;
+  /** Whether a process with nothing left in the background may stay warm for the task's next turn; null when it may not. */
+  warm?(): WarmPolicy | null;
+}
+
+/** A warm process's terms: how many the daemon keeps at once, the least recently used going first. */
+export interface WarmPolicy {
+  cap: number;
 }
 
 export interface ActiveLiveInput {
@@ -276,9 +283,50 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
  * it may still start. `quietMs`: how long a lingering process with nothing left
  * in the background waits for a call that end may wake before its input closes.
  * `recheckMs`: how often a lingering Droid checks that the commands it waits
- * for still run. A test seam; production never changes them.
+ * for still run. `warmMs`: how long a warm Claude process waits for its task's
+ * next turn (see `keepWarm`). A test seam; production never changes them.
  */
-export const lingerTiming = { followOnMs: 1_500, quietMs: 10_000, recheckMs: 5_000 };
+export const lingerTiming = { followOnMs: 1_500, quietMs: 10_000, recheckMs: 5_000, warmMs: 10 * 60_000 };
+
+/**
+ * Claude processes kept WARM: the turn's answer is in, nothing runs in the
+ * background, and instead of closing its input the process waits for the
+ * task's next turn, which `adopt` hands it as a lingering process's. A
+ * resumed spawn costs every turn the CLI's boot before its first call, a
+ * cold first call, and its exit after the answer. Measured on claude 2.1.322:
+ * spawn to `init` 0.3 s, and 0.5 s from closing its input to its exit; a
+ * small session's turn took 0.9 s less at the median through Wisp, and on a
+ * 100k-token session the call itself answered about 1 s sooner warm. On a
+ * loaded machine the boot alone reached 72 s at p99. An orchestrator's turns
+ * come minutes apart (subtask reports, five-minute heartbeats, autopilot), so
+ * most of them find their process warm.
+ *
+ * Bounded both ways. In time, `lingerTiming.warmMs` (10 minutes): long enough
+ * for that traffic, short enough that a process does not sit on its memory
+ * (about 270 MB each) or on settings, skills or CLAUDE.md edits it read at
+ * boot for long. In number, the config's `warmHarnessProcesses` (4) across
+ * the daemon, the least recently warmed going first. Only the process
+ * changes: the session, the prompt and the harness's own choices are the
+ * same either way.
+ *
+ * Least recently warmed first: a Set keeps insertion order.
+ */
+const warmProcesses = new Set<ClaudeLiveProcess>();
+
+function keepWarm(process: ClaudeLiveProcess, cap: number): void {
+  warmProcesses.delete(process);
+  warmProcesses.add(process);
+  for (const oldest of warmProcesses) {
+    if (warmProcesses.size <= cap) break;
+    warmProcesses.delete(oldest);
+    oldest.cool();
+  }
+}
+
+/** How many processes are warm now; a test seam. */
+export function warmProcessCount(): number {
+  return warmProcesses.size;
+}
 
 /**
  * A live harness process that can serve several turn rows: its answer settles
@@ -342,6 +390,13 @@ export function forgetLiveProcess(taskId: string, process: LingeringLiveProcess)
  *    appended to the settled turn's transcript (`hooks.between`).
  *  - When nothing is left in the background and no call follows, stdin closes
  *    and the process exits; the runner then clears the marker.
+ *
+ * A turn whose answer leaves nothing in the background settles the same way
+ * when the process may stay warm (`hooks.warm`, see `keepWarm`): it lingers
+ * with nothing to wait for, so the task's next turn is written to it instead
+ * of a resumed spawn. Its group is then no background work (task-processes
+ * `isBackground`), unless a process a turn left behind no longer descends
+ * from it.
  */
 export class ClaudeLiveProcess implements LingeringLiveProcess {
   private readonly taskId: string;
@@ -364,6 +419,8 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
   private settling: Promise<void> = Promise.resolve();
   /** What the last task notification since the turn settled said, for the follow-up turn's reason. */
   private notice: string | null = null;
+  /** The last answer was an error: its process is not kept warm, so the next turn starts on a fresh one. */
+  private answerFailed = false;
   private closed = false;
   // Serialized, but a failed write fails only itself: the chain keeps each
   // step's settling, never its rejection, so a later steer is still written
@@ -531,8 +588,9 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
   }
 
   private decide(result: Record<string, unknown>): void {
+    this.answerFailed = result.is_error === true;
     const verdict = this.followUp.closesTurn(result);
-    if (verdict === "close") void closeLiveInput(this.taskId, this.current.turnId);
+    if (verdict === "close") this.finish(this.current.turnId);
     else if (verdict === "linger") this.linger();
     // Input written during this call may still get a call of its own, which
     // starts at once when it does. Settling first would file its answer as
@@ -553,19 +611,28 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
         if (this.phaseValue !== "turn" || this.current.turnId !== turnId) return;
         this.followUp.inputAnswered();
         if (this.followUp.activeCount() > 0) this.linger();
-        else void closeLiveInput(this.taskId, turnId);
+        else this.finish(turnId);
       });
     }, lingerTiming.followOnMs);
     this.followOn = { turnId, timer };
   }
 
-  /** Settle the current turn and keep the process for its background work. */
-  private linger(): void {
+  /**
+   * The answer is in and nothing runs in the background. A process that may
+   * stay warm settles the turn and waits for the task's next one; any other
+   * closes its input and exits, which ends the turn.
+   */
+  private finish(turnId: number): void {
+    if (this.answerFailed || !this.options.linger?.warm?.() || !this.linger()) void closeLiveInput(this.taskId, turnId);
+  }
+
+  /** Settle the current turn and keep the process: for its background work, or warm. False when it may not. */
+  private linger(): boolean {
     const hooks = this.options.linger;
     const turn = this.current;
     // Without the hooks (or while a Stop owns the turn) the turn stays open
     // as it always did; stdin stays open either way.
-    if (!hooks || this.closing || !hooks.canLinger(turn.turnId)) return;
+    if (!hooks || this.closing || !hooks.canLinger(turn.turnId)) return false;
     this.clearTimers();
     this.phaseValue = "settling";
     this.followUp.inputAnswered();
@@ -586,6 +653,12 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
         if (this.phaseValue === "lingering") this.options.linger?.idle();
         this.checkQuiet();
       });
+    return true;
+  }
+
+  /** Evicted from the warm set: close its input, so it exits and the task's next turn resumes on a fresh one. */
+  cool(): void {
+    if (this.phaseValue === "lingering" && this.followUp.activeCount() === 0) void this.close().catch(() => {});
   }
 
   private wake(): void {
@@ -607,13 +680,18 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
     if (this.phase !== "lingering" || this.followUp.activeCount() > 0) {
       if (this.quiet) clearTimeout(this.quiet);
       this.quiet = null;
+      warmProcesses.delete(this);
       return;
     }
     if (this.quiet) return;
+    // Warm, it waits for the task's next turn; otherwise only for a call the
+    // background work's end may still wake.
+    const warm = this.answerFailed ? null : (this.options.linger?.warm?.() ?? null);
+    if (warm) keepWarm(this, warm.cap);
     this.quiet = setTimeout(() => {
       this.quiet = null;
       if (this.phase === "lingering" && this.followUp.activeCount() === 0) void this.close().catch(() => {});
-    }, lingerTiming.quietMs);
+    }, warm ? lingerTiming.warmMs : lingerTiming.quietMs);
     this.quiet.unref?.();
   }
 
@@ -627,6 +705,7 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
     this.clearFollowOn();
     if (this.quiet) clearTimeout(this.quiet);
     this.quiet = null;
+    warmProcesses.delete(this);
   }
 }
 

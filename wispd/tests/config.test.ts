@@ -297,11 +297,19 @@ describe("validateConfig (a prior audit)", () => {
     }
   });
 
+  test("warmHarnessProcesses is a count, and 0 turns warm processes off", () => {
+    expect(validateConfig({ warmHarnessProcesses: 0 })).toEqual({ warmHarnessProcesses: 0 });
+    expect(validateConfig({ warmHarnessProcesses: 8 })).toEqual({ warmHarnessProcesses: 8 });
+    expect(() => validateConfig({ warmHarnessProcesses: -1 })).toThrow("warmHarnessProcesses must be a non-negative integer");
+    expect(() => validateConfig({ warmHarnessProcesses: 1.5 })).toThrow("non-negative integer");
+    expect(() => validateConfig({ maxConcurrentTasks: 0 })).toThrow("maxConcurrentTasks must be a positive integer");
+  });
+
   test("unknown keys warn and are dropped", () => {
     const warnings: string[] = [];
     const out = validateConfig({ port: 9000, prot: 9001 }, (m) => warnings.push(m));
     expect(warnings).toEqual([
-      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, hiddenModels, modelTaskDefaults, setupTimeoutMinutes, envAllowlist, harnessDefaults, jevApiKey, factoryApiKey, maxRunningSubtasks, maxSubtasks, subtasks)",
+      "config.json: unknown key 'prot' — ignoring (known: instanceId, port, host, token, webhooks, repos, stuckMinutes, terminalShell, maxConcurrentTasks, warmHarnessProcesses, turnTranscriptBytes, logMaxBytes, diagnosticEnabled, diagnosticMaxBytes, diagnosticRetentionDays, turnLogRetentionEnabled, turnLogMaxBytes, turnLogRetentionDays, autoRenameTasksFromPullRequests, hiddenModels, modelTaskDefaults, setupTimeoutMinutes, envAllowlist, harnessDefaults, jevApiKey, factoryApiKey, maxRunningSubtasks, maxSubtasks, subtasks)",
     ]);
     expect(out).toEqual({ port: 9000 });
   });
