@@ -5,7 +5,8 @@ import { cleanupSummary } from "../src/archive-progress";
 import { autopilotStatus, autopilotStatuses, setAutopilot } from "../src/autopilot/store";
 import { type WispConfig } from "../src/config";
 import { route } from "../src/daemon";
-import { createTask, createTurn, db, finishTurn, freeSlot, newTaskId, setTaskFields, transition } from "../src/store";
+import { createTask, createTurn, db, finishTurn, freeSlot, getTask, newTaskId, setTaskFields, transition } from "../src/store";
+import { queuePosition } from "../src/subtasks";
 import { backgroundWork, BACKGROUND_SETTLE_MS } from "../src/task-processes";
 import { testRouteContext } from "./helpers/daemon-context";
 
@@ -127,6 +128,34 @@ describe("the archived list's reads", () => {
       archive(task.id);
     }
     expect(await statements(() => get("/api/tasks?archived=1"))).toBe(before);
+  });
+});
+
+describe("queued subtasks' positions in the list", () => {
+  function child(parent: string, state: "queued" | "running", extra: Record<string, unknown> = {}): string {
+    const id = newTaskId();
+    createTask({ id, title: `child ${id}`, repo_path: "/tmp/repo", harness: "claude", model: null, slot: freeSlot(), subtask: { parent_task_id: parent, subtask_kind: "explore", report_to_parent: true, base_from: "project" } });
+    db.run(`UPDATE tasks SET state = ?${Object.keys(extra).map((key) => `, ${key} = ?`).join("")} WHERE id = ?`, [state, ...Object.values(extra) as string[], id]);
+    return id;
+  }
+
+  test("each queued child's place among its parent's queued children, as queuePosition says, for one read", async () => {
+    const parent = makeTask("a parent").id;
+    const other = makeTask("another parent").id;
+    const queued = [child(parent, "queued"), child(parent, "running"), child(parent, "queued"), child(other, "queued"), child(parent, "queued")];
+    // neither a reviewer nor an archived child holds a place
+    const reviewer = child(parent, "queued", { verify_role: "reviewer" });
+    const rows = new Map((await get<ApiTaskListItem[]>("/api/tasks?cleanup=1")).map((row) => [row.id, row]));
+    const positions = [...queued, reviewer].map((id) => rows.get(id)!.queue_position);
+    expect(positions).toEqual([1, undefined, 2, 1, 3, 1]);
+    for (const id of [...queued, reviewer]) {
+      const row = rows.get(id)!;
+      if (row.state === "queued") expect(row.queue_position).toBe(queuePosition(getTask(id)!));
+    }
+
+    const before = await statements(() => get("/api/tasks?cleanup=1"));
+    for (let i = 0; i < 5; i++) child(parent, "queued");
+    expect(await statements(() => get("/api/tasks?cleanup=1"))).toBe(before);
   });
 });
 

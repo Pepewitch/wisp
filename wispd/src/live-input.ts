@@ -20,7 +20,7 @@ import { clearHarnessBackground, setHarnessBackground } from "./task-processes";
 import { reportFraming } from "./subtask-reports";
 import { deliveredMessage, nativeImageAttachments, withWispSection } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
-import type { Task, TaskMessage, TurnInput, TurnInputMode } from "./types";
+import type { Task, TaskMessage, Turn, TurnInput, TurnInputMode } from "./types";
 
 export interface LiveOutputSink {
   recordEvent(event: Record<string, unknown>): void;
@@ -117,10 +117,16 @@ export function turnInputMode(taskId: string, turnId: number): TurnInputMode {
   return liveTurns.get(taskId) === turnId ? "wait" : "interrupt";
 }
 
-/** The running turn's input for the task API; null while idle. */
-export function turnInput(taskId: string): TurnInput | null {
-  const running = runningTurn(taskId);
-  if (!running) return null;
+/**
+ * The running turn's input for the task API; null while idle. A task list
+ * passes `running`, its one read of every running turn by task.
+ */
+export function turnInput(taskId: string, running: ReadonlyMap<string, Turn> | null = null): TurnInput | null {
+  const turn = running ? running.get(taskId) ?? null : runningTurn(taskId);
+  return turn === null ? null : turnInputOf(taskId, turn);
+}
+
+function turnInputOf(taskId: string, running: Turn): TurnInput {
   return {
     mode: turnInputMode(taskId, running.id),
     context_n: running.context_n,
