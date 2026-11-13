@@ -42,7 +42,8 @@ const COMMAND_USAGE = {
                                                        --queue: when the parent's running cap is full, the subtask
                                                        is created anyway and starts once a sibling finishes)`,
   ls: `  ${COMMAND} ls [-a|--all] [--json]                    list your tasks, subtasks under their parent (alias: list; -a includes archived)`,
-  show: `  ${COMMAND} show <task>                             task detail: turns, attachments, diffstat, parent and subtasks`,
+  show: `  ${COMMAND} show <task> [-a|--all]                    task detail: turns, attachments, diffstat, parent and subtasks
+                                               (--all also lists archived subtasks, otherwise only counted)`,
   result: `  ${COMMAND} result <task> [turn]                    the agent's full answer for a turn (default: latest)`,
   log: `  ${COMMAND} log <task> [turn] [-f|--follow] [--raw] [--diagnostic]
                                                activity feed; --raw is the retained harness stream;

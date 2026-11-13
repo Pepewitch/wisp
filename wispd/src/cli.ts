@@ -27,6 +27,7 @@ import { resolve } from "node:path";
 import { createEventFormatter, loadAdapters, rawOnThrow, type UsageSummary } from "./adapters";
 import { formatBytes } from "./attachments";
 import { readAttachmentFlags } from "./cli-attach";
+import { resultCommand } from "./cli-result";
 import { searchCommand } from "./cli-search";
 import { waitCommand } from "./cli-wait";
 import { reportCommand } from "./cli-report";
@@ -90,26 +91,7 @@ function printTasks(tasks: ApiTaskListItem[]): void {
   }
 }
 
-async function resultCommand(positional: string[]): Promise<void> {
-  const task = (await api(`/api/tasks/${positional[0]}`)) as TaskDetail;
-  const n = positional[1] ? Number(positional[1]) : undefined;
-  const turn = n
-    ? task.turns.find((candidate) => candidate.n === n)
-    : [...task.turns].reverse().find((candidate) => candidate.result) ?? task.turns[task.turns.length - 1];
-  if (!turn) {
-    printError("no turns yet");
-    process.exit(1);
-  }
-  print(`── you (turn ${turn.n}) ──\n${turn.prompt}\n── agent ──`);
-  if (turn.result) {
-    print(turn.result);
-    // a turn can fail after its result landed (the harness exited nonzero)
-    if (turn.failure_detail) print(`── failed ──\n${turn.failure_detail}`);
-  } else if (turn.failure_detail) print(`(turn ${turn.n} failed, no result text: ${turn.failure_detail})`);
-  else print(`(turn ${turn.n} is ${turn.status}, no result text)`);
-}
-
-async function showCommand(positional: string[]): Promise<void> {
+async function showCommand(positional: string[], flags: Flags): Promise<void> {
   const task = (await api(`/api/tasks/${positional[0]}`)) as TaskDetail;
   const latest = [...task.turns].sort((a, b) => b.n - a.n)[0];
   const word = displayStateWord(
@@ -125,7 +107,7 @@ async function showCommand(positional: string[]): Promise<void> {
   if (task.fast) print(`fast mode: on`);
   print(`worktree: ${task.worktree_path ?? "-"}\nbranch: ${task.branch ?? "-"}`);
   if (task.worktreeReason) print(task.worktreeReason);
-  await printFamily(task);
+  await printFamily(task, flags.all === true || flags.a === true);
   printBackground(task);
   for (const turn of task.turns) printTurn(task, turn, turn === latest && turn.failure_detail === task.state_detail);
   for (const message of task.messages ?? []) {
@@ -458,7 +440,7 @@ export const COMMANDS = {
     if (flags.json === true) print(JSON.stringify(tasks, null, 2));
     else printTasks(tasks);
   },
-  show: (positional) => showCommand(positional),
+  show: (positional, flags) => showCommand(positional, flags),
   result: (positional) => resultCommand(positional),
   log: (positional, flags) => logCommand(positional, flags),
   search: (positional, flags) => searchCommand(positional, flags, api),

@@ -5,8 +5,9 @@
  * Seeds a home shaped like an orchestrating workflow: one long task
  * (default 1000 turns) and one parent with subtasks (default 10 × 30 turns),
  * each in a live worktree. Then it measures, against a real `wisp serve`,
- * the reads that grow with turns and subtasks: the full task detail every
- * `wisp wait` / `send` / `result` poll reads, the conversation page the UI
+ * the reads that grow with turns and subtasks: the full task detail
+ * `wisp show` reads, the task row `wisp wait` polls and the page
+ * `wisp result` reads, the conversation page the UI
  * refetches per event, the diff, the subtasks list, and one `wisp wait`
  * round over every subtask. It prints bytes (identity and gzip), median
  * time, and git spawns per request.
@@ -111,8 +112,13 @@ try {
     rows.push({ name, status: plain.status, rawBytes: plain.bytes, gzipBytes: runs[0]!.bytes, medianMs: Number(medianMs.toFixed(1)), gitPerRequest });
   };
 
-  await measure(`wisp wait poll: detail, ${LONG_TURNS}-turn task`, "/api/tasks/long");
-  await measure(`wisp wait poll: detail, ${SUBTASK_TURNS}-turn subtask`, "/api/tasks/sub0");
+  // The CLI's reads: the full detail `wisp show` prints, and the task row and
+  // newest page that `wait`, `send` and `result` read. An older daemon
+  // ignores `view=` and answers the full detail.
+  await measure(`wisp show: detail, ${LONG_TURNS}-turn task`, "/api/tasks/long");
+  await measure(`wisp wait poll: ${LONG_TURNS}-turn task`, "/api/tasks/long?view=summary");
+  await measure(`wisp wait poll: ${SUBTASK_TURNS}-turn subtask`, "/api/tasks/sub0?view=summary");
+  await measure(`wisp result: newest page, ${LONG_TURNS}-turn task`, "/api/tasks/long/conversation?limit=10");
   await measure(`UI: conversation page, ${LONG_TURNS}-turn task`, "/api/tasks/long/conversation?limit=50");
   await measure("UI: conversation older page", `/api/tasks/long/conversation?limit=50&before=${Math.ceil(LONG_TURNS / 2)}`);
   await measure("UI: conversation, parent", "/api/tasks/parent/conversation?limit=50");
@@ -125,7 +131,7 @@ try {
   writeFileSync(spawnLog, "");
   const roundStarted = performance.now();
   let roundBytes = 0;
-  for (let i = 0; i < SUBTASKS; i++) roundBytes += (await get(`/api/tasks/sub${i}`, "identity")).bytes;
+  for (let i = 0; i < SUBTASKS; i++) roundBytes += (await get(`/api/tasks/sub${i}?view=summary`, "identity")).bytes;
   const round = { subtasks: SUBTASKS, ms: Math.round(performance.now() - roundStarted), rawBytes: roundBytes, gitSpawns: spawns() };
 
   const width = Math.max(...rows.map((row) => row.name.length));

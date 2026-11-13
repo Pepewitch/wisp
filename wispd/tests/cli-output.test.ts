@@ -116,6 +116,8 @@ describe("agent text printed by the CLI", () => {
       fetch(req) {
         const { pathname } = new URL(req.url);
         if (pathname === "/api/tasks/tabcde") return Response.json(task);
+        // `wisp result` reads the newest page; every turn is one page here
+        if (pathname === "/api/tasks/tabcde/conversation") return Response.json(task);
         if (pathname === "/api/tasks/tsrced") return Response.json(sourced);
         if (pathname === "/api/tasks/tabcde/log") {
           return Response.json({ harness: "claude", out: `${claudeLine(hostile("said"))}\n`, err: hostile("stderr"), status: "done", size: 1, turn: 1 });

@@ -310,6 +310,9 @@ address's last new wrong token. The web UI is served at `/`.
   own notice), and is null for the person's words. Protocol-1
   clients fall back to the legacy Git-aware `GET /api/tasks/:id` when an older
   daemon does not provide this additive route
+- `GET /api/tasks/:id?view=summary` — the task row alone, with no turns,
+  messages or Git work (`wisp wait` polls it). An older daemon ignores
+  `view` and answers the full detail, which carries every field
 - `POST /api/tasks/:id/send` (`{message, attachments?, suffixPromptId?,
   when?}`; `when` is `now` or `next-turn`, see the CLI reference) ·
   `…/interrupt` · `…/fresh-session` · `…/push` · `…/archive` (`{force?}`)
