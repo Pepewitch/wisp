@@ -14,9 +14,9 @@ import type { ApiTask, ConversationDetail, TaskState, WispEvent } from "./types"
  *
  * The invalidation mapping mirrors the classic UI (web/index.html):
  *   task event    → metadata-only renames patch task caches directly; other
- *                   changes invalidate the live task list and selected detail,
- *                   and the list with archived history only when the task is
- *                   archived (see `useTasks`)
+ *                   changes invalidate the live task list, the selected detail
+ *                   and its workflow panels, and the list with archived
+ *                   history only when the task is archived (see `useTasks`)
  *   turn event    → the selected task's detail + diff (debounced)
  *   outputs event → that task's detail, patched now and refetched debounced
  *   project event → the repos list (debounced; add/remove re-shape the sidebar)
@@ -153,7 +153,11 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     opts.statusDebounceMs ?? 400,
   );
   const details = detailInvalidations(opts);
-  const { turn: invalidateSelectedTurn, messages: invalidateSelectedMessages } = details;
+  const {
+    turn: invalidateSelectedTurn,
+    messages: invalidateSelectedMessages,
+    workflows: invalidateSelectedWorkflows,
+  } = details;
 
   function onEvent(evt: WispEvent): void {
     if (!evt) return;
@@ -185,11 +189,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       return;
     }
     if (evt.type === "workflow") {
-      void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "workflows"] });
-      // auto-merge and auto-fix are a workflow: each entry of their history announces one
-      void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "autopilot-history"] });
-      // so is auto-review: a round starting or ending announces one too
-      void opts.client.invalidateQueries({ queryKey: [...qk.task(evt.taskId), "auto-review"] });
+      invalidateWorkflowPanels(opts, evt.taskId);
       // The task list carries has_workflow so every sidebar row can render
       // standing workflow state without opening one request per task.
       invalidateTasks(evt.taskId);
@@ -245,6 +245,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
           old ? { ...old, state: evt.state as TaskState, state_detail: evt.stateDetail } : old,
         );
         invalidateSelectedTurn();
+        invalidateSelectedWorkflows();
       }
     } else if (evt.type === "turn" && evt.taskId === opts.getSelectedId()) {
       invalidateSelectedTurn();
@@ -349,6 +350,15 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
   };
 }
 
+/** The panels a task's workflows draw: the workflows, autopilot's history, the auto-review rounds. */
+function invalidateWorkflowPanels({ client, qk }: Pick<EventsBridgeOptions, "client" | "qk">, taskId: string): void {
+  void client.invalidateQueries({ queryKey: [...qk.task(taskId), "workflows"] });
+  // auto-merge and auto-fix are a workflow: each entry of their history announces one
+  void client.invalidateQueries({ queryKey: [...qk.task(taskId), "autopilot-history"] });
+  // so is auto-review: a round starting or ending announces one too
+  void client.invalidateQueries({ queryKey: [...qk.task(taskId), "auto-review"] });
+}
+
 /**
  * The task detail, debounced. It is invalidated EXACTLY: its key prefixes the
  * task's panels (subtasks, workflows, autopilot history, auto-review, usage,
@@ -377,6 +387,14 @@ function detailInvalidations(opts: EventsBridgeOptions) {
     const id = opts.getSelectedId();
     if (id) detail(id);
   }, opts.detailDebounceMs ?? 400);
+  // Workflows also change with no `workflow` event: the daemon pauses them in
+  // SQL when the task's context or agent changes (`/fresh`, another model)
+  // and completes them when it is archived. Those are updates to the task
+  // row, which only its `task` event announces.
+  const workflows = debounce(() => {
+    const id = opts.getSelectedId();
+    if (id) invalidateWorkflowPanels(opts, id);
+  }, opts.detailDebounceMs ?? 400);
   // Several images in one turn arrive as several events: one refetch for them.
   const outputTasks = new Set<string>();
   const flushOutputs = debounce(() => {
@@ -386,6 +404,7 @@ function detailInvalidations(opts: EventsBridgeOptions) {
   return {
     turn,
     messages,
+    workflows,
     outputs: (taskId: string) => {
       outputTasks.add(taskId);
       flushOutputs();
@@ -393,6 +412,7 @@ function detailInvalidations(opts: EventsBridgeOptions) {
     cancel: () => {
       turn.cancel();
       messages.cancel();
+      workflows.cancel();
       flushOutputs.cancel();
     },
   };
