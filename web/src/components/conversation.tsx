@@ -419,13 +419,9 @@ const TurnBlock = memo(function TurnBlock({
         </div>
       </PersonBubble>}
 
-      {/* A settled turn above the latest one is skipped by layout and paint
-          while it is off screen: a long history costs what is visible. The
-          bubble stays outside, because the containment this needs clips, and
-          its toolbar hangs above it. The running turn and the latest one, the
-          bottom the reader is pinned to, are never skipped. Text stays in the
-          DOM, so find-in-task still reads it. */}
-      <div className={cn(!running && !latest && "[contain-intrinsic-size:auto_400px] [content-visibility:auto]")}>
+      {/* the bubble stays outside: the containment that skips clips, and its
+          toolbar hangs above it */}
+      <div className={offscreenSkip(turn, latest)}>
       {/* what the person sent WITH the prompt, so it hangs off the bubble */}
       <TurnAttachments taskId={taskId} turn={turn.n} attachments={turn.attachments ?? []} archived={archived} />
 
@@ -477,6 +473,17 @@ const TurnBlock = memo(function TurnBlock({
     </article>
   )
 })
+
+/**
+ * A settled turn above the latest one is skipped by layout and paint while it
+ * is off screen, so a long history costs what is visible; `auto` remembers
+ * each turn's real height once it has been drawn. The running turn and the
+ * latest one, the bottom the reader is pinned to, are never skipped. Text
+ * stays in the DOM, so find-in-task still reads it.
+ */
+function offscreenSkip(turn: Turn, latest: boolean): string | undefined {
+  return turn.status === "running" || latest ? undefined : "[contain-intrinsic-size:auto_400px] [content-visibility:auto]"
+}
 
 /**
  * One message that reached a RUNNING turn. Same bubble wherever it lands —
