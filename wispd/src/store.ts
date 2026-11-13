@@ -607,6 +607,20 @@ export function turnForTask(taskId: string, n: number): Turn | null {
   );
 }
 
+/**
+ * Whether a plain turn reached the harness in this context: the one that
+ * opens a conversation carries the task preamble (runner startTurn), and a
+ * `/command` cannot, since a harness takes input as a command only when it
+ * starts with `/`. So a context whose turns so far were all commands (`/fresh`,
+ * then a skill) has a session that has never heard it. Turn 1 always carried
+ * it; a call background work woke, and a turn whose spawn failed, never did.
+ */
+export function contextHasPlainTurn(taskId: string, contextN: number): boolean {
+  return db.query(`SELECT 1 FROM turns WHERE task_id = ? AND context_n = ? AND pid IS NOT NULL
+    AND (origin IS NULL OR origin != 'background')
+    AND (n = 1 OR substr(ltrim(prompt, ' ' || char(9, 10, 11, 12, 13)), 1, 1) != '/') LIMIT 1`).get(taskId, contextN) !== null;
+}
+
 export function latestTurnForTask(taskId: string): Turn | null {
   return (
     (db.query(`SELECT ${TURN_COLUMNS} FROM turns WHERE task_id = ? ORDER BY n DESC LIMIT 1`).get(taskId) as Turn | null) ??

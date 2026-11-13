@@ -112,9 +112,30 @@ describe("what a turn is sent", () => {
     await finish(task.id);
   });
 
+  test("a fresh context opened by a slash command gets the preamble on its first plain turn", async () => {
+    const task = makeTask();
+    await begin(task.id, "start");
+    await finish(task.id);
+    setTaskContextFields(task.id, task.context_n, { session_id: "s1" });
+    // `/fresh`, then a skill: a command carries no Wisp section, yet starts the new session
+    switchTaskAgent(task.id, { harness: "fake", model: null, effort: null, fast: false }, true);
+    expect((await begin(task.id, "/review the diff")).prompt).toBe("/review the diff");
+    await finish(task.id);
+    setTaskContextFields(task.id, getTask(task.id)!.context_n, { session_id: "s2" });
+    const opened = await begin(task.id, "now fix what it found");
+    expect(opened.prompt).toBe(withWispSection([...taskPreambleLines(getTask(task.id)!), outputReminder()], "now fix what it found"));
+    await finish(task.id);
+    // and only that once: the conversation has heard it now
+    expect((await begin(task.id, "thanks")).prompt).toBe("thanks");
+    await finish(task.id);
+  });
+
   test("the notes go out again after a daemon restart and after a slash command", async () => {
     const task = makeTask();
+    await begin(task.id, "zero");
+    await finish(task.id);
     setTaskContextFields(task.id, task.context_n, { session_id: "s1" });
+    resetStandingNotes();
     // a conversation this daemon has no record of sending the notes into
     expect((await begin(task.id, "one")).prompt).toBe(withWispSection([outputReminder()], "one"));
     await finish(task.id);

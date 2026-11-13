@@ -38,6 +38,7 @@ import {
   db,
   createTurn,
   claimTaskMessageForStart,
+  contextHasPlainTurn,
   creatingTasks,
   getTask,
   getTaskContext,
@@ -203,7 +204,9 @@ export function startTurn(
   // The preamble opens every conversation, not only the task's first turn: a
   // turn with no session to resume (a fresh context after `/fresh` or a
   // harness switch) starts one, and its agent has never been told the task.
-  const opens = !command && !task.session_id;
+  // Nor has it when only commands ran in this context so far: a command
+  // carries no Wisp section, yet its turn started the session.
+  const opens = !command && (!task.session_id || !contextHasPlainTurn(task.id, task.context_n));
   const prompt = withWispSection([...(opens ? taskPreambleLines(task) : []), ...(autopilot?.notes ?? []), ...framed.lines, ...attached], framed.words);
   if (lingering) {
     adoptTurn(lingering, task, n, message, prompt, attachments, autopilot, sourceMessageId, turnOrigin);
