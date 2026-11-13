@@ -1,5 +1,5 @@
 import { constants as zlibConstants, createGzip } from "node:zlib";
-import { cleanupSummary } from "../archive-progress";
+import { cleanupSummaries, cleanupSummary } from "../archive-progress";
 import { formatUsage, isCompactPrompt, type AdapterDef, type UsageSummary } from "../adapters";
 import { parseOutputManifest } from "../outputs";
 import { parseAttachmentManifest } from "../attachments";
@@ -7,17 +7,10 @@ import { turnCaptureState, turnDiagnosticState, type ApiTask, type ApiTaskMessag
 import { logFailure } from "../failure-log";
 import { safeString } from "../text";
 import { typeName } from "../validate";
-import { backgroundWork, BACKGROUND_SETTLE_MS } from "../task-processes";
+import { backgroundWork, BACKGROUND_SETTLE_MS, liveGroupsByTask } from "../task-processes";
 import { turnInput } from "../live-input";
 import { queuePosition } from "../subtasks";
 
-/**
- * SQLite stores archived as 0/1; the public API exposes a boolean (a prior audit).
- *
- * This is the one caller that passes a settle window: the badge is the only
- * consumer a straggler misleads. Everything that deletes, archives or signals
- * calls `backgroundWork` bare and still sees every row.
- */
 /** The relationship as the API serves it; a row written before migration 26 reads as a root task. */
 function subtaskFields(t: Task): Pick<ApiTask, "parent_task_id" | "subtask_kind" | "report_to_parent" | "base_from" | "base_sha" | "merge_granted_by"> {
   return {
@@ -25,14 +18,53 @@ function subtaskFields(t: Task): Pick<ApiTask, "parent_task_id" | "subtask_kind"
     subtask_kind: t.subtask_kind ?? null,
     report_to_parent: t.report_to_parent === 1,
     base_from: t.base_from ?? null,
-    base_sha: t.base_commit,
     merge_granted_by: t.merge_granted_by ?? null,
+    base_sha: t.base_commit,
   };
 }
 
-export function apiTask(t: Task): ApiTask {
-  const { input_seq: _seq, ...row } = t;
-  return { ...row, ...subtaskFields(t), ...(t.state === "queued" ? { queue_position: queuePosition(t) } : {}), archived: t.archived !== 0, fast: t.fast !== 0, attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained), deletionPending: Boolean(t.purge_pending), background: backgroundWork(t.id, BACKGROUND_SETTLE_MS), turn_input: t.archived ? null : turnInput(t.id), ...(t.archived ? { cleanup: cleanupSummary(t.id) } : {}) };
+/**
+ * What apiTask reads beside the row, read once for a whole task list: the
+ * archived list used to run three statements per row for these.
+ */
+export interface TaskListReads {
+  groups: ReturnType<typeof liveGroupsByTask>;
+  cleanup: ReturnType<typeof cleanupSummaries>;
+}
+
+export function taskListReads(): TaskListReads {
+  return { groups: liveGroupsByTask(), cleanup: cleanupSummaries() };
+}
+
+/**
+ * A task as the API serves it. SQLite stores archived and fast as 0/1; the
+ * public API exposes booleans (a prior audit).
+ *
+ * The row's columns are named, not spread. The internal ones are no client's
+ * business: skills_json alone was most of a task list's bytes, and
+ * archive_assets_retained and purge_pending are served as attachmentsRetained
+ * and deletionPending. Keys keep the order a spread row gave them.
+ *
+ * This is the one caller of `backgroundWork` that passes a settle window: the
+ * badge is the only consumer a straggler misleads. Everything that deletes,
+ * archives or signals calls it bare and still sees every row.
+ */
+export function apiTask(t: Task, reads?: TaskListReads): ApiTask {
+  return {
+    id: t.id, title: t.title, repo_path: t.repo_path, worktree_path: t.worktree_path, branch: t.branch,
+    base_commit: t.base_commit, harness: t.harness, model: t.model, slot: t.slot, state: t.state,
+    state_detail: t.state_detail, session_id: t.session_id, seq: t.seq, turn_count: t.turn_count,
+    archived: t.archived !== 0, created_at: t.created_at, updated_at: t.updated_at, effort: t.effort, mode: t.mode,
+    context_n: t.context_n, base_ref: t.base_ref, context_tokens: t.context_tokens, fast: t.fast !== 0,
+    verify_role: t.verify_role,
+    ...subtaskFields(t),
+    ...(t.state === "queued" ? { queue_position: queuePosition(t) } : {}),
+    attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained),
+    deletionPending: Boolean(t.purge_pending),
+    background: backgroundWork(t.id, BACKGROUND_SETTLE_MS, reads?.groups),
+    turn_input: t.archived ? null : turnInput(t.id),
+    ...(t.archived ? { cleanup: reads ? reads.cleanup(t.id) : cleanupSummary(t.id) } : {}),
+  };
 }
 
 export function apiTaskMessage(message: TaskMessage): ApiTaskMessage {
@@ -117,13 +149,15 @@ export function apiTurnUsage(usageJson: string | null, def?: AdapterDef): UsageS
  * client that parsed them would be coupled to them. `def` is the task's
  * adapter; undefined (a harness the daemon no longer knows) serves usage null
  * rather than guessing at a shape. `source` is turnSource's answer.
+ * `log_file` is the daemon's own absolute path, which no client reads: the
+ * log routes find it from the turn.
  */
 export function apiTurn(t: Turn, def: AdapterDef | undefined, source: TurnSource | null): ApiTurn {
   const {
     attachments_json,
     outputs_json,
     usage_json,
-    outcome_json: _outcome,
+    log_file: _logFile,
     capture_categories_json,
     requested_fast,
     source_message_id: _source,

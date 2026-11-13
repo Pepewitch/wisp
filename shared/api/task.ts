@@ -212,6 +212,12 @@ export interface ApiTask {
   mode: TaskMode | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Which of auto-review's tasks this is: a `reviewer` sits under the task it
+   * reviews, a `recipe` sets up a project's verification. Null for every
+   * ordinary task.
+   */
+  verify_role?: "reviewer" | "recipe" | null;
   /** False once archive deleted this task's stored attachments. */
   attachmentsRetained: boolean;
   deletionPending: boolean;
@@ -338,7 +344,6 @@ export interface ApiTurn {
   diagnostic_last_seq: number | null;
   diagnostic_detail: string | null;
   diagnostic_evicted_at: string | null;
-  log_file: string;
   started_at: string;
   ended_at: string | null;
 }

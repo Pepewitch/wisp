@@ -216,7 +216,6 @@ describe("daemon API contracts, batch 2", () => {
       "id",
       "interrupt_detail",
       "kill_detail",
-      "log_file",
       "model",
       "n",
       "omitted_bytes",
@@ -269,7 +268,6 @@ describe("daemon API contracts, batch 2", () => {
       capture_detail: null,
       kill_detail: null,
       diagnostic_state: "unavailable",
-      log_file: logFile,
       started_at: expect.any(String),
       ended_at: expect.any(String),
     });

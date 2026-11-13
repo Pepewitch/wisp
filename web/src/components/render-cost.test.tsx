@@ -39,7 +39,7 @@ function runningTask(messages: TaskMessage[] = []): ConversationDetail {
     created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", messages,
     turns: [{
       id: 1, task_id: "tframes", n: 1, prompt: "Read everything", result: null, status: "running", model: null,
-      usage: null, attachments: [], log_file: "/synthetic/log", started_at: "2026-01-01T00:00:00Z", ended_at: null,
+      usage: null, attachments: [], started_at: "2026-01-01T00:00:00Z", ended_at: null,
     }],
   } as ConversationDetail
 }

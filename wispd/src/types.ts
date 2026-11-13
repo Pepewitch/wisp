@@ -183,6 +183,13 @@ export function displayStateWord(
   return state;
 }
 
+/**
+ * A turn row as every read returns it. The one column it leaves out is
+ * `outcome_json`, the recorder's versioned reducer checkpoint: it repeats the
+ * result, so carrying it made reading a long task's turns about 2.5 times
+ * slower in a real home, and only finalize needs it (store.ts
+ * turnOutcomeCheckpoint). It is internal and never served.
+ */
 export interface Turn {
   id: number;
   task_id: string;
@@ -234,8 +241,6 @@ export interface Turn {
   omitted_records: number | null;
   capture_categories_json: string | null;
   capture_detail: string | null;
-  /** Versioned reducer checkpoint; internal and never returned verbatim by the API. */
-  outcome_json: string | null;
   /** Wisp-originated termination reason, persisted across daemon restarts. */
   kill_detail: string | null;
   /** Why a failed turn failed, as the task's state_detail read when it settled (migration 30). NULL otherwise and on older rows. */

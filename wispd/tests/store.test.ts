@@ -18,6 +18,7 @@ import {
   getTaskMessage,
   getTurn,
   isQueueHead,
+  latestTurnForTask,
   latestTurnOutcomes,
   listTasksWithLatestTurn,
   messagesFor,
@@ -35,6 +36,11 @@ import {
   setTurnModel,
   setTurnUsage,
   transition,
+  TURN_COLUMNS,
+  turnForTask,
+  turnOutcomeCheckpoint,
+  turnPageFor,
+  turnsFor,
   undeliveredOutbox,
   updateQueuedTaskMessage,
 } from "../src/store";
@@ -211,6 +217,28 @@ describe("turn recorder migrations", () => {
         "diagnostic_evicted_at",
       ]),
     );
+  });
+});
+
+describe("turn reads", () => {
+  /** A column added to `turns` and not to TURN_COLUMNS would silently read as undefined. */
+  test("TURN_COLUMNS names every column of turns but the outcome checkpoint", () => {
+    const columns = (db.query(`PRAGMA table_info(turns)`).all() as { name: string }[]).map((column) => column.name);
+    expect(TURN_COLUMNS.split(", ").sort()).toEqual(columns.filter((name) => name !== "outcome_json").sort());
+  });
+
+  test("turn reads leave the checkpoint out, and finalize's read still finds it", () => {
+    const task = createTask({ id: newTaskId(), title: "checkpoint", repo_path: "/tmp/repo", harness: "claude", model: null, slot: freeSlot() });
+    const turnId = createTurn(task.id, 1, "go", null, "/tmp/checkpoint.log", null, null, "recorder-v1");
+    setTurnCaptureCheckpoint(turnId, {
+      state: "complete", capturedBytes: 1, omittedBytes: 0, omittedRecords: 0, categoriesJson: null, detail: null,
+      outcomeJson: `{"version":1}`,
+    });
+    for (const turn of [getTurn(turnId), turnForTask(task.id, 1), latestTurnForTask(task.id), turnsFor(task.id)[0], turnPageFor(task.id, null, 5).turns[0]]) {
+      expect(turn?.id).toBe(turnId);
+      expect(turn).not.toHaveProperty("outcome_json");
+    }
+    expect(turnOutcomeCheckpoint(turnId)).toBe(`{"version":1}`);
   });
 });
 

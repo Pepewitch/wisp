@@ -21,12 +21,26 @@ const LABELS: Record<CleanupPhase, string> = {
 export function cleanupProgress(id: string): CleanupProgress | null {
   return db.query("SELECT * FROM archive_cleanup_progress WHERE task_id = ?").get(id) as CleanupProgress | null;
 }
+const CLEANUP_COMPLETE: CleanupSummary = Object.freeze({ state: "complete", step: "Cleanup complete", error: null, retryAt: null, revision: 0, uncertain: false, confirmStopped: false });
+function summaryOf(p: Pick<CleanupProgress, "phase" | "status" | "next_retry_at" | "revision">, error: string | null): CleanupSummary {
+  return { state: p.status, step: LABELS[p.phase], error, retryAt: p.next_retry_at, revision: p.revision,
+    uncertain: isHook(p.phase) && p.status === "needs-attention", confirmStopped: p.phase === "legacy-hooks" };
+}
 export function cleanupSummary(id: string): CleanupSummary {
   const p = cleanupProgress(id), job = archiveCleanup(id);
-  return p && job ? { state: p.status, step: LABELS[p.phase], error: job.last_error,
-    retryAt: p.next_retry_at, revision: p.revision, uncertain: isHook(p.phase) && p.status === "needs-attention",
-    confirmStopped: p.phase === "legacy-hooks" } :
-    { state: "complete", step: "Cleanup complete", error: null, retryAt: null, revision: 0, uncertain: false, confirmStopped: false };
+  return p && job ? summaryOf(p, job.last_error) : CLEANUP_COMPLETE;
+}
+/**
+ * cleanupSummary() for every archived task in one read, for the task list:
+ * one statement for the whole list instead of two per archived row. A task
+ * missing from the map has nothing in progress, so it is complete.
+ */
+export function cleanupSummaries(): (id: string) => CleanupSummary {
+  const rows = db.query(`SELECT p.task_id, p.phase, p.status, p.next_retry_at, p.revision, c.last_error
+    FROM archive_cleanup_progress p JOIN archive_cleanups c ON c.task_id = p.task_id`)
+    .all() as (Pick<CleanupProgress, "task_id" | "phase" | "status" | "next_retry_at" | "revision"> & { last_error: string | null })[];
+  const summaries = new Map(rows.map(row => [row.task_id, summaryOf(row, row.last_error)]));
+  return id => summaries.get(id) ?? CLEANUP_COMPLETE;
 }
 export function notifyCleanup(id: string): void {
   const task = getTask(id);

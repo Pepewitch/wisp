@@ -4,16 +4,17 @@
  *
  * Seeds a home shaped like an orchestrating workflow: one long task
  * (default 1000 turns) and one parent with subtasks (default 10 × 30 turns),
- * each in a live worktree. Then it measures, against a real `wisp serve`,
- * the reads that grow with turns and subtasks: the full task detail
- * `wisp show` reads, the task row `wisp wait` polls and the page
- * `wisp result` reads, the conversation page the UI refetches per event, the
- * diff and its summary (the long task's worktree carries about 600 KB of
- * changes), the subtasks list, one `wisp wait` round over every subtask, and
- * what one settled turn's history stream sends. It prints bytes (identity
- * and gzip), median time, and git spawns per request.
+ * each in a live worktree, behind a long archived history (default 1600
+ * tasks). Then it measures, against a real `wisp serve`, the reads that grow
+ * with turns, subtasks and history: the full task detail `wisp show` reads,
+ * the task row `wisp wait` polls and the page `wisp result` reads, the
+ * conversation page the UI refetches per event, the live and archived task
+ * lists, the diff and its summary (the long task's worktree carries about
+ * 600 KB of changes), the subtasks list, one `wisp wait` round over every
+ * subtask, and what one settled turn's history stream sends. It prints bytes
+ * (identity and gzip), median time, and git spawns per request.
  *
- *   bun bench/scale.ts [--turns 1000] [--subtasks 10] [--subtask-turns 30] [--json <file>]
+ *   bun bench/scale.ts [--turns 1000] [--subtasks 10] [--subtask-turns 30] [--archived 1600] [--json <file>]
  *
  * The home is a wisp-bench-* directory under the system temp root, deleted
  * afterwards (kept on failure, for its daemon.log). Compare runs before and
@@ -36,6 +37,7 @@ const numberArg = (name: string, fallback: number): number => {
 const LONG_TURNS = numberArg("turns", 1000);
 const SUBTASKS = numberArg("subtasks", 10);
 const SUBTASK_TURNS = numberArg("subtask-turns", 30);
+const ARCHIVED = numberArg("archived", 1600);
 const PARENT_TURNS = 40;
 const jsonOut = args.includes("--json") ? args[args.indexOf("--json") + 1] : undefined;
 
@@ -64,6 +66,7 @@ try {
     parentTurns: PARENT_TURNS,
     subtasks: SUBTASKS,
     subtaskTurns: SUBTASK_TURNS,
+    archived: ARCHIVED,
   };
   const seeded = Bun.spawnSync([process.execPath, join(import.meta.dir, "scale-seed.ts"), JSON.stringify(plan)], { env: benchEnv(home), stdout: "pipe", stderr: "pipe" });
   if (seeded.exitCode !== 0) throw new Error(`seeding failed:\n${seeded.stderr.toString()}`);
@@ -133,6 +136,7 @@ try {
   await measure(`UI: subtasks of parent (${SUBTASKS})`, "/api/tasks/parent/subtasks");
   await measure("UI: live task list", "/api/tasks?cleanup=1");
   await measure("UI: status", "/api/status");
+  await measure(`UI: archived list (${ARCHIVED} archived)`, "/api/tasks?archived=1");
   await measure("UI: diff", "/api/tasks/long/diff");
   await measure("UI: diff summary (Changes hint)", "/api/tasks/long/diff/summary");
 
@@ -178,7 +182,7 @@ try {
   }
   console.log(`\none \`wisp wait\` round over ${round.subtasks} subtasks: ${round.ms} ms, ${round.rawBytes} bytes, ${round.gitSpawns} git spawns (repeats every 2 s while waiting)`);
   console.log(`turn 1's history stream (turn=1, no follow), to a second after its turn-end: ${history.rawBytes} bytes`);
-  if (jsonOut) writeFileSync(jsonOut, `${JSON.stringify({ plan: { longTurns: LONG_TURNS, subtasks: SUBTASKS, subtaskTurns: SUBTASK_TURNS }, reads: rows, waitRound: round, turnHistory: history }, null, 2)}\n`);
+  if (jsonOut) writeFileSync(jsonOut, `${JSON.stringify({ plan: { longTurns: LONG_TURNS, subtasks: SUBTASKS, subtaskTurns: SUBTASK_TURNS, archived: ARCHIVED }, reads: rows, waitRound: round, turnHistory: history }, null, 2)}\n`);
 } catch (error) {
   kept = true;
   console.error(`bench:scale failed; its home is kept at ${home}\n${error instanceof Error ? error.message : String(error)}`);

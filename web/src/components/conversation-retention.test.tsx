@@ -23,7 +23,7 @@ function archivedTask(): ConversationDetail {
       capture_mode: null, capture_state: "evicted", captured_bytes: 0,
       capture_detail: "Transcript evicted by archived-task log retention.",
       outputs: [{ id: "a".repeat(64), name: "retained.png", size: 489, mediaType: "image/png", source: "native" }],
-      attachments: [], log_file: "/synthetic/log", started_at: "2026-01-01T00:00:00Z",
+      attachments: [], started_at: "2026-01-01T00:00:00Z",
       ended_at: "2026-01-01T00:01:00Z",
     }],
   }
