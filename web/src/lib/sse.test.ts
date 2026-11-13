@@ -627,3 +627,76 @@ describe("the bridge's pacing", () => {
     }
   });
 });
+
+describe("what an event about the selected task refetches", () => {
+  const panels = (h: Harness, id: string) => ({
+    subtasks: [...h.qk.task(id), "subtasks"],
+    workflows: [...h.qk.task(id), "workflows"],
+    history: [...h.qk.task(id), "autopilot-history"],
+    review: [...h.qk.task(id), "auto-review"],
+    usage: [...h.qk.task(id), "usage"],
+    activity: h.qk.activity(id, 1),
+  });
+  const seedPanels = (h: Harness, id: string) => {
+    for (const key of Object.values(panels(h, id))) h.client.setQueryData(key, []);
+  };
+
+  /** Each one is a request the detail's prefix used to drag along with it. */
+  it("a turn event refetches the detail exactly, plus usage, and leaves the other panels to their own events", () => {
+    const h = bridge("t1");
+    seed(h.client);
+    seedPanels(h, "t1");
+    h.sources[0]!.emit({ type: "turn", taskId: "t1", n: 2, status: "done" });
+    const keys = panels(h, "t1");
+    expect(invalidated(h.client, qk.task("t1"))).toBe(true);
+    expect(invalidated(h.client, keys.usage)).toBe(true);
+    for (const key of [keys.workflows, keys.history, keys.review, keys.activity]) expect(invalidated(h.client, key)).toBe(false);
+    h.close();
+  });
+
+  it("a message event refetches the detail exactly", () => {
+    const h = bridge("t1");
+    seed(h.client);
+    seedPanels(h, "t1");
+    h.sources[0]!.emit({ type: "message", taskId: "t1", messageId: "m1" });
+    const keys = panels(h, "t1");
+    expect(invalidated(h.client, qk.task("t1"))).toBe(true);
+    for (const key of [keys.workflows, keys.history, keys.review, keys.usage, keys.activity]) expect(invalidated(h.client, key)).toBe(false);
+    h.close();
+  });
+
+  it("a shell tab or an image refreshes no subtask list", () => {
+    const h = bridge("t1");
+    h.client.setQueryData(h.qk.tasksList(false), [{ id: "tchild", parent_task_id: "tparent" }]);
+    const parentList = [...h.qk.task("tparent"), "subtasks"];
+    h.client.setQueryData(parentList, []);
+    h.sources[0]!.emit({ type: "terminals", taskId: "tchild" });
+    h.sources[0]!.emit({ type: "outputs", taskId: "tchild", n: 1, outputs: [] });
+    expect(invalidated(h.client, parentList)).toBe(false);
+    h.close();
+  });
+
+  it("images patch the turn at once and refetch the detail once per burst", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const source = new FakeSse("/api/events");
+    const close = connectEventsBridge({
+      client,
+      qk,
+      transport: { ensureReady: () => Promise.resolve(), openEventStream: () => source },
+      getSelectedId: () => "t1",
+      detailDebounceMs: 20,
+    });
+    client.setQueryData(qk.task("t1"), { id: "t1", turns: [{ n: 1, outputs: [] }] });
+    const output = (id: string) => ({ id, name: `${id}.png`, size: 1, mediaType: "image/png" as const, source: "native" as const });
+    const invalidations = vi.spyOn(client, "invalidateQueries");
+    source.emit({ type: "outputs", taskId: "t1", n: 1, outputs: [output("a")] });
+    source.emit({ type: "outputs", taskId: "t1", n: 1, outputs: [output("a"), output("b")] });
+
+    expect(client.getQueryData<ConversationDetail>(qk.task("t1"))?.turns[0]?.outputs).toHaveLength(2);
+    expect(invalidated(client, qk.task("t1"))).toBe(false);
+    await vi.waitFor(() => expect(invalidated(client, qk.task("t1"))).toBe(true));
+    expect(invalidations).toHaveBeenCalledTimes(1);
+    expect(invalidations).toHaveBeenCalledWith({ queryKey: qk.task("t1"), exact: true });
+    close();
+  });
+});

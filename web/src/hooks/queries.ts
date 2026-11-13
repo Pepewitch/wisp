@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import type { AutoReviewRoundsResponse, VerificationStatus } from "../../../shared/api/auto-review";
 import type { AutopilotHistoryResponse } from "../../../shared/api/autopilot";
@@ -155,13 +155,23 @@ export function useTaskSearch(query: string) {
  * outside Wisp fires no event. Selecting a task therefore asks once more; the
  * key extends `qk.status`, so every existing invalidation still reaches it,
  * and the previous answer stays up meanwhile (it covers every task).
+ *
+ * `fresh` is asked once per selection, not on every refetch: each one makes
+ * the daemon run git for that task, and the refetches events cause are about
+ * what the daemon already knows.
  */
 export function useStatus(selectedId: string | null) {
   const { transport, qk } = useDaemonRuntime();
-  const path = selectedId ? `/api/status?fresh=${encodeURIComponent(selectedId)}` : "/api/status";
+  const freshFor = useRef<string | null>(null);
   return useQuery({
     queryKey: [...qk.status, selectedId],
-    queryFn: () => transport.request<{ tasks: Record<string, StatusEntry> }>(path),
+    queryFn: () => {
+      const fresh = selectedId !== null && freshFor.current !== selectedId;
+      if (fresh) freshFor.current = selectedId;
+      return transport.request<{ tasks: Record<string, StatusEntry> }>(
+        fresh ? `/api/status?fresh=${encodeURIComponent(selectedId)}` : "/api/status",
+      );
+    },
     placeholderData: (previous) => previous,
     select: (data) => data.tasks,
   });

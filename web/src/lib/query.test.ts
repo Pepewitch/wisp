@@ -1,6 +1,6 @@
 import { onlineManager } from "@tanstack/react-query"
 import { afterEach, expect, it, vi } from "vitest"
-import { queryClient } from "./query"
+import { FOCUS_REFRESH_AFTER_MS, queryClient, refetchOnFocus } from "./query"
 
 afterEach(() => {
   onlineManager.setOnline(true)
@@ -25,6 +25,18 @@ it("allows a reachable Desktop proxy even when the browser reports offline", asy
   const mutation = queryClient.getMutationCache().build(queryClient, { mutationFn: command })
   await expect(mutation.execute(undefined)).resolves.toEqual({ accepted: true })
   expect(command).toHaveBeenCalledTimes(1)
+})
+
+it("refetches on focus what no event keeps fresh, an event-fed read only after a long absence, and never the archive", () => {
+  const fetched = (key: readonly unknown[], at: number) => {
+    queryClient.setQueryData(key, [], { updatedAt: at })
+    return queryClient.getQueryCache().find({ queryKey: key, exact: true })!
+  }
+  const now = Date.now()
+  expect(refetchOnFocus(fetched(["local", "pull-request", "t1"], now))).toBe(true)
+  expect(refetchOnFocus(fetched(["local", "tasks", { archived: false }], now))).toBe(false)
+  expect(refetchOnFocus(fetched(["local", "task", "t1"], now - FOCUS_REFRESH_AFTER_MS - 1))).toBe(true)
+  expect(refetchOnFocus(fetched(["local", "tasks", { archived: true }], now - FOCUS_REFRESH_AFTER_MS - 1))).toBe(false)
 })
 
 it("still reads a reachable daemon when the browser reports offline", async () => {

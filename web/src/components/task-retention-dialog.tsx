@@ -53,6 +53,8 @@ export function TaskRetentionDialog({
     onSuccess: () => {
       clearAssetCache(connectionId, `/api/tasks/${task.id}/`)
       client.removeQueries({ queryKey: qk.task(task.id) })
+      // settled timelines live outside the task's key; they go with it too
+      client.removeQueries({ queryKey: [...qk.connection, "activity", task.id] })
       void client.invalidateQueries({ queryKey: qk.tasks })
       onClose()
     },

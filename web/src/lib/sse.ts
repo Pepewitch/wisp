@@ -18,6 +18,7 @@ import type { ApiTask, ConversationDetail, TaskState, WispEvent } from "./types"
  *                   and the list with archived history only when the task is
  *                   archived (see `useTasks`)
  *   turn event    → the selected task's detail + diff (debounced)
+ *   outputs event → that task's detail, patched now and refetched debounced
  *   project event → the repos list (debounced; add/remove re-shape the sidebar)
  *   harnesses event → the cached harness/model list
  *   settings event → the daemon-wide settings view
@@ -92,6 +93,55 @@ function debounce(fn: () => void, ms: number, maxWaitMs = DEBOUNCE_MAX_WAIT_MS):
   return run;
 }
 
+/**
+ * The task detail, debounced. It is invalidated EXACTLY: its key prefixes the
+ * task's panels (subtasks, workflows, autopilot history, auto-review, usage,
+ * storage), and invalidating it as a prefix refetched every one of them on
+ * every event about the selected task. Each panel is refreshed by the events
+ * that concern it instead.
+ */
+function detailInvalidations(opts: EventsBridgeOptions) {
+  const { client, qk } = opts;
+  const detail = (id: string) => void client.invalidateQueries({ queryKey: qk.task(id), exact: true });
+  const turn = debounce(() => {
+    const id = opts.getSelectedId();
+    if (!id) return;
+    detail(id);
+    // skills follow turn boundaries too: the init event that names them lands
+    // at finalize, and a session that refused while running answers now
+    void client.invalidateQueries({ queryKey: qk.skills(id) });
+    void client.invalidateQueries({ queryKey: qk.diff(id) });
+    // Token totals and stored size move with turns and state, and no event of
+    // their own announces them. Each is read only while its panel is open, so
+    // this refetches nothing otherwise.
+    void client.invalidateQueries({ queryKey: [...qk.task(id), "usage"] });
+    void client.invalidateQueries({ queryKey: [...qk.task(id), "storage"] });
+  }, opts.detailDebounceMs ?? 400);
+  const messages = debounce(() => {
+    const id = opts.getSelectedId();
+    if (id) detail(id);
+  }, opts.detailDebounceMs ?? 400);
+  // Several images in one turn arrive as several events: one refetch for them.
+  const outputTasks = new Set<string>();
+  const flushOutputs = debounce(() => {
+    for (const id of outputTasks) detail(id);
+    outputTasks.clear();
+  }, opts.detailDebounceMs ?? 400);
+  return {
+    turn,
+    messages,
+    outputs: (taskId: string) => {
+      outputTasks.add(taskId);
+      flushOutputs();
+    },
+    cancel: () => {
+      turn.cancel();
+      messages.cancel();
+      flushOutputs.cancel();
+    },
+  };
+}
+
 export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
   const factory: SseFactory = opts.factory ?? ((path) => opts.transport.openEventStream(path));
   const qk = opts.qk;
@@ -149,19 +199,8 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     () => void opts.client.invalidateQueries({ queryKey: qk.repos }),
     opts.statusDebounceMs ?? 400,
   );
-  const invalidateSelectedTurn = debounce(() => {
-    const id = opts.getSelectedId();
-    if (!id) return;
-    void opts.client.invalidateQueries({ queryKey: qk.task(id) });
-    // skills follow turn boundaries too: the init event that names them lands
-    // at finalize, and a session that refused while running answers now
-    void opts.client.invalidateQueries({ queryKey: qk.skills(id) });
-    void opts.client.invalidateQueries({ queryKey: qk.diff(id) });
-  }, opts.detailDebounceMs ?? 400);
-  const invalidateSelectedMessages = debounce(() => {
-    const id = opts.getSelectedId();
-    if (id) void opts.client.invalidateQueries({ queryKey: qk.task(id) });
-  }, opts.detailDebounceMs ?? 400);
+  const details = detailInvalidations(opts);
+  const { turn: invalidateSelectedTurn, messages: invalidateSelectedMessages } = details;
 
   function onEvent(evt: WispEvent): void {
     if (!evt) return;
@@ -184,7 +223,8 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       return;
     }
     if (!("taskId" in evt) || !evt.taskId) return;
-    noteSubtaskChange(evt.taskId);
+    // A shell tab or an image changes nothing a Subtasks tab shows.
+    if (evt.type !== "terminals" && evt.type !== "outputs") noteSubtaskChange(evt.taskId);
     // Not only the selected task's: a pane switching back to a task must not
     // paint a tab list another window has since changed.
     if (evt.type === "terminals") {
@@ -221,7 +261,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       opts.client.setQueryData<ConversationDetail>(qk.task(evt.taskId), (current) =>
         current?.turns ? { ...current, turns: current.turns.map((turn) => turn.n === evt.n ? { ...turn, outputs: evt.outputs } : turn) } : current,
       );
-      void opts.client.invalidateQueries({ queryKey: qk.task(evt.taskId) });
+      details.outputs(evt.taskId);
       return;
     }
     if (evt.type === "message") {
@@ -337,8 +377,7 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     flushSubtaskLists.cancel();
     invalidateStatus.cancel();
     invalidateRepos.cancel();
-    invalidateSelectedTurn.cancel();
-    invalidateSelectedMessages.cancel();
+    details.cancel();
     source?.close();
   };
 }

@@ -98,6 +98,17 @@ export const initialStreamState: StreamState = { blocks: [], currentTurn: 0, not
 const MAX_LIVE_ACTIVITY_ITEMS = 1_000
 const MAX_TEXT_ACTIVITY_CHARS = 32_768
 const LIVE_WINDOW_MARKER_ID = "wisp-live-window"
+/** The daemon's note for records a slow live viewer was skipped past (`routes/stream.ts`). */
+const CAPTURE_GAP_PREFIX = "capture-gap-"
+
+/**
+ * Whether a text item is one of the notes saying this timeline is not the
+ * whole log: records a live viewer was skipped past, or the bounded window's
+ * omission count. Notes stay their own items, never merged into prose.
+ */
+export function isOmissionNote(item: ActivityItem): boolean {
+  return item.kind === "text" && (item.id === LIVE_WINDOW_MARKER_ID || item.id.startsWith(CAPTURE_GAP_PREFIX))
+}
 
 export type StreamAction =
   | { type: "reset"; note: string | null }
@@ -330,7 +341,7 @@ class ActivityDraft {
   private applyText(event: Extract<ActivityEvent, { kind: "text" }>): void {
     const target = this.target(event.parentId)
     const last = target[target.length - 1]
-    if (last?.kind === "text" && last.id !== LIVE_WINDOW_MARKER_ID) {
+    if (last?.kind === "text" && !isOmissionNote(last) && !event.id.startsWith(CAPTURE_GAP_PREFIX)) {
       const separator = last.text.endsWith("\n") ? "" : "\n"
       target[target.length - 1] = { ...last, text: boundedText(last.text + separator + event.text) }
     } else {
