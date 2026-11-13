@@ -17,6 +17,7 @@ import {
   createTurn,
   finishTurn,
   freeSlot,
+  getTask,
   markTaskMessageDelivered,
   messagesFor,
   newTaskId,
@@ -274,9 +275,12 @@ describe("daemon API contracts", () => {
     try {
       const renamed = await api(base, `/api/tasks/${task.id}`, "PATCH", { title: "  A clearer task name  " });
       expect(renamed.status).toBe(200);
-      const renamedBody = await json<{ title: string; updated_at: string; custom_title: number }>(renamed);
-      // a manual rename locks the title against the pull-request sync
-      expect(renamedBody).toMatchObject({ title: "A clearer task name", custom_title: 1 });
+      const renamedBody = await json<{ title: string; updated_at: string }>(renamed);
+      expect(renamedBody).toMatchObject({ title: "A clearer task name" });
+      // a manual rename locks the title against the pull-request sync (a
+      // daemon-side flag, which the API does not serve)
+      expect(getTask(task.id)!.custom_title).toBe(1);
+      expect(renamedBody).not.toHaveProperty("custom_title");
 
       const unchanged = await api(base, `/api/tasks/${task.id}`, "PATCH", { title: "A clearer task name" });
       expect(await json<{ updated_at: string }>(unchanged)).toMatchObject({ updated_at: renamedBody.updated_at });
@@ -312,11 +316,10 @@ describe("daemon API contracts", () => {
       // re-submitting the current name on a task that was never renamed is
       // still the user choosing it: the lock lands without a title event
       const fresh = makeTask({ title: "Untouched title" });
-      const before = await api(base, `/api/tasks/${fresh.id}`);
-      expect(await json<{ custom_title: number }>(before)).toMatchObject({ custom_title: 0 });
+      expect(getTask(fresh.id)!.custom_title).toBe(0);
       events.length = 0;
-      const reaffirmed = await api(base, `/api/tasks/${fresh.id}`, "PATCH", { title: "Untouched title" });
-      expect(await json<{ custom_title: number }>(reaffirmed)).toMatchObject({ custom_title: 1 });
+      expect((await api(base, `/api/tasks/${fresh.id}`, "PATCH", { title: "Untouched title" })).status).toBe(200);
+      expect(getTask(fresh.id)!.custom_title).toBe(1);
       expect(events).toEqual([]);
     } finally {
       unsubscribe();

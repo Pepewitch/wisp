@@ -27,7 +27,7 @@ function task(turn: Partial<Turn>): ConversationDetail {
     messages: [],
     turns: [{
       id: 1, task_id: "timages", n: 1, prompt: "Compare the screens", result: "They match.", status: "done",
-      model: null, usage: null, attachments: [], log_file: "/synthetic/log",
+      model: null, usage: null, attachments: [],
       started_at: "2026-01-01T00:00:00Z", ended_at: "2026-01-01T00:01:00Z", ...turn,
     }],
   } as ConversationDetail
