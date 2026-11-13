@@ -88,6 +88,7 @@ import { isTaskMerging } from "./autopilot/merging";
 import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot/store";
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
+import { forgetStandingNotes, standingTurnNotes } from "./standing-notes";
 import { reviewTurnEnv } from "./verify/reviews";
 import { startLoggedImageCapture } from "./logged-images";
 import {
@@ -197,10 +198,13 @@ export function startTurn(
   // turn itself: a second process would split its session, and ending it
   // would kill the work it was kept for.
   const lingering = lingeringProcess(task);
-  const autopilot = standingNotes(task.id, n, command);
-  const notes = [...(autopilot?.notes ?? []), ...(command ? [] : [outputReminder(n)])];
+  const autopilot = turnNotes(task, n, command);
   const { framed, turnOrigin } = framedInput(sourceMessageId, message);
-  const prompt = withWispSection([...(n === 1 ? taskPreambleLines(task) : []), ...notes, ...framed.lines, ...attached], framed.words);
+  // The preamble opens every conversation, not only the task's first turn: a
+  // turn with no session to resume (a fresh context after `/fresh` or a
+  // harness switch) starts one, and its agent has never been told the task.
+  const opens = !command && !task.session_id;
+  const prompt = withWispSection([...(opens ? taskPreambleLines(task) : []), ...(autopilot?.notes ?? []), ...framed.lines, ...attached], framed.words);
   if (lingering) {
     adoptTurn(lingering, task, n, message, prompt, attachments, autopilot, sourceMessageId, turnOrigin);
     return;
@@ -747,14 +751,19 @@ async function signalTurn(turn: Turn, sig: "SIGTERM" | "SIGKILL"): Promise<void>
 }
 
 /**
- * Autopilot's standing notes for turn `n`; none in front of a slash command.
- * Auto-fix tells the agent's GitHub posts by their signature, so a turn never
- * asked to sign is remembered.
+ * Wisp's notes for turn `n`, as much of them as its conversation still needs
+ * (standing-notes.ts); none in front of a slash command, which may also
+ * change the conversation (`/compact`, `/clear`), so the next plain turn
+ * sends them whole. Auto-fix tells the agent's GitHub posts by their
+ * signature, so a turn never asked to sign is remembered — asked in this
+ * turn or earlier in its conversation.
  */
-function standingNotes(taskId: string, n: number, command: boolean): TurnNotes | null {
-  const notes = command ? null : autopilotTurnNotes(taskId);
-  noteTurnSigning(taskId, n, notes?.marked === true);
-  return notes;
+function turnNotes(task: Task, n: number, command: boolean): TurnNotes | null {
+  const autopilot = command ? null : autopilotTurnNotes(task.id);
+  noteTurnSigning(task.id, n, autopilot?.marked === true);
+  if (!command) return standingTurnNotes(task, autopilot, [outputReminder()]);
+  forgetStandingNotes(task.id);
+  return null;
 }
 
 /** Explicit Stop. A `now` send that has to stop a turn uses interruptForMessage, which keeps workflows and background work. */

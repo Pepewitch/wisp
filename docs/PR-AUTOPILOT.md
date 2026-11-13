@@ -47,11 +47,13 @@ critical changes you want to read first.
 
 ## What the agent is told
 
-While auto-merge is on, every turn Wisp starts carries one standing note (except
-a turn whose message is a slash command, which a harness only recognises at the
-very start of its prompt; the note rides the next ordinary turn instead):
-push the branch and open a pull request when the work is ready, and leave the
-merge to Wisp. The note overrides the default "do not push unless asked",
+While auto-merge is on, the agent's conversation holds one standing note: push
+the branch and open a pull request when the work is ready, and leave the merge
+to Wisp. Wisp sends it once per conversation, not with every turn: again only
+when the notes change (a switch turned on or off), after a compaction, `/fresh`
+or a harness switch, and after a daemon restart. A turn whose message is a
+slash command carries none, since a harness only recognises a command at the
+very start of its prompt; the next ordinary turn sends the notes whole. The note overrides the default "do not push unless asked",
 because turning auto-merge on *is* asking. It is scoped to this task's PR, so an
 agent that manages other PRs can still merge them. After a merge, the
 agent's next turn is told once that the branch is finished and further work

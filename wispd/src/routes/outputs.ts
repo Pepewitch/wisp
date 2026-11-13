@@ -1,18 +1,20 @@
 import { outputImageUrl } from "../../../shared/api/outputs";
 import { MAX_OUTPUT_IMAGE_BYTES, OutputError, outputImagePath, parseOutputManifest, publishOutputImage, publishingStep } from "../outputs";
-import { getTask, turnForTask } from "../store";
+import { getTask, runningTurn, turnForTask } from "../store";
 import { err, json } from "./http";
 import { serveAttachment } from "./task-messages";
 
 /** Authenticated, manifest-scoped outputs; never accepts a path on the daemon host. */
 export function outputRoute(req: Request, url: URL, path: string, method: string): Response | Promise<Response> | null {
-  const match = /^\/api\/tasks\/([a-z0-9]+)\/outputs\/([1-9]\d*)(?:\/([a-f0-9]{64}))?$/.exec(path);
+  const match = /^\/api\/tasks\/([a-z0-9]+)\/outputs\/([1-9]\d*|current)(?:\/([a-f0-9]{64}))?$/.exec(path);
   if (!match) return null;
   const [, taskId, turnRaw, imageId] = match;
   if (method !== "GET" && (method !== "POST" || imageId)) return err("method not allowed", 405);
   const task = getTask(taskId!);
   if (!task) return err("no such task", 404);
-  const turn = turnForTask(task.id, Number(turnRaw));
+  // `current`: the running turn, else the latest — what `wisp output add`
+  // means without --turn, so a turn's standing reminder needs no number
+  const turn = turnRaw === "current" ? (runningTurn(task.id) ?? turnForTask(task.id, task.turn_count)) : turnForTask(task.id, Number(turnRaw));
   if (!turn) return err("no such turn", 404);
   if (task.purge_pending) return err("Permanent deletion is in progress.", 410);
   const outputs = parseOutputManifest(turn.outputs_json);
@@ -30,7 +32,7 @@ export function outputRoute(req: Request, url: URL, path: string, method: string
     try {
       const bytes = await boundedImageBody(req);
       const image = publishOutputImage(turn.id, bytes, name, "published", publishingStep(turn.id, "add"));
-      return json({ image, url: outputImageUrl(task.id, turn.n, image.id) }, 201);
+      return json({ image, url: outputImageUrl(task.id, turn.n, image.id), turn: turn.n }, 201);
     } catch (error) {
       if (error instanceof OutputError) return err(error.message, error.status);
       throw error;

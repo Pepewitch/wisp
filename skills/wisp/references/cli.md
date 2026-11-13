@@ -25,13 +25,14 @@ are named while the rest continue; any failure exits nonzero.
 ## Image outputs
 
 ```sh
-wisp output add ./plot.png --turn <n> [--task <task>] [--json]
+wisp output add ./plot.png [--turn <n>] [--task <task>] [--json]
 wisp output list <task> --turn <n> [--json]
 wisp output save <task> <image-id> --turn <n> --out <new-file>
 ```
 
 `add` uploads an image for inline preview and download in the task reply.
-The task defaults to `WISP_TASK_ID`; use the turn number in Wisp's reminder.
+The task defaults to `WISP_TASK_ID` and the turn to the task's running turn
+(its latest when none is running); pass `--turn <n>` to choose another.
 Images are copied into task storage, remain available after archive, and
 are included in export. PNG, JPEG, GIF and WebP are supported, up to 8 MiB
 per image and 32 images / 64 MiB per turn. `save` refuses to overwrite a file.

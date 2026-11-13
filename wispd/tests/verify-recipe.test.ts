@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PROJECTS_DIR } from "../src/config";
 import {
-  activateDraft, activeRecipe, changedFiles, discardDrafts, latestDraft, matchAreas, parseAreaFrontmatter, projectDir, readRecipeFile, recipeDir,
+  activateDraft, activeRecipe, changedFiles, discardDrafts, hasActiveRecipe, latestDraft, matchAreas, parseAreaFrontmatter, projectDir, readRecipeFile, recipeDir,
   recipeFiles, recipeFilesError, recipePathError, recipeVersion, saveDraft, type RecipeFile,
 } from "../src/verify/recipe";
 
@@ -70,9 +70,12 @@ describe("drafts and activation", () => {
     expect(await recipeVersion(path)).toBeNull();
     saveDraft(path, "trecipe1", recipe(area("web", "apps/web/**")));
     expect(activeRecipe(path)).toBeNull();
+    // a draft is not a recipe for the cheap test either
+    expect(hasActiveRecipe(path)).toBe(false);
     expect(latestDraft(path)?.areas.map((a) => a.name)).toEqual(["web"]);
     const first = await activateDraft(path, "web");
     expect(first.changed).toBe(true);
+    expect(hasActiveRecipe(path)).toBe(true);
     expect(latestDraft(path)).toBeNull();
     expect(activeRecipe(path)?.areas).toEqual([{ name: "web", paths: ["apps/web/**"], status: "proven", evidence: "none" }]);
     expect(await recipeVersion(path)).toBe(first.version);

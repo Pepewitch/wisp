@@ -22,12 +22,14 @@ transcript has been evicted, every image is listed below the reply instead.
 Any harness can publish an image it created:
 
 ```sh
-wisp output add ./plot.png --turn 1
+wisp output add ./plot.png
 ```
 
 Inside a task, the task ID defaults to `WISP_TASK_ID`. Outside it, pass
-`--task <task>`. Wisp gives each ordinary turn the command with its current
-turn number. A relative path resolves in the caller's working directory;
+`--task <task>`. The image goes on the task's running turn, or its latest turn
+when none is running; `--turn <n>` names another. Wisp reminds the agent of
+the command once per conversation, again when its standing notes change, and
+after a compaction. A relative path resolves in the caller's working directory;
 the CLI uploads the bytes, so it also works when the daemon is on another
 machine. Publishing copies the file into task storage and leaves the original
 alone. Publish only images intended for the task's readers.

@@ -387,6 +387,8 @@ export interface ParsedTurn {
    * are the only tier whose descriptions live anywhere cheap.
    */
   skills: string[] | null;
+  /** The harness compacted its conversation during the turn (context.ts isCompaction); absent = not seen. */
+  compacted?: boolean;
 }
 
 export type ParseStrategy = (raw: string) => ParsedTurn;

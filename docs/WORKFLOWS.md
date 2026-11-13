@@ -37,11 +37,14 @@ wisp workflow start <task> heartbeat --every 5m \
 wisp workflow start <task> heartbeat --every 5m --file ./instructions.md
 ```
 
-The daemon saves a `HEARTBEAT.md` snapshot under its task data directory for
-each wake-up, never in the Git worktree. It appends a conditional instruction
+Each wake-up sends the objective in the turn's input, followed by Wisp's
+control lines: the push and merge permissions, and a conditional instruction
 to run `wisp workflow complete <workflow-id>` when the objective is satisfied.
 Otherwise the agent should leave the workflow active and end its turn, not
-sleep and poll on its own. Snapshots remain with task data until purge.
+sleep and poll on its own. The daemon also saves the same text as a
+`HEARTBEAT.md` snapshot under its task data directory for each wake-up, never
+in the Git worktree, as a record; the agent does not read it. Snapshots remain
+with task data until purge.
 
 A heartbeat can start a new turn after a settled task reports `failed` or
 `needs-input`, which lets it resume an objective after a temporary harness

@@ -23,7 +23,7 @@ import { AUTOPILOT_TYPE, CONTEXT_CHANGE_PAUSE } from "./type"
 import { nextDelay, type Backoff } from "./cadence"
 import type { Task } from "../types"
 import { authorReviewNote } from "../verify/prompts"
-import { activeRecipe, readRecipeFile, RECIPE_INDEX, reviewRulesSection } from "../verify/recipe"
+import { hasActiveRecipe, readRecipeFile, RECIPE_INDEX, reviewRulesSection } from "../verify/recipe"
 
 export interface AutopilotCheckpoint {
   pr?: number
@@ -647,6 +647,8 @@ export interface TurnNotes {
   notes: string[]
   /** the notes ask the agent to sign its GitHub posts */
   marked: boolean
+  /** Which of `notes` are one-time: sent whenever present, never counted as standing (standing-notes.ts). */
+  once?: string[]
   /** Call once the turn really started: a one-time note is spent only then. */
   delivered(): void
 }
@@ -691,7 +693,8 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
     const notes: string[] = []
     // once, after a merge: the switches stay on, but that branch is finished
     const merged = checkpoint.lastMerged && !checkpoint.lastMerged.noted ? checkpoint.lastMerged : null
-    if (merged) notes.push(branchFinishedNote(merged, pr && pr !== merged.pr ? pr : undefined))
+    const finished = merged ? branchFinishedNote(merged, pr && pr !== merged.pr ? pr : undefined) : null
+    if (finished) notes.push(finished)
     if (autoMerge) {
       notes.push([
         `Auto-merge is on for this task. When the work is ready, commit it, push the branch, and open a pull request if there is not one yet.`,
@@ -700,11 +703,11 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
     }
     if (autoReview) {
       const task = getTask(taskId)
-      if (task) notes.push(authorReviewNote({ which, hasRecipe: activeRecipe(task.repo_path) !== null, projectRules: reviewRulesSection(readRecipeFile(task.repo_path, RECIPE_INDEX)) }))
+      if (task) notes.push(authorReviewNote({ which, hasRecipe: hasActiveRecipe(task.repo_path), projectRules: reviewRulesSection(readRecipeFile(task.repo_path, RECIPE_INDEX)) }))
     }
     if (autoFix) notes.push(signNote(taskId, which))
     return {
-      notes, marked: autoFix,
+      notes, marked: autoFix, once: finished ? [finished] : [],
       delivered() {
         if (!merged) return
         // a revision bump, so a check in flight cannot write "not noted" back
@@ -723,8 +726,9 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
   // switched off after a merge it had stayed on through: that branch is still finished
   const persisted = checkpoint.lastMerged
   if (persisted && !persisted.noted) {
+    const note = branchFinishedNote(persisted)
     return {
-      notes: [branchFinishedNote(persisted)], marked: false,
+      notes: [note], marked: false, once: [note],
       delivered() {
         db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify({ ...checkpoint, lastMerged: { ...persisted, noted: true } }), latest.id])
       },
@@ -732,9 +736,11 @@ export function autopilotTurnNotes(taskId: string): TurnNotes {
   }
   const merged = checkpoint.merged
   if (checkpoint.outcome !== "merged" || !merged || merged.noted) return NO_NOTES
+  const note = branchFinishedNote({ pr: checkpoint.pr!, ...merged })
   return {
-    notes: [branchFinishedNote({ pr: checkpoint.pr!, ...merged })],
+    notes: [note],
     marked: false,
+    once: [note],
     delivered() {
       db.run("UPDATE workflows SET checkpoint_json = ? WHERE id = ?", [JSON.stringify({ ...checkpoint, merged: { ...merged, noted: true } }), latest.id])
     },

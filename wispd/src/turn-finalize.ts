@@ -27,6 +27,7 @@ import { summarize } from "./text";
 import { INTERRUPTED, isUnresolvedInterrupt } from "./interrupt-state";
 import type { TaskState, Turn } from "./types";
 import { indexTurnProse } from "./turn-texts";
+import { forgetStandingNotes } from "./standing-notes";
 import type { RecorderCheckpoint, RecorderOutcome } from "./recording/turn-recorder";
 
 /**
@@ -82,6 +83,8 @@ function persistOutcomeMetadata(taskId: string, turnId: number, parsed: ParsedTu
   }
   if (parsed.model) setTurnModel(turnId, parsed.model);
   if (parsed.usage != null) setTurnUsage(turnId, JSON.stringify(parsed.usage));
+  // a compacted conversation holds only a summary of Wisp's standing notes: the next plain turn sends them whole
+  if (parsed.compacted) forgetStandingNotes(taskId);
 }
 
 /** A recovered recorder turn that settled nothing: no result, and no error of the harness's own. */
@@ -170,6 +173,8 @@ function endedOnNetwork(facts: FailedTurnFacts, detail: string | null): boolean 
 }
 
 async function finalizeFailedTurn(facts: FailedTurnFacts): Promise<void> {
+  // a conversation whose turn failed may never have recorded Wisp's standing notes (standing-notes.ts)
+  forgetStandingNotes(facts.taskId);
   const detail = facts.recorderDetail ?? errorDetail(facts.def, facts.rawOut, await safeRead(facts.errPath));
   const limitPrefix = !facts.killReason && detail !== null && isLimitError(facts.def, detail) ? LIMIT_PREFIX : "";
   // A dropped network outranks a provider fault: it is the one autopilot resumes on its own.
@@ -215,6 +220,8 @@ async function finalizeInterruptedTurn(
   interruptDetail: string,
   facts: InterruptedTurnFacts,
 ): Promise<void> {
+  // the harness may have stopped before it recorded Wisp's standing notes (standing-notes.ts)
+  forgetStandingNotes(taskId);
   // Every read comes first: the turn and its task settle in one transaction.
   const harnessError = !facts.parsed.isError
     ? null

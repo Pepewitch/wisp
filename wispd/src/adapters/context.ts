@@ -145,3 +145,15 @@ export function readContextPoint(def: AdapterDef, event: Record<string, unknown>
   }
   return tracker(event);
 }
+
+/**
+ * Whether one event says the harness compacted its conversation inside a
+ * turn: claude's `compact_boundary` (its own `/compact`, or an automatic one),
+ * codex's `context_compaction` item. What the conversation carried before it
+ * is a summary now, so Wisp's standing notes go out again on the next turn
+ * (standing-notes.ts). The shapes are each harness's own and cannot collide.
+ */
+export function isCompaction(event: Record<string, unknown>): boolean {
+  if (event.type === "system" && event.subtype === "compact_boundary") return true;
+  return event.type === "item.completed" && nested(event, "item")?.type === "context_compaction";
+}

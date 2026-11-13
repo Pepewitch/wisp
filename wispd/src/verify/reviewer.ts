@@ -27,7 +27,7 @@ import { maxTier, numstatOf, signalsOf, tierOf } from "./depth"
 import { evidenceShortfall, requiredAreas, waiversError } from "./evidence"
 import { recipePrompt, reviewerPrompt, verdictNudge, type RecipePromptInput } from "./prompts"
 import {
-  activeRecipe, AREA_INDEX, fetchBase, fetchPullHead, latestDraft, matchAreas, readRecipeFile, RECIPE_INDEX, recipeSettings, recipeVersion, reviewRulesSection, type RecipeArea,
+  activeRecipe, AREA_INDEX, fetchBase, fetchPullHead, hasActiveRecipe, latestDraft, matchAreas, readRecipeFile, RECIPE_INDEX, recipeSettings, recipeVersion, reviewRulesSection, type RecipeArea,
 } from "./recipe"
 import { createPanelRound, endReview, finishReview, getReview, launchedReview, markReviewNudged, reviewOfTask, type PanelAgent, type ReviewRow } from "./reviews"
 import { getRound, highestTier, roundsOf, roundView, VERDICT_STATES, type RoundRow } from "./rounds"
@@ -228,7 +228,7 @@ async function launchRecipeTask(start: ReviewerStart, input: Parameters<typeof s
   const draft = waiting ? { taskId: waiting.taskId, savedAt: waiting.savedAt } : null
   const promptInput: RecipePromptInput = {
     mode: input.mode, projectName: input.projectName, repoPath: input.repoPath, area: input.area, note: input.note,
-    complaints: input.complaints, hasRecipe: activeRecipe(input.repoPath) !== null, draft, capture: captureAvailable(start.cfg.chromePath),
+    complaints: input.complaints, hasRecipe: hasActiveRecipe(input.repoPath), draft, capture: captureAvailable(start.cfg.chromePath),
   }
   const title = input.mode === "setup" ? `Set up verification · ${input.projectName}`
     : input.mode === "improve" ? `Improve verification · ${input.projectName}`
