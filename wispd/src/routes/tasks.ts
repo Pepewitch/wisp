@@ -21,7 +21,7 @@ import type { TaskCompactor } from "../compacts";
 import type { TaskProbeCache } from "../probes";
 import type { TaskSkillCache } from "../skills";
 import type { ProbeAnswer, TaskSkills } from "../../../shared/api/harness";
-import type { ApiTask, ApiTaskListItem, AttachResponse, CompactAnswer, SendResponse, TaskDetail } from "../../../shared/api/task";
+import type { ApiTask, ApiTaskListItem, AttachResponse, CompactAnswer, DiffSummary, SendResponse, TaskDetail } from "../../../shared/api/task";
 import {
   getTask,
   listTasksWithLatestTurn,
@@ -32,7 +32,7 @@ import {
 import { promptWithSuffix } from "../suffix-prompts";
 import { TASK_MODES, taskMode, type Task, type TaskMode } from "../types";
 import { isRecord, typeName } from "../validate";
-import { diffStat, fullDiff, pushBranch, readWorktreeFile, worktreeHealth } from "../worktree";
+import { diffStat, diffSummary, fullDiff, pushBranch, readWorktreeFile, worktreeHealth } from "../worktree";
 import { taskIdsWithAttachedWorkflows } from "../workflows/store";
 import { autopilotStatuses } from "../autopilot/store";
 import { autopilotUpdateError } from "./autopilot";
@@ -651,13 +651,33 @@ async function diffRoute(task: Task): Promise<Response> {
   if (!health.ok) {
     return json({ diff: "", truncated: false, untracked: [], base: null, worktreeReason: health.reason });
   }
-  // A local task's base_commit is HEAD-at-creation, but its checkout is ALSO
-  // where the human works: they commit and the branch moves on, and diffing
-  // against that stale base keeps reporting their own landed commits as
-  // pending "changes". A worktree task's base IS its branch point, so there
-  // it stays the right answer.
-  const diff = await fullDiff(task.worktree_path, taskMode(task) === "local" ? null : task.base_commit);
+  const diff = await fullDiff(task.worktree_path, diffBase(task));
   return json({ ...diff, worktreeReason: null });
+}
+
+/**
+ * A local task's base_commit is HEAD-at-creation, but its checkout is ALSO
+ * where the human works: they commit and the branch moves on, and diffing
+ * against that stale base keeps reporting their own landed commits as pending
+ * "changes". A worktree task's base IS its branch point, so there it stays
+ * the right answer.
+ */
+function diffBase(task: Task): string | null {
+  return taskMode(task) === "local" ? null : task.base_commit;
+}
+
+/**
+ * GET /api/tasks/:id/diff/summary: the Changes pane's file count without the
+ * diff, for the top bar's hint. Same refusals and the same worktree states
+ * as the full diff, so a client can switch between the two freely.
+ */
+export async function diffSummaryRoute(task: Task): Promise<Response> {
+  if (task.archived) return err("task is archived — worktree removed", 409);
+  if (!task.worktree_path) return err("task has no worktree (failed before setup?)", 409);
+  const health = await worktreeHealth(task.worktree_path);
+  if (!health.ok) return json<DiffSummary>({ files: 0, worktreeReason: health.reason });
+  const summary = await diffSummary(task.worktree_path, diffBase(task));
+  return json<DiffSummary>({ ...summary, worktreeReason: null });
 }
 
 /**

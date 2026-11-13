@@ -645,7 +645,8 @@ describe("GET /api/tasks/:id/log/stream (SSE follow of a task's turns)", () => {
     const task = makeTask();
     const turnId = createTurn(task.id, 1, "do it", null, log1);
 
-    const res = await call(`/api/tasks/${task.id}/log/stream?turn=1`);
+    // the follow stream (no turn=): a requested turn's stream ends with it
+    const res = await call(`/api/tasks/${task.id}/log/stream`);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/event-stream");
     const reader = res.body!.getReader();
@@ -808,6 +809,41 @@ describe("GET /api/tasks/:id/log/stream: which turns a viewer is sent, and how f
       expect(data.turn).toBe(2);
       expect(data.prompt).toBe("second");
       expect(JSON.stringify(data.activity)).toContain("second turn from its start");
+    } finally {
+      await reader.cancel();
+    }
+  });
+
+  /**
+   * A history load asks for one settled turn and closes at its turn-end. The
+   * stream used to move straight on to the newest turn in the same tick, so
+   * the client was sent that turn's whole backlog while it was closing.
+   */
+  test("a requested turn without follow stops at its own turn-end, not the newest turn", async () => {
+    const first = join(dir, "requested-first.out.log");
+    writeFileSync(first, `{"type":"message","role":"assistant","text":"turn one only"}\n`);
+    const latest = join(dir, "requested-latest.out.log");
+    writeFileSync(latest, `{"type":"message","role":"assistant","text":"the newest turn"}\n`);
+    const task = makeTask();
+    finishTurn(createTurn(task.id, 1, "first", null, first), "done", 0, "ok");
+    finishTurn(createTurn(task.id, 2, "second", null, latest), "done", 0, "ok");
+
+    const res = await call(`/api/tasks/${task.id}/log/stream?format=activity&turn=1`);
+    const reader = res.body!.getReader();
+    const sse = sseReader(reader);
+    try {
+      const backlog = await sse.nextFrame();
+      expect(backlog.event).toBe("backlog");
+      expect((JSON.parse(backlog.data) as { turn: number }).turn).toBe(1);
+      const end = await sse.nextFrame();
+      expect(end.event).toBe("turn-end");
+      expect(JSON.parse(end.data)).toEqual({ turn: 1, status: "done" });
+
+      // neither the next poll nor a new turn's event opens anything else
+      const third = join(dir, "requested-third.out.log");
+      writeFileSync(third, `{"type":"message","role":"assistant","text":"a turn started later"}\n`);
+      createTurn(task.id, 3, "third", null, third);
+      await expect(sse.nextFrame(1_500)).rejects.toThrow("timed out");
     } finally {
       await reader.cancel();
     }
