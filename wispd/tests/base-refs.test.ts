@@ -18,8 +18,9 @@ import { testRouteContext } from "./helpers/daemon-context";
 /**
  * The composer's base-ref prefetch, and the create path that reuses it.
  *
- * What is pinned: one fetch per repo at a time, however many ask; a create
- * joins a running fetch rather than starting its own; only a fetch that
+ * What is pinned: one fetch per repo at a time, however many ask; a composer
+ * create joins a running fetch rather than starting its own, and any other
+ * create waits it out and fetches after it; only a fetch that
  * SUCCEEDED lets a create skip fetching; and the route runs git only in a
  * registered project, for an authenticated caller.
  *
@@ -150,11 +151,11 @@ describe("BaseRefFetches (the rules, with a fake fetch and clock)", () => {
     expect(f.calls()).toBe(3);
   });
 
-  test("a create joins the running fetch instead of starting a second", async () => {
+  test("a composer create joins the running fetch instead of starting a second", async () => {
     const f = fake();
     f.fetches.prefetch("/repo");
     let created = false;
-    const create = f.fetches.beforeCreate("/repo").then(() => {
+    const create = f.fetches.beforeCreate("/repo", COMPOSER).then(() => {
       created = true;
     });
     await Bun.sleep(0);
@@ -163,6 +164,55 @@ describe("BaseRefFetches (the rules, with a fake fetch and clock)", () => {
     f.finish(true);
     await create;
     expect(f.calls()).toBe(1);
+  });
+
+  test("any other create waits out a running fetch, then starts its own", async () => {
+    // an agent runs `gh pr merge`, then `wisp new`: a fetch already running may have begun before that merge
+    const f = fake();
+    f.fetches.prefetch("/repo");
+    let created = false;
+    const create = f.fetches.beforeCreate("/repo").then(() => {
+      created = true;
+    });
+    await Bun.sleep(0);
+    expect(f.calls()).toBe(1); // never two at once
+    f.finish(true, 0);
+    await Bun.sleep(0);
+    expect(f.calls()).toBe(2); // its own fetch, begun after the create asked
+    expect(created).toBe(false);
+    f.finish(true, 1);
+    await create;
+    expect(f.calls()).toBe(2);
+  });
+
+  test("creates that are not the composer's each fetch after the one running, one fetch at a time", async () => {
+    const f = fake();
+    const first = f.fetches.beforeCreate("/repo");
+    const second = f.fetches.beforeCreate("/repo");
+    await Bun.sleep(0);
+    expect(f.calls()).toBe(1);
+    f.finish(true, 0);
+    await first;
+    await Bun.sleep(0);
+    // the second asked while the first's fetch ran, so that fetch may predate what it must see
+    expect(f.calls()).toBe(2);
+    f.finish(true, 1);
+    await second;
+  });
+
+  test("a fetch that began after a create asked is as good as its own, so that create joins it", async () => {
+    const f = fake();
+    f.fetches.prefetch("/repo");
+    const first = f.fetches.beforeCreate("/repo");
+    const second = f.fetches.beforeCreate("/repo");
+    f.advance(10);
+    f.finish(true, 0);
+    await Bun.sleep(0);
+    // the first waited out the prefetch and fetched again, after both asked
+    expect(f.calls()).toBe(2);
+    f.finish(true, 1);
+    await Promise.all([first, second]);
+    expect(f.calls()).toBe(2);
   });
 
   test("a composer create skips within the window of a success; an older one does not", async () => {
@@ -266,12 +316,12 @@ describe("prefetch against a real origin", () => {
     expect(remote.fetches()).toBe(1);
   });
 
-  test("a create during a prefetch awaits it, fetches nothing itself, and forks from what it fetched", async () => {
+  test("a composer create during a prefetch awaits it, fetches nothing itself, and forks from what it fetched", async () => {
     const remote = repoWithCountingRemote();
     const head = remote.push("teammate.txt");
     remote.delay(1); // long enough that the create reaches its fetch step first
     const pre = baseRefFetches.prefetch(remote.repo);
-    const wt = await createWorktree(remote.repo, "tpre1", cfg);
+    const wt = await createWorktree(remote.repo, "tpre1", cfg, undefined, COMPOSER);
     await pre.settled;
     expect(remote.fetches()).toBe(1);
     expect(wt.base_ref).toBe("origin/main");
@@ -282,6 +332,17 @@ describe("prefetch against a real origin", () => {
     expect(remote.fetches()).toBe(1);
     await createWorktree(remote.repo, "tpre5", cfg);
     expect(remote.fetches()).toBe(2);
+  });
+
+  test("any other create during a prefetch waits it out, then fetches again", async () => {
+    const remote = repoWithCountingRemote();
+    const head = remote.push("teammate.txt");
+    remote.delay(1);
+    const pre = baseRefFetches.prefetch(remote.repo);
+    const wt = await createWorktree(remote.repo, "tpre9", cfg);
+    await pre.settled;
+    expect(remote.fetches()).toBe(2);
+    expect(wt.base_commit).toBe(head);
   });
 
   test("a failed prefetch is not fresh: the create fetches and sees the new commit", async () => {

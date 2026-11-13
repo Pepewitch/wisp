@@ -9,9 +9,11 @@ import { resolve } from "node:path";
  * for that fetch while the person is still typing (POST /api/projects/base-refs),
  * and this module is what lets the create that follows reuse it:
  *
- *   - one fetch per repo at a time. A second prefetch, or a create, JOINS the
- *     one in flight. Two `git fetch` runs in one repo also race for the same
- *     remote-tracking ref locks, so joining is about correctness as well as cost;
+ *   - one fetch per repo at a time. A second prefetch, or a composer create,
+ *     JOINS the one in flight; any other create waits it out and then fetches
+ *     again (see `beforeCreate`). Two `git fetch` runs in one repo also race
+ *     for the same remote-tracking ref locks, so never overlapping is about
+ *     correctness as well as cost;
  *   - a prefetch that started recently is not repeated (PREFETCH_COOLDOWN_MS),
  *     so a composer opened and closed in a loop costs one fetch, not one each;
  *   - a create from the composer skips its own fetch after a SUCCESSFUL one
@@ -56,7 +58,8 @@ export type PrefetchState = "started" | "joined" | "recent";
 
 export interface BeforeCreateOptions {
   /**
-   * May this create fork from a fetch that already finished? Only the
+   * May this create fork from a fetch that already finished, or join one
+   * that began before it asked? Only the
    * composer's: its person was just shown the project, and its prefetch is
    * what made that fetch. Off for everything else (`wisp new`, an agent's
    * subtask, autopilot, a workflow, a bare API call): an orchestrating task
@@ -71,6 +74,8 @@ interface RepoFetch {
   inFlight: Promise<boolean> | null;
   /** the `epoch` the running attempt started in: a merge since makes it stale */
   inFlightEpoch: number;
+  /** when the running attempt began: a create asked for before it cannot take it as its own fetch */
+  inFlightStartedAt: number;
   /** bumped by `invalidate`: what an attempt started before it fetched predates a merge */
   epoch: number;
   /** when the latest attempt began, whatever came of it: the prefetch cooldown */
@@ -103,25 +108,31 @@ export class BaseRefFetches {
   }
 
   /**
-   * The create path's fetch. Awaits one already running rather than starting a
-   * second; with `reuseRecent`, skips when a fetch succeeded within
+   * The create path's fetch. Never starts a second fetch beside one already
+   * running; with `reuseRecent`, skips when a fetch succeeded within
    * BASE_REFS_FRESH_MS; otherwise fetches, exactly as every create did before
    * prefetching existed.
    *
-   * Joining a running attempt is the whole fetch for this create, whatever it
-   * answers: it is the attempt the create would otherwise have made a moment
-   * later, and a failure falls through to the refs on disk just the same. The
-   * one exception is an attempt that started before a merge Wisp made: it is
-   * waited out (two fetches must not overlap) and then fetched past.
+   * A composer create JOINS a running attempt as its whole fetch, whatever it
+   * answers: the person was just shown the project, the attempt is usually
+   * their own prefetch, and a failure falls through to the refs on disk just
+   * the same. Any other create joins only an attempt that began after it was
+   * asked for, which is as good as its own; one that began earlier may predate
+   * a merge Wisp never saw (an agent's own `gh pr merge`, then `wisp new`),
+   * which this create must fork from, so it is waited out (two fetches must
+   * not overlap) and fetched past. Every create also fetches past an attempt
+   * that started before a merge Wisp made (`invalidate`).
    */
   async beforeCreate(repo: string, options: BeforeCreateOptions = {}): Promise<void> {
     const key = resolve(repo);
+    const askedAt = this.now();
     for (;;) {
       const current = this.repos.get(key);
       if (current?.inFlight) {
         const epoch = current.inFlightEpoch;
+        const joinable = options.reuseRecent === true || current.inFlightStartedAt > askedAt;
         await current.inFlight;
-        if (epoch === current.epoch) return;
+        if (joinable && epoch === current.epoch) return;
         continue;
       }
       if (options.reuseRecent === true && current?.freshAt != null && this.now() - current.freshAt < BASE_REFS_FRESH_MS) return;
@@ -145,7 +156,7 @@ export class BaseRefFetches {
 
   private start(key: string): Promise<boolean> {
     const startedAt = this.now();
-    const state = this.repos.get(key) ?? { inFlight: null, inFlightEpoch: 0, epoch: 0, attemptedAt: startedAt, freshAt: null };
+    const state = this.repos.get(key) ?? { inFlight: null, inFlightEpoch: 0, inFlightStartedAt: startedAt, epoch: 0, attemptedAt: startedAt, freshAt: null };
     state.attemptedAt = startedAt;
     const epoch = state.epoch;
     // `fetchOnce` is best effort and should not throw; the catch is what keeps
@@ -163,6 +174,7 @@ export class BaseRefFetches {
       });
     state.inFlight = attempt;
     state.inFlightEpoch = epoch;
+    state.inFlightStartedAt = startedAt;
     this.repos.set(key, state);
     return attempt;
   }
