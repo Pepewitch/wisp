@@ -34,8 +34,9 @@ type WaitTask = Pick<ApiTask, "id" | "state" | "state_detail" | "background">;
  * Background work the task's own agent will wake for: a lingering Claude or
  * Droid process Wisp keeps alive on purpose (a Monitor, a `fireAndForget`
  * command, a background subagent). Such a group carries `tasks`, even once
- * the list empties: Claude clears it before its follow-up turn opens, and that
- * gap must not end the wait. The group is reported at once (no settle window
+ * the list empties, and Claude's keeps the tasks that just ended listed until
+ * the call they wake opens its follow-up turn (live-input `backgroundTasks`):
+ * that gap must not end the wait. The group is reported at once (no settle window
  * to slip through) and holds even while it reads `unknown` (one failed process
  * snapshot marks every group so). A process a finished harness merely left
  * behind, such as a dev server, has no `tasks`, no agent to wake, and never

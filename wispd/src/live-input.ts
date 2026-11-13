@@ -20,7 +20,7 @@ import { clearHarnessBackground, setHarnessBackground } from "./task-processes";
 import { reportFraming } from "./subtask-reports";
 import { deliveredMessage, nativeImageAttachments, withWispSection } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
-import type { Task, TaskMessage, Turn, TurnInput, TurnInputMode } from "./types";
+import type { HarnessBackgroundTask, Task, TaskMessage, Turn, TurnInput, TurnInputMode } from "./types";
 
 export interface LiveOutputSink {
   recordEvent(event: Record<string, unknown>): void;
@@ -427,6 +427,12 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
   private notice: string | null = null;
   /** The last answer was an error: its process is not kept warm, so the next turn starts on a fresh one. */
   private answerFailed = false;
+  /**
+   * The background tasks that just ended while no turn was open, and until when
+   * they still count (see `backgroundTasks`); null once the call they wake has
+   * opened its turn, or none is coming.
+   */
+  private justEnded: { tasks: HarnessBackgroundTask[]; until: number } | null = null;
   private closed = false;
   // Serialized, but a failed write fails only itself: the chain keeps each
   // step's settling, never its rejection, so a later steer is still written
@@ -536,7 +542,11 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
     this.output().recordStdoutLine(line);
     if (!event) return;
     if (this.phaseValue !== "turn" && isSystem(event, "task_notification")) this.notice = noticeText(event);
+    const running = this.phaseValue === "turn" ? null : this.followUp.tasks();
     this.followUp.observe(event, this.current.turn);
+    if (running?.length && this.followUp.activeCount() === 0) this.justEnded = { tasks: running, until: Date.now() + lingerTiming.quietMs };
+    // an answer with no call before it: the end woke nothing
+    else if (event.type === "result" && this.phaseValue !== "turn") this.justEnded = null;
     if (isSystem(event, "init")) this.clearFollowOn();
     if (event.type === "result" && this.phaseValue === "turn") this.decide(event);
     this.checkQuiet();
@@ -548,6 +558,7 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
     this.phaseValue = "turn";
     this.between = null;
     this.notice = null;
+    this.justEnded = null;
     this.followUp.beginTurn(kind);
     liveTurns.set(this.taskId, turn.turnId);
     liveInputs.set(this.taskId, {
@@ -646,7 +657,7 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
     // new turn, which the runner hands back through `adopt`.
     if (liveInputs.get(this.taskId)?.turnId === turn.turnId) liveInputs.delete(this.taskId);
     if (liveTurns.get(this.taskId) === turn.turnId) liveTurns.delete(this.taskId);
-    setHarnessBackground(turn.turnId, () => this.followUp.tasks());
+    setHarnessBackground(turn.turnId, () => this.backgroundTasks());
     this.between = hooks.between(turn.turnId);
     this.settling = hooks.settle(turn.turnId)
       .catch((error) => console.error(`[wisp] task ${this.taskId}: settling turn ${turn.turn} for its background work failed: ${String(error)}`))
@@ -660,6 +671,21 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
         this.checkQuiet();
       });
     return true;
+  }
+
+  /**
+   * What the process runs in the background, for the badge, a subtask report
+   * hold, a workflow wake and `wisp wait --settled`. When the last of it ends,
+   * the CLI starts the call that tells the model a moment later (about 0.1 s
+   * on claude 2.1.322), and that call opens a follow-up turn. Until then, and
+   * for at most `lingerTiming.quietMs`, the tasks that ended still count: a
+   * process that stays warm is no background work, so without them its task
+   * would read settled in between, with the answer still to come.
+   */
+  private backgroundTasks(): HarnessBackgroundTask[] {
+    const tasks = this.followUp.tasks();
+    if (tasks.length > 0 || !this.justEnded || Date.now() >= this.justEnded.until) return tasks;
+    return this.justEnded.tasks;
   }
 
   /** Evicted from the warm set: close its input, so it exits and the task's next turn resumes on a fresh one. */
