@@ -229,7 +229,10 @@ export const SKILL_STRATEGIES: Record<string, SkillStrategy> = {
       const rpc = io.openRpc([def.bin, "app-server"], { envelope: "plain", signal: ctx.signal });
       try {
         await rpc.call("initialize", { clientInfo: { name: "wisp", version: VERSION } });
-        const raw = await rpc.call("skills/list", { cwds: ctx.cwd ? [ctx.cwd] : [], forceReload: false });
+        const answer = await rpc.call("skills/list", { cwds: ctx.cwd ? [ctx.cwd] : [], forceReload: false });
+        // codex 0.168 wraps the per-cwd entries as `{ data: [...] }`; earlier
+        // releases answered the bare array
+        const raw = Array.isArray(answer) ? answer : (answer as { data?: unknown } | null)?.data;
         if (!Array.isArray(raw)) {
           throw new ProbeError("the harness's skill list is not a JSON array — the protocol shape may have changed");
         }

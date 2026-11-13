@@ -262,6 +262,13 @@ describe("codex-app-server skill discovery (codex)", () => {
     expect(result.errors).toEqual(["/bad/SKILL.md: Missing 'description' in frontmatter"]);
   });
 
+  test("codex 0.168's { data: [...] } envelope reads the same as the bare array", async () => {
+    const { io } = scriptedRpc({ initialize: {}, "skills/list": { data: LIST } });
+    const result = await discoverSkills(codex, ctx({ sessionId: null }), io);
+    expect(result.skills.map((s) => s.name)).toEqual(["browser:control", "openai-docs"]);
+    expect(result.errors).toEqual(["/bad/SKILL.md: Missing 'description' in frontmatter"]);
+  });
+
   test("a changed payload shape fails loudly, not silently empty", async () => {
     const { io } = scriptedRpc({ initialize: {}, "skills/list": { not: "an array" } });
     const err = await discoverSkills(codex, ctx(), io).catch((e) => e);
