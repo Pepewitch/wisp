@@ -73,6 +73,9 @@ export function harnessesRoute(
       // GET /api/projects/skills: the create composer's `/` palette, which
       // has a project and a harness to ask about but no task yet
       projectSkills: true,
+      // GET /api/tasks/:id/diff/summary: the top bar counts changed files
+      // without fetching the whole diff
+      diffSummary: true,
     },
     harnesses: Object.entries(adapters).map(([name, def]) => ({
       name,

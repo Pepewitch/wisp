@@ -8,10 +8,11 @@
  * tasks). Then it measures, against a real `wisp serve`, the reads that grow
  * with turns, subtasks and history: the full task detail every
  * `wisp wait` / `send` / `result` poll reads, the conversation page the UI
- * refetches per event, the live and archived task lists, the diff, the
- * subtasks list, and one `wisp wait`
- * round over every subtask. It prints bytes (identity and gzip), median
- * time, and git spawns per request.
+ * refetches per event, the live and archived task lists, the diff and its
+ * summary (the long task's worktree carries about 600 KB of changes), the
+ * subtasks list, one `wisp wait` round over every subtask, and what one
+ * settled turn's history stream sends. It prints bytes (identity and gzip),
+ * median time, and git spawns per request.
  *
  *   bun bench/scale.ts [--turns 1000] [--subtasks 10] [--subtask-turns 30] [--archived 1600] [--json <file>]
  *
@@ -24,7 +25,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { benchEnv, freePort, initHome, makeRepository } from "./daemon";
 import type { ScalePlan } from "./scale-seed";
-import { assertBenchHome, HOME_PREFIX } from "./shared";
+import { assertBenchHome, HOME_PREFIX, text } from "./shared";
 
 const args = process.argv.slice(2);
 const numberArg = (name: string, fallback: number): number => {
@@ -69,6 +70,13 @@ try {
   };
   const seeded = Bun.spawnSync([process.execPath, join(import.meta.dir, "scale-seed.ts"), JSON.stringify(plan)], { env: benchEnv(home), stdout: "pipe", stderr: "pipe" });
   if (seeded.exitCode !== 0) throw new Error(`seeding failed:\n${seeded.stderr.toString()}`);
+  // A long task's worktree is rarely clean: every tracked file rewritten and
+  // a few new ones, about 600 KB of diff, past the Changes pane's 512 KiB cap.
+  const longWorktree = fixture.worktrees[0]!;
+  for (let i = 0; i < 100; i++) writeFileSync(join(longWorktree, `file${i}.txt`), `${text(5_000)}\n`);
+  for (let i = 0; i < 10; i++) writeFileSync(join(longWorktree, `new${i}.txt`), `${text(10_000)}\n`);
+  // and its latest turn wrote a large log, the transcript a history load must not be sent
+  writeFileSync(join(home, "logs", `long-turn${LONG_TURNS}.out.log`), `${JSON.stringify({ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: text(2_000) }] } })}\n`.repeat(1_500));
 
   // Count the daemon's git spawns through a PATH shim, as bench/daemon.ts does.
   const shims = join(home, "shims");
@@ -125,6 +133,35 @@ try {
   await measure("UI: status", "/api/status");
   await measure(`UI: archived list (${ARCHIVED} archived)`, "/api/tasks?archived=1");
   await measure("UI: diff", "/api/tasks/long/diff");
+  await measure("UI: diff summary (Changes hint)", "/api/tasks/long/diff/summary");
+
+  // One settled turn's history (`turn=1`, no follow), read to a second past
+  // its turn-end: everything a history load is sent before it closes.
+  const turnHistory = async (): Promise<{ rawBytes: number }> => {
+    const response = await fetch(`${origin}/api/tasks/long/log/stream?format=activity&turn=1`, { headers: { authorization: `Bearer ${token}`, "accept-encoding": "identity" } });
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let rawBytes = 0;
+    let tail = "";
+    let ended = false;
+    let deadline = performance.now() + 30_000;
+    try {
+      for (;;) {
+        const next = await Promise.race([reader.read(), Bun.sleep(Math.max(1, deadline - performance.now())).then(() => null)]);
+        if (next === null || next.done) break;
+        rawBytes += next.value.byteLength;
+        tail = (tail + decoder.decode(next.value, { stream: true })).slice(-64);
+        if (!ended && tail.includes("event: turn-end")) {
+          ended = true;
+          deadline = performance.now() + 1_000;
+        }
+      }
+    } finally {
+      await reader.cancel();
+    }
+    return { rawBytes };
+  };
+  const history = await turnHistory();
 
   // One round of `wisp wait sub0 … subN`: it reads every task once per WAIT_POLL_MS.
   writeFileSync(spawnLog, "");
@@ -139,7 +176,8 @@ try {
     console.log(`${row.name.padEnd(width)}  ${String(row.status).padStart(6)}  ${String(row.rawBytes).padStart(9)}  ${String(row.gzipBytes).padStart(8)}  ${`${row.medianMs}ms`.padStart(8)}  ${row.gitPerRequest}`);
   }
   console.log(`\none \`wisp wait\` round over ${round.subtasks} subtasks: ${round.ms} ms, ${round.rawBytes} bytes, ${round.gitSpawns} git spawns (repeats every 2 s while waiting)`);
-  if (jsonOut) writeFileSync(jsonOut, `${JSON.stringify({ plan: { longTurns: LONG_TURNS, subtasks: SUBTASKS, subtaskTurns: SUBTASK_TURNS, archived: ARCHIVED }, reads: rows, waitRound: round }, null, 2)}\n`);
+  console.log(`turn 1's history stream (turn=1, no follow), to a second after its turn-end: ${history.rawBytes} bytes`);
+  if (jsonOut) writeFileSync(jsonOut, `${JSON.stringify({ plan: { longTurns: LONG_TURNS, subtasks: SUBTASKS, subtaskTurns: SUBTASK_TURNS, archived: ARCHIVED }, reads: rows, waitRound: round, turnHistory: history }, null, 2)}\n`);
 } catch (error) {
   kept = true;
   console.error(`bench:scale failed; its home is kept at ${home}\n${error instanceof Error ? error.message : String(error)}`);

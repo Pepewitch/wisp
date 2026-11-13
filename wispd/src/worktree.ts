@@ -807,6 +807,30 @@ export async function fullDiff(
   return { diff, truncated, untracked, base };
 }
 
+/**
+ * How many files the task has changed, the number the Changes pane counts,
+ * without the diff itself. It diffs from the same base as fullDiff() and
+ * lists untracked files the same way, but `--name-only` asks git for paths,
+ * not patches. The top bar shows this count on every task open and after
+ * every turn, and it used to fetch the whole diff each time just to count it:
+ * 70–240 ms of git and up to 512 KiB on a large task.
+ *
+ * A path both in the diff and untracked (a file removed from the index but
+ * left on disk) counts once, as the pane counts it. Unlike the pane, the
+ * count is not cut off by the diff's 512 KiB cap: past it, every file counts.
+ */
+export async function diffSummary(worktree: string, base_commit: string | null): Promise<{ files: number }> {
+  const base = base_commit === null ? null : await resolveDiffBase(worktree, base_commit);
+  const [namesOut, lsOut] = await Promise.all([
+    git(["diff", "--name-only", "-z", base ?? "HEAD"], worktree),
+    git(["ls-files", "-z", "--others", "--exclude-standard"], worktree),
+  ]);
+  const nulSeparated = (out: string): string[] => out.split("\0").filter((path) => path !== "");
+  const untracked = new Set(nulSeparated(must(lsOut, "git ls-files failed")));
+  const changed = nulSeparated(must(namesOut, "git diff failed")).filter((path) => !untracked.has(path));
+  return { files: changed.length + untracked.size };
+}
+
 /** Remaining room under DIFF_CAP after `diff`, including the joining newline. */
 function diffRoom(diff: string): number {
   return DIFF_CAP - (diff === "" ? 0 : diff.length + 1);
