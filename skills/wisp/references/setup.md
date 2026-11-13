@@ -331,6 +331,13 @@ address's last new wrong token. The web UI is served at `/`.
   `POST /api/projects/copy-preview` ·
   `PUT /api/repos/order` (`{paths}`: every configured project once, by
   absolute path, in the new order; 409 when the list changed meanwhile)
+- `POST /api/projects/base-refs` (`{path}`) — start `git fetch origin` for a
+  registered project now, so a worktree task created soon after need not
+  wait on it (the create composer sends it while a prompt is typed). Answers
+  `202` with `{path, state}` without waiting: `state` is `started`, `joined`
+  (a fetch was already running) or `recent` (one started in the last 15 s).
+  A missing or relative `path` is `400`; a path that is not one of this
+  daemon's project paths is `404`, and git never runs there
 - `GET /api/projects/skills?project=<path>&harness=<name>` — the harness's own
   skills and custom commands for a project, with no task behind them (the
   create composer's `/` palette). Same body as `GET /api/tasks/:id/skills`. A

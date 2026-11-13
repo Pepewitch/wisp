@@ -13,7 +13,7 @@ import { listTasks } from "../store";
 import { Semaphore } from "../subprocess";
 import { taskMode, type Task } from "../types";
 import { typeName } from "../validate";
-import { matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
+import { baseRefFetches, matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
 import { archiveTaskRows } from "../domain/archive";
 import { requestActor } from "../task-audit";
 import type { TaskSkillCache } from "../skills";
@@ -175,6 +175,17 @@ function projectList(cfg: WispConfig): { path: string; entry: RepoEntry | undefi
   });
 }
 
+/**
+ * `project` as one of this daemon's project paths (configured, or carried by a
+ * live task), resolved; undefined when it is not one. Every route that acts on
+ * a project a client names checks here first and accepts nothing else.
+ */
+function registeredProject(cfg: WispConfig, project: string): string | undefined {
+  return projectList(cfg)
+    .map(({ path }) => resolve(path))
+    .find((path) => path === resolve(project));
+}
+
 /** GET /api/repos */
 export function reposRoute(cfg: WispConfig): Promise<Response> {
   return (async () => {
@@ -219,9 +230,7 @@ export function reposRoute(cfg: WispConfig): Promise<Response> {
 export async function projectEntriesRoute(url: URL, cfg: WispConfig, signal?: AbortSignal): Promise<Response> {
   const project = url.searchParams.get("project");
   if (!project || !isAbsolute(project)) return err("project must be a project's absolute path", 400);
-  const root = projectList(cfg)
-    .map(({ path }) => resolve(path))
-    .find((path) => path === resolve(project));
+  const root = registeredProject(cfg, project);
   if (root === undefined) return err(`not a Wisp project: ${project}`, 404);
   const listing = await listProjectEntries(root, url.searchParams.get("dir") ?? "", url.searchParams.get("q") ?? "", undefined, signal);
   return "error" in listing ? err(listing.error, listing.status) : json(listing);
@@ -246,9 +255,7 @@ export async function projectSkillsRoute(
 ): Promise<Response> {
   const project = url.searchParams.get("project");
   if (!project || !isAbsolute(project)) return err("project must be a project's absolute path", 400);
-  const root = projectList(cfg)
-    .map(({ path }) => resolve(path))
-    .find((path) => path === resolve(project));
+  const root = registeredProject(cfg, project);
   if (root === undefined) return err(`not a Wisp project: ${project}`, 404);
   const harness = url.searchParams.get("harness");
   if (!harness) return err("harness is required", 400);
@@ -278,6 +285,31 @@ export async function projectSkillsRoute(
     if (e instanceof ProbeError) return err(e.message, e.status);
     throw e;
   }
+}
+
+/**
+ * POST /api/projects/base-refs { path } — start fetching a project's base refs
+ * now, while the composer is still open, so the create that follows does not
+ * wait on `git fetch origin` (base-refs.ts). Answers 202 at once and never
+ * waits for the fetch: nobody reads its outcome here, and the create path
+ * decides for itself whether what it left on disk is fresh enough to use.
+ *
+ * Only a registered project. This runs git, a network fetch at that, in the
+ * directory a client names; any other path is refused before git sees it.
+ */
+export function prefetchBaseRefsRoute(req: Request, cfg: WispConfig): Promise<Response> {
+  return (async () => {
+    const parsed = await jsonObjectBody(req);
+    if (parsed instanceof Response) return parsed;
+    const { path } = parsed as { path?: unknown };
+    if (typeof path !== "string" || path.length === 0) return err("path is required", 400);
+    // resolve() would read a relative path against the daemon's own cwd
+    if (!isAbsolute(path)) return err(`path must be absolute: ${path}`, 400);
+    const root = registeredProject(cfg, path);
+    if (root === undefined) return err(`not a Wisp project: ${path}`, 404);
+    const { state } = baseRefFetches.prefetch(root);
+    return json({ path: root, state }, 202);
+  })();
 }
 
 interface ProjectUpdateBody {

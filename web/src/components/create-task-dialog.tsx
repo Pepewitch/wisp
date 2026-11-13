@@ -12,6 +12,7 @@ import { useCreateTask, useReprobeHarnesses } from "@/hooks/mutations"
 import { useHarnessFeatures } from "@/hooks/queries"
 import { useCreateTaskComposer } from "@/hooks/useCreateTaskComposer"
 import { useDialogSubmitShortcut } from "@/hooks/useDialogSubmitShortcut"
+import { usePrefetchBaseRefs } from "@/hooks/usePrefetchBaseRefs"
 import { failureReason } from "@/lib/api"
 import { discardAttachmentPayloads } from "@/lib/attachments"
 import { clearCreateTaskDraft, readCreateTaskProject, writeCreateTaskProject } from "@/lib/drafts"
@@ -160,6 +161,8 @@ function ProjectForm({
     preferredEffort, togglePreferredEffort,
   } = useCreateTaskComposer(connectionId, repoPath, harnesses, preferredChoice)
   const [suffixPromptModalOpen, setSuffixPromptModalOpen] = useState(false)
+  // this form remounts per project, so opening and switching project both land here
+  usePrefetchBaseRefs(repoPath, mode === "worktree", prompt)
 
   const createTask = useCreateTask()
   const reprobe = useReprobeHarnesses()
