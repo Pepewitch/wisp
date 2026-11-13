@@ -650,3 +650,74 @@ describe("Codex app-server subagent dialect", () => {
     });
   });
 });
+
+describe("Claude AskUserQuestion", () => {
+  const ask = (input: unknown) => ({
+    type: "assistant",
+    message: { content: [{ type: "tool_use", id: "ask-1", name: "AskUserQuestion", input }] },
+  });
+  const questions = {
+    questions: [
+      {
+        question: "Which color?",
+        header: "Color",
+        multiSelect: false,
+        options: [{ label: "Red", description: "warm" }, { label: "Blue", description: "cool" }],
+      },
+      {
+        question: "Which sizes?",
+        header: "Size",
+        multiSelect: true,
+        options: [{ label: "S", description: "small" }, { label: "L", description: "large" }],
+      },
+    ],
+  };
+  const result = (extra: Record<string, unknown>, isError = false) => ({
+    type: "user",
+    ...extra,
+    message: { content: [{ type: "tool_result", tool_use_id: "ask-1", is_error: isError, content: "result" }] },
+  });
+
+  test("renders as the questionnaire card, not a tool row", () => {
+    const events = render(BUILTIN_ADAPTERS.claude!, [ask(questions)]);
+    expect(events).toEqual([expect.objectContaining({
+      kind: "question",
+      id: "ask-1",
+      parentId: null,
+      phase: "asked",
+      questions: [
+        { index: 1, topic: "Color", question: "Which color?", multiSelect: false, options: ["Red", "Blue"] },
+        { index: 2, topic: "Size", question: "Which sizes?", multiSelect: true, options: ["S", "L"] },
+      ],
+    })]);
+  });
+
+  test("a denied call settles the card as unanswered, with no result row beside it", () => {
+    const events = render(BUILTIN_ADAPTERS.claude!, [ask(questions), result({}, true)]);
+    expect(events).toHaveLength(2);
+    expect(events[1]).toEqual(expect.objectContaining({ kind: "question", id: "ask-1", phase: "cancelled" }));
+    expect(events[1]).not.toHaveProperty("reason");
+  });
+
+  test("answers keyed by question text map back to the card's indices", () => {
+    const events = render(BUILTIN_ADAPTERS.claude!, [
+      ask(questions),
+      result({ tool_use_result: { answers: { "Which sizes?": "S, L", "Which color?": "Blue" } } }),
+    ]);
+    expect(events[1]).toMatchObject({
+      kind: "question",
+      phase: "answered",
+      answers: [{ index: 1, answer: "Blue" }, { index: 2, answer: "S, L" }],
+    });
+  });
+
+  test("a result without answers never claims the person answered", () => {
+    const events = render(BUILTIN_ADAPTERS.claude!, [ask(questions), result({ tool_use_result: "ok" })]);
+    expect(events[1]).toMatchObject({ kind: "question", phase: "cancelled" });
+  });
+
+  test("a call with nothing the card can show stays an ordinary tool row", () => {
+    const events = render(BUILTIN_ADAPTERS.claude!, [ask({ questions: [{ header: "x" }] }), result({})]);
+    expect(events.map((event) => event.kind)).toEqual(["tool", "tool"]);
+  });
+});

@@ -1,5 +1,5 @@
 import { string } from "./activity-value";
-import type { ActivityStatus } from "./types";
+import type { ActivityStatus, QuestionPrompt } from "./types";
 
 /** Per-turn correlation state shared by every activity normalizer. */
 export interface NormalizeContext {
@@ -11,8 +11,12 @@ export interface NormalizeContext {
   toolParents: Map<string, string>;
   /** Subagent call id → the model its last forwarded message reported. */
   models: Map<string, string>;
-  /** Call ids rendered as a questionnaire card, whose tool result the card owns. */
-  questions: Set<string>;
+  /**
+   * Call ids rendered as a questionnaire card, whose tool result the card owns,
+   * with the questions it showed: Claude reports answers by question text, and
+   * this is what turns them back into the card's indices.
+   */
+  questions: Map<string, QuestionPrompt[]>;
   /** The turn's own thread, when the harness scopes events by thread (Codex app-server). */
   rootThread: string | null;
   /** Child thread id → the outcome its own turn reported; later lifecycle markers must not overwrite it. */
@@ -26,7 +30,7 @@ export function newNormalizeContext(id: (kind: string) => string): NormalizeCont
     background: new Map(),
     toolParents: new Map(),
     models: new Map(),
-    questions: new Set(),
+    questions: new Map(),
     rootThread: null,
     settled: new Map(),
   };
