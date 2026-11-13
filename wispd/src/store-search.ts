@@ -26,8 +26,10 @@
  * because LIKE never offered the row. Add SQLite's ICU extension before
  * promising otherwise — the daemon ships zero runtime dependencies (D10).
  *
- * The scan is linear in history (hundreds of milliseconds at tens of thousands
- * of turns), so the daemon never runs it on its request thread: search-runner.ts
+ * A query of three or more characters reads turns and prose through their
+ * trigram indexes (migration-search-index.ts), so it costs what it finds
+ * rather than the whole history; shorter queries, titles and messages are
+ * scanned. Either way the search is off the request thread: search-runner.ts
  * hands it to a worker holding its own read-only connection. That is also why
  * this module takes its database as an argument and imports nothing that opens
  * one — the worker loads it, and must not load the daemon with it.
@@ -58,6 +60,26 @@ export const SEARCH_QUERY_MAX_CHARS = 200;
 
 const WINDOW_BEFORE = 32;
 const WINDOW_AFTER = 96;
+
+/**
+ * The trigram indexes (migration-search-index.ts) as an FTS5 query, or null
+ * when they cannot answer: a query under three characters has no trigram to
+ * look up, and a database whose SQLite lacked the tokenizer has no index.
+ *
+ * The indexes keep no positions (`detail=none`, a quarter of the size), so
+ * the query is every trigram of the needle, ANDed: the rows holding them all,
+ * a superset of the rows holding the needle. The index only narrows which
+ * rows are read; each one is still held to the same LIKE, so the answer is
+ * the scan's. Its matching folds case at least as widely as LIKE's ASCII
+ * folding, so it never drops a row LIKE would keep.
+ */
+function trigramQuery(query: string, db: Database): string | null {
+  const characters = [...query];
+  if (characters.length < 3) return null;
+  if (db.query("PRAGMA table_info(search_prose)").all().length === 0) return null;
+  const trigrams = new Set(characters.slice(2).map((_, i) => characters.slice(i, i + 3).join("")));
+  return [...trigrams].map((trigram) => `"${trigram.replaceAll('"', '""')}"`).join(" AND ");
+}
 
 /** `%`, `_` and the escape itself are literals in a person's search box. */
 export function escapeLike(query: string): string {
@@ -181,6 +203,9 @@ export function searchTasks(query: string, db: Database, cancelled: () => boolea
 function scan(query: string, db: Database, cancelled: () => boolean): SearchResponse {
   const needle = query.toLowerCase();
   const like = `%${escapeLike(query)}%`;
+  const trigrams = trigramQuery(query, db);
+  const indexed = (index: string, key: string): string => (trigrams ? `${key} IN (SELECT rowid FROM ${index} WHERE ${index} MATCH ?) AND ` : "");
+  const match: string[] = trigrams ? [trigrams] : [];
   const hits = new Hits(needle);
   let truncated = false;
   const checkpoint = (): void => {
@@ -203,10 +228,10 @@ function scan(query: string, db: Database, cancelled: () => boolean): SearchResp
     .query(
       `SELECT t.id, t.title, t.repo_path, t.updated_at, t.state, t.archived, n.n, n.prompt, n.result
        FROM turns n JOIN tasks t ON t.id = n.task_id
-       WHERE n.prompt LIKE ? ESCAPE '\\' OR n.result LIKE ? ESCAPE '\\'
+       WHERE ${indexed("search_turns", "n.id")}(n.prompt LIKE ? ESCAPE '\\' OR n.result LIKE ? ESCAPE '\\')
        ORDER BY t.updated_at DESC, n.n DESC LIMIT ?`,
     )
-    .all(like, like, SEARCH_ROW_LIMIT) as (TaskColumns & { n: number; prompt: string; result: string | null })[];
+    .all(...match, like, like, SEARCH_ROW_LIMIT) as (TaskColumns & { n: number; prompt: string; result: string | null })[];
   truncated ||= turns.length === SEARCH_ROW_LIMIT;
   for (const row of turns) {
     hits.add(row, "prompt", row.n, row.prompt);
@@ -226,10 +251,10 @@ function scan(query: string, db: Database, cancelled: () => boolean): SearchResp
        FROM turn_texts x
        JOIN turns n ON n.id = x.turn_id
        JOIN tasks t ON t.id = x.task_id
-       WHERE x.kind = 'prose' AND x.text LIKE ? ESCAPE '\\'
+       WHERE ${indexed("search_prose", "x.turn_id")}x.kind = 'prose' AND x.text LIKE ? ESCAPE '\\'
        ORDER BY t.updated_at DESC, n.n DESC LIMIT ?`,
     )
-    .all(like, SEARCH_ROW_LIMIT) as (TaskColumns & { n: number; text: string })[];
+    .all(...match, like, SEARCH_ROW_LIMIT) as (TaskColumns & { n: number; text: string })[];
   truncated ||= prose.length === SEARCH_ROW_LIMIT;
   for (const row of prose) hits.add(row, "prose", row.n, row.text);
 

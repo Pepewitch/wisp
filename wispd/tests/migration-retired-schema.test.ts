@@ -42,7 +42,8 @@ describe("migration 33: the retired schema", () => {
     db.query("INSERT INTO tasks (id, title, repo_path, harness, state, created_at, updated_at) VALUES ('tkeep', 'kept', '/fixture', 'fake', 'done', 'now', 'now')").run();
     for (const table of TABLES) db.query(`INSERT INTO ${table} (id, task_id) VALUES ('row', 'tkeep')`).run();
 
-    expect(migrate(db).applied).toEqual([33]);
+    // 33 and whatever came after it
+    expect(migrate(db).applied).toEqual(MIGRATIONS.map((m) => m.id).filter((id) => id >= 33).sort((a, b) => a - b));
     for (const table of TABLES) {
       expect(tables(db)).not.toContain(table);
       expect(tables(db)).not.toContain(`idx_${table}_task`);

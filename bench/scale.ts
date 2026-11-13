@@ -120,6 +120,10 @@ try {
   await measure("UI: live task list", "/api/tasks?cleanup=1");
   await measure("UI: status", "/api/status");
   await measure("UI: diff", "/api/tasks/long/diff");
+  // ⌘⇧F: a needle in no row, one in a few, and one in nearly every row
+  await measure("UI: search, no match", "/api/search?q=zzqxv-no-such-text");
+  await measure("UI: search, a phrase in a few rows", `/api/search?q=${encodeURIComponent("build function error")}`);
+  await measure("UI: search, a common word", "/api/search?q=function");
 
   // One round of `wisp wait sub0 … subN`: it reads every task once per WAIT_POLL_MS.
   writeFileSync(spawnLog, "");

@@ -415,7 +415,9 @@ CREATE TABLE turns (
       donor
         .query(
           `SELECT sql FROM sqlite_master
-           WHERE sql IS NOT NULL AND name != 'schema_migrations' AND name NOT LIKE 'sqlite_%'`,
+           WHERE sql IS NOT NULL AND name != 'schema_migrations' AND name NOT LIKE 'sqlite_%'
+             -- an FTS5 table makes its own shadow tables, whose names are reserved
+             AND sql NOT LIKE 'CREATE TABLE ''%'`,
         )
         .all() as { sql: string }[]
     ).map((row) => row.sql);

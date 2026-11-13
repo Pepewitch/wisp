@@ -89,11 +89,17 @@ function statementsOf(fn: () => unknown): string[] {
   return seen.filter((sql) => /^\s*(SELECT|WITH)\b/i.test(sql));
 }
 
+/**
+ * Plan steps that say SCAN but walk no table: a constant row, and an FTS5
+ * MATCH (index string `…:M…`), which reads the full-text index for its term.
+ */
+const NOT_A_WALK = [/^SCAN CONSTANT ROW$/, /^SCAN \S+ VIRTUAL TABLE INDEX \d+:M/];
+
 /** A full-table (or full-index) walk; a table reached through a key is a SEARCH. */
 function scansIn(sql: string): { scans: number; plan: string[] } {
   const rows = db.query(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[];
   const plan = rows.map((row) => row.detail);
-  return { scans: plan.filter((detail) => /^SCAN /.test(detail) && detail !== "SCAN CONSTANT ROW").length, plan };
+  return { scans: plan.filter((detail) => /^SCAN /.test(detail) && !NOT_A_WALK.some((step) => step.test(detail))).length, plan };
 }
 
 function planCase(name: string, fn: () => unknown): Measurement {
