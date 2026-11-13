@@ -57,6 +57,15 @@ release versions, workflow pins, lint, type checks, and tests. Use
 self-contained binary. Native bridge/proxy changes also need
 `bun run desktop:check`; see the [Desktop guide](desktop/README.md).
 
+For performance work, `bun run bench` enforces the budgets CI gates
+(`bench/budgets.json`). Two more tools help decide what to work on:
+`bun run bench:scale` prices the daemon's reads on a seeded heavy-use home
+(a 1000-turn task, a parent with 10 subtasks), and `bun run profile:usage`
+profiles a real Wisp home, read-only and numbers only, so you can compare
+costs before and after a change against real use. `scripts/usage-profile.ts`
+is self-contained: copy it to another machine and run it there with
+`BUN_BE_BUN=1 wisp usage-profile.ts`.
+
 Browser and Desktop share one UI. Describe the effect on **both clients** and
 what you tested; keep deliberate runtime differences behind their existing
 boundary. Do not commit `web/ui-dist/`, `web/web-dist/`, native build output, or local logs.
