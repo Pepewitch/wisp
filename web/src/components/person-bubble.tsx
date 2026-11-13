@@ -1,8 +1,8 @@
 import { useState, type ReactNode } from "react"
 
 import { CopyButton } from "@/components/copy-button"
-import { useTick } from "@/hooks/useTick"
-import { fromNow, utcIso } from "@/lib/time"
+import { useWordingTick } from "@/hooks/useTick"
+import { fromNow, instantOf, utcIso } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 /**
@@ -22,8 +22,10 @@ import { cn } from "@/lib/utils"
  * purpose: asking when one message was sent is a question, not a mode, so it
  * neither persists nor drags every other bubble with it.
  *
- * The relative reading is only true for a second at a time, so it rides the
- * app's one clock; the exact reading never changes and unsubscribes from it.
+ * The relative reading changes with the clock, but only at its own minute and
+ * hour boundaries, so it wakes only then (`useWordingTick`): a transcript of a
+ * thousand bubbles no longer re-renders each one every second. The exact
+ * reading never changes and unsubscribes.
  */
 export function BubbleTimestamp({
   at,
@@ -36,7 +38,7 @@ export function BubbleTimestamp({
   defaultExact?: boolean
 }) {
   const [exact, setExact] = useState(defaultExact)
-  const now = useTick(!exact)
+  const now = useWordingTick(instantOf(at), !exact)
   const relative = fromNow(at, now)
   const iso = utcIso(at)
   if (!relative || !iso) return null

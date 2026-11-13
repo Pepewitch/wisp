@@ -1,10 +1,11 @@
-import { Fragment, useRef, useState, type ReactNode } from "react"
+import { Fragment, memo, useRef, useState } from "react"
 
 import { Bot, ChevronRight } from "@/components/icons"
 import { Prose } from "@/components/prose"
 import { QuestionnaireCard } from "@/components/questionnaire-card"
 import { useQuestionnaire } from "@/components/questionnaire-context"
 import { Meta, StateDot } from "@/components/primitives"
+import { StepImages } from "@/components/turn-outputs"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { summarizeStep, toolDetails } from "@/lib/activity"
 import { duration, formatDuration } from "@/lib/state"
@@ -17,10 +18,24 @@ import type {
   ThinkingActivityItem,
   ToolActivityItem,
 } from "@/stream/reducer"
+import type { OutputImage } from "../../../shared/api/outputs"
 
 type Compensate = (node: HTMLElement | null, before: number) => void
 
-export function ActivityList({
+/** The images to draw under each tool step, and what drawing one needs. */
+export interface StepImageSet {
+  taskId: string
+  turn: number
+  removed: boolean
+  byStep: ReadonlyMap<string, OutputImage[]>
+}
+
+/**
+ * The live turn re-renders this list on every frame, so every row is memoized
+ * and takes only data: the reducer keeps an untouched item's identity, and a
+ * row whose item, callback and images are the same as last frame does nothing.
+ */
+export const ActivityList = memo(function ActivityList({
   items,
   onBeforeToggle,
   depth = 0,
@@ -30,12 +45,12 @@ export function ActivityList({
   onBeforeToggle: Compensate
   depth?: number
   /** what to draw under a tool step: the images it produced */
-  stepImages?: (stepId: string) => ReactNode
+  stepImages?: StepImageSet
 }) {
   return (
     <div className={cn("flex flex-col gap-0.5", depth > 0 && "mt-1")}>
       {items.map((item) => {
-        if (item.kind === "text") return <Prose key={item.id} text={item.text.trimEnd()} className="my-2" />
+        if (item.kind === "text") return <TextRow key={item.id} text={item.text} />
         // A steered message is a conversation bubble, not an activity row: the
         // Conversation splits the timeline at its anchor and renders it there,
         // where the message row (full text, attachments, delivery wording) is.
@@ -44,10 +59,13 @@ export function ActivityList({
           return <ThinkingRow key={item.id} item={item} onBeforeToggle={onBeforeToggle} />
         }
         if (item.kind === "tool") {
+          const images = stepImages?.byStep.get(item.id)
           return (
             <Fragment key={item.id}>
               <ToolRow item={item} onBeforeToggle={onBeforeToggle} />
-              {stepImages?.(item.id)}
+              {stepImages && images && (
+                <StepImages taskId={stepImages.taskId} turn={stepImages.turn} images={images} removed={stepImages.removed} step={item.id} />
+              )}
             </Fragment>
           )
         }
@@ -64,14 +82,18 @@ export function ActivityList({
       })}
     </div>
   )
-}
+})
+
+const TextRow = memo(function TextRow({ text }: { text: string }) {
+  return <Prose text={text.trimEnd()} className="my-2" />
+})
 
 /**
  * A questionnaire renders as a card, not a row. Without a provider — the
  * gallery, an export, any transcript with no live turn behind it — it is
  * read-only, which is the truth in every one of those places.
  */
-function QuestionRow({ item }: { item: QuestionActivityItem }) {
+const QuestionRow = memo(function QuestionRow({ item }: { item: QuestionActivityItem }) {
   const questionnaire = useQuestionnaire()
   return (
     <QuestionnaireCard
@@ -90,7 +112,7 @@ function QuestionRow({ item }: { item: QuestionActivityItem }) {
       onFocusComposer={questionnaire?.onFocusComposer}
     />
   )
-}
+})
 
 function withCompensation(
   node: React.RefObject<HTMLDivElement | null>,
@@ -102,7 +124,7 @@ function withCompensation(
   requestAnimationFrame(() => onBeforeToggle(node.current, before))
 }
 
-function ThinkingRow({ item, onBeforeToggle }: { item: ThinkingActivityItem; onBeforeToggle: Compensate }) {
+const ThinkingRow = memo(function ThinkingRow({ item, onBeforeToggle }: { item: ThinkingActivityItem; onBeforeToggle: Compensate }) {
   const [open, setOpen] = useState(false)
   const node = useRef<HTMLDivElement>(null)
   const expandable = Boolean(item.text)
@@ -139,9 +161,9 @@ function ThinkingRow({ item, onBeforeToggle }: { item: ThinkingActivityItem; onB
       </CollapsibleContent>
     </Collapsible>
   )
-}
+})
 
-function ToolRow({ item, onBeforeToggle }: { item: ToolActivityItem; onBeforeToggle: Compensate }) {
+const ToolRow = memo(function ToolRow({ item, onBeforeToggle }: { item: ToolActivityItem; onBeforeToggle: Compensate }) {
   const [open, setOpen] = useState(false)
   const node = useRef<HTMLDivElement>(null)
   const summary = summarizeStep(item)
@@ -192,7 +214,7 @@ function ToolRow({ item, onBeforeToggle }: { item: ToolActivityItem; onBeforeTog
       </CollapsibleContent>
     </Collapsible>
   )
-}
+})
 
 const SUBAGENT_LABEL: Record<SubagentActivityItem["status"], string> = {
   running: "Running",
@@ -210,7 +232,7 @@ const SUBAGENT_DOT: Record<SubagentActivityItem["status"], TaskState> = {
   unknown: "creating",
 }
 
-function SubagentRow({
+const SubagentRow = memo(function SubagentRow({
   item,
   depth,
   onBeforeToggle,
@@ -219,7 +241,7 @@ function SubagentRow({
   item: SubagentActivityItem
   depth: number
   onBeforeToggle: Compensate
-  stepImages?: (stepId: string) => ReactNode
+  stepImages?: StepImageSet
 }) {
   const [open, setOpen] = useState(false)
   const node = useRef<HTMLDivElement>(null)
@@ -306,7 +328,7 @@ function SubagentRow({
       </CollapsibleContent>
     </Collapsible>
   )
-}
+})
 
 /**
  * Claude forwards the child's final message as transcript text and then hands

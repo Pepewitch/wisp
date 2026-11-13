@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { clock } from "./useTick"
+import { fromNow } from "@/lib/time"
+
+import { clock, nextWordingChange } from "./useTick"
 
 describe("a shared clock", () => {
   beforeEach(() => {
@@ -35,5 +37,30 @@ describe("a shared clock", () => {
     expect(reader).toHaveBeenCalledTimes(2)
     expect(minutes.now()).toBe(Date.now())
     stop()
+  })
+})
+
+describe("when a relative reading can next change", () => {
+  const at = Date.parse("2026-03-01T08:15:42.250Z")
+  const iso = new Date(at).toISOString()
+  const ages = [
+    ...Array.from({ length: 7_200 }, (_, second) => second * 1_000),
+    ...Array.from({ length: 4_320 }, (_, minute) => minute * 60_000 + 17_000),
+    ...Array.from({ length: 9_600 }, (_, hour) => hour * 3_600_000 + 1_234_000),
+  ]
+
+  it("is never after the reading actually changes", () => {
+    for (const age of ages) {
+      const now = at + age
+      const next = nextWordingChange(at, now)
+      expect(next).toBeGreaterThan(now)
+      expect(fromNow(iso, next - 1)).toBe(fromNow(iso, now))
+    }
+  })
+
+  it("is a minute out at most while the bubble is young, and an hour once it is not", () => {
+    expect(nextWordingChange(at, at + 10_000)).toBe(at + 60_000)
+    expect(nextWordingChange(at, at + 61_000)).toBe(at + 120_000)
+    expect(nextWordingChange(at, at + 3 * 3_600_000 + 5)).toBe(at + 4 * 3_600_000)
   })
 })

@@ -66,6 +66,12 @@ export function fromNow(iso: string, now: number = Date.now()): string {
   return at.isValid() ? at.from(now) : ""
 }
 
+/** The instant `fromNow` reads, as epoch milliseconds; NaN where it reads nothing. */
+export function instantOf(iso: string): number {
+  const at = dayjs(iso)
+  return at.isValid() ? at.valueOf() : Number.NaN
+}
+
 /**
  * The same instant said exactly: `2026-09-06T12:34:56Z`. UTC because the point
  * of asking is to match it against a log line, and milliseconds because

@@ -1,5 +1,5 @@
 import { CLEANUP_LABEL } from "@/lib/state"
-import { useState, type ReactNode } from "react"
+import { memo, useState, type ReactNode } from "react"
 import { PreviewCard } from "@base-ui/react/preview-card"
 
 import { ArchiveConfirmDialog } from "@/components/archive-flow"
@@ -76,7 +76,7 @@ function TaskStateDot({ task, className }: { task: ApiTask; className?: string }
  *  - an archived row gets no button, and therefore no fade on its marks: there
  *    is nothing to reveal, so nothing may move.
  */
-export function TaskRow({ task, status, pullRequest, selected, onSelect, depth = 0, lead, trail, parentTitle }: TaskRowProps) {
+export const TaskRow = memo(function TaskRow({ task, status, pullRequest, selected, onSelect, depth = 0, lead, trail, parentTitle }: TaskRowProps) {
   // the card's own wish (hover/focus), and the veto that outranks it
   const [wantsCard, setWantsCard] = useState(false)
   const [overArchive, setOverArchive] = useState(false)
@@ -166,7 +166,7 @@ export function TaskRow({ task, status, pullRequest, selected, onSelect, depth =
       )}
     </div>
   )
-}
+})
 
 /**
  * The row's one hover verb. 22px, quiet register, revealed by hover or by

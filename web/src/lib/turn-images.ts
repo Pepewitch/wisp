@@ -27,6 +27,16 @@ export function placeStepImages(items: ActivityItem[], outputs: OutputImage[]): 
   return { byStep, unplaced }
 }
 
+const sameImages = (left: OutputImage[] | undefined, right: OutputImage[]) =>
+  left !== undefined && left.length === right.length && left.every((image, index) => image === right[index])
+
+/** The same images under the same steps, image for image. */
+export function samePlacement(left: StepImagePlacement, right: StepImagePlacement): boolean {
+  if (left.byStep.size !== right.byStep.size || !sameImages(left.unplaced, right.unplaced)) return false
+  for (const [step, images] of right.byStep) if (!sameImages(left.byStep.get(step), images)) return false
+  return true
+}
+
 /**
  * The timeline without the transcript note of each image already drawn under
  * its step, matched by image id; other lines of a text item stay, and a text

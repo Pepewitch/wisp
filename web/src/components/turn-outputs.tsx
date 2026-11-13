@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { memo, useState } from "react"
 import { outputImageUrl, type OutputImage } from "../../../shared/api/outputs"
 import { AttachmentViewer } from "@/components/attachment-viewer"
 import { useAssetStatus } from "@/lib/asset-src"
@@ -68,11 +68,15 @@ export function TurnOutputs({ taskId, turn, outputs, removed = false }: { taskId
   return outputs.length ? <div aria-label="Agent output images">{outputs.map((image) => <OutputCard key={image.id} taskId={taskId} turn={turn} image={image} removed={removed} caption={image.step?.label} />)}</div> : null
 }
 
-/** Thumbnails under the timeline step that produced them, or at the timeline's end. */
-export function StepImages({ taskId, turn, images, removed = false, step = null }: { taskId: string; turn: number; images: OutputImage[]; removed?: boolean; step?: string | null }) {
+/**
+ * Thumbnails under the timeline step that produced them, or at the timeline's
+ * end. Memoized: the live turn redraws its steps every frame, and the images
+ * under one rarely change.
+ */
+export const StepImages = memo(function StepImages({ taskId, turn, images, removed = false, step = null }: { taskId: string; turn: number; images: OutputImage[]; removed?: boolean; step?: string | null }) {
   return images.length ? (
     <div data-step-images={step ?? ""} aria-label={step ? "Images from this step" : "Images from this turn's steps"} className="flex flex-wrap gap-x-3 pl-5">
       {images.map((image) => <OutputCard key={image.id} taskId={taskId} turn={turn} image={image} removed={removed} compact />)}
     </div>
   ) : null
-}
+})

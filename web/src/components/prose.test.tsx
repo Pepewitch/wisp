@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest"
 import { WorktreeFileContext } from "@/lib/worktree-files"
 
 import { PROSE_HIGHLIGHT_LIMIT, preloadProseHighlighter } from "@/lib/prose-highlight"
+import { forgetDiagrams } from "@/lib/mermaid-diagrams"
 import { mermaidThemeVariables } from "@/lib/mermaid-theme"
 import { DEFAULT_THEME_PREFERENCE, themeStore } from "@/lib/theme"
 
@@ -297,6 +298,8 @@ describe("Prose", () => {
       renderDiagram.mockReset()
       getMermaid.mockReset()
       getMermaid.mockImplementation(() => ({ initialize: vi.fn(), render: renderDiagram }))
+      // every fence here is the same source: each test draws it afresh
+      forgetDiagrams()
       localStorage.clear()
       // the theme store is module-global; no fence may leave it moved
       themeStore.set(DEFAULT_THEME_PREFERENCE)
@@ -466,9 +469,9 @@ describe("Prose", () => {
       expect(handle).toHaveAttribute("aria-valuenow", "448")
 
       view.unmount()
+      // drawn before, so the next mount is a diagram from its first frame
       const next = render(<Prose text={FENCE} />)
-      fireEvent.click(next.getByRole("button", { name: "Render diagram" }))
-      expect(await next.findByRole("separator", { name: "Resize diagram" })).toHaveAttribute("aria-valuenow", "448")
+      expect(next.getByRole("separator", { name: "Resize diagram" })).toHaveAttribute("aria-valuenow", "448")
     })
 
     it("clamps the drag and takes the arrow keys", async () => {
