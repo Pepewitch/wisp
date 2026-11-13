@@ -187,7 +187,8 @@ task, and browser credential changes revoke affected entries at once, on screen
 included, and prevent old pending responses from repopulating them. A message
 change and reconnection ask the daemon again for affected entries, keeping an
 image on screen until it answers and dropping it when the bytes are gone;
-content-addressed output images are not refetched on reconnection. Entries far
+content-addressed output images are not refetched on reconnection unless their
+fetch failed. Entries far
 from the viewport are evicted to targets of 32 images and 64 MiB; images near
 it remain pinned until released. This clears Wisp's display/cache, not
 screenshots, downloads, or copies made by older versions or other applications.

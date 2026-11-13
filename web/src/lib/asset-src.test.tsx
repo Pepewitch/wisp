@@ -205,6 +205,24 @@ it("leaves what a refresh skips untouched", async () => {
   expect(fetchAsset).toHaveBeenCalledTimes(1)
 })
 
+/**
+ * A content-addressed output is skipped by a reconnect's refresh because its
+ * bytes cannot have changed. One that failed has no bytes to keep: a fetch
+ * that met a daemon going down must be asked again once it is back.
+ */
+it("asks again for a skipped path whose fetch failed", async () => {
+  const OUTPUT = "/api/tasks/t1/outputs/1/abc123"
+  const fetchAsset = vi.fn().mockRejectedValueOnce(new Error("Could not reach the daemon"))
+    .mockResolvedValue(new Blob(["bytes"]))
+  const view = renderHook(() => useAssetStatus(OUTPUT), { wrapper: runtimeWrapper(fakeDaemonTransport("local", { fetchAsset })) })
+  await waitFor(() => expect(view.result.current.failed).toBe(true))
+
+  act(() => refreshAssets("local", "", (path) => path === OUTPUT))
+  await waitFor(() => expect(view.result.current.src).toMatch(/^blob:/))
+  expect(view.result.current.failed).toBe(false)
+  expect(fetchAsset).toHaveBeenCalledTimes(2)
+})
+
 describe("a lazy image", () => {
   /** A hand-driven IntersectionObserver: `move` brings one target into range or out of it. */
   let targets: Map<Element, IntersectionObserverCallback>
