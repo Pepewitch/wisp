@@ -1,3 +1,5 @@
+import { trunc } from "../text";
+import { record, string } from "./activity-value";
 import type { QuestionPrompt } from "./types";
 
 /**
@@ -53,4 +55,24 @@ export function parseQuestionnaire(text: string): QuestionPrompt[] {
   // A question with nothing to click is not a questionnaire; the raw tool row
   // says more than an empty card would.
   return questions.filter((entry) => entry.question && entry.options.length > 0);
+}
+
+/**
+ * AskUserQuestion's input, as the shared card describes a question. Claude's
+ * own schema: 1–4 `{question, header, options: [{label, description}],
+ * multiSelect}`. Only the labels reach the card, the same as Droid's options;
+ * the description is advice to the model's reader that the card has no row
+ * for. A call with nothing the card can show stays an ordinary tool row.
+ */
+export function claudeQuestions(inputValue: unknown): QuestionPrompt[] {
+  const asked = record(inputValue).questions;
+  if (!Array.isArray(asked)) return [];
+  return asked.map(record).flatMap((entry) => {
+    const question = string(entry.question);
+    const options = (Array.isArray(entry.options) ? entry.options : [])
+      .map((option: unknown) => string(record(option).label) ?? string(option))
+      .filter((option: string | null): option is string => option !== null)
+      .map((option: string) => trunc(option, 300));
+    return question ? [{ question: trunc(question, 1_000), topic: string(entry.header), multiSelect: entry.multiSelect === true, options }] : [];
+  }).map((entry, position) => ({ index: position + 1, ...entry }));
 }

@@ -4,8 +4,8 @@ import { codex } from "./activity-codex";
 import { eventId, newNormalizeContext, type NormalizeContext, status } from "./activity-context";
 import { boundedInput, number, record, string, text, timestamp } from "./activity-value";
 import { formatParsedEvent } from "./format";
-import { parseQuestionnaire } from "./questionnaire";
-import type { ActivityEvent, ActivityStatus, AdapterDef, QuestionPrompt } from "./types";
+import { claudeQuestions, parseQuestionnaire } from "./questionnaire";
+import type { ActivityEvent, ActivityStatus, AdapterDef } from "./types";
 import { createEventLineDecoder, cursorToolCall, messageContent } from "./wire";
 
 type ActivityNormalizer = (event: Record<string, any>, context: NormalizeContext) => ActivityEvent[];
@@ -145,32 +145,14 @@ function claudeAssistant(event: Record<string, any>, context: NormalizeContext):
 }
 
 /**
- * AskUserQuestion's input, as the shared card describes a question. Claude's
- * own schema: 1–4 `{question, header, options: [{label, description}],
- * multiSelect}`. Only the labels reach the card, the same as Droid's options;
- * the description is advice to the model's reader that the card has no row
- * for. A call with nothing the card can show stays an ordinary tool row.
- */
-function claudeQuestions(inputValue: unknown): QuestionPrompt[] {
-  const asked = record(inputValue).questions;
-  if (!Array.isArray(asked)) return [];
-  return asked.map(record).flatMap((entry) => {
-    const question = string(entry.question);
-    const options = (Array.isArray(entry.options) ? entry.options : [])
-      .map((option: unknown) => string(record(option).label) ?? string(option))
-      .filter((option: string | null): option is string => option !== null)
-      .map((option: string) => trunc(option, 300));
-    return question ? [{ question: trunc(question, 1_000), topic: string(entry.header), multiSelect: entry.multiSelect === true, options }] : [];
-  }).map((entry, position) => ({ index: position + 1, ...entry }));
-}
-
-/**
  * How a Claude question settled, from its tool result. Claude hands the tool
  * the answers keyed by question text (AskUserQuestion's `answers` input,
- * echoed in the result), so they map back to the card's indices by that
- * text. A result without them was never answered by the person: in print
- * mode nobody can answer, and the denied call comes back as an error. The
- * card says it expired, and the person answers in a message.
+ * echoed in the result with the questions it answered), so they map back to
+ * the card's indices by that text, read from the result's own copy where it
+ * has one, since the card's may be truncated. A result without them was never
+ * answered on the card: Wisp denied the call because the person sent a
+ * message or stopped the turn, and the error result says so. The card then
+ * reads as unanswered; the driver's own event says why.
  */
 function claudeQuestionSettled(
   id: string,
@@ -179,11 +161,14 @@ function claudeQuestionSettled(
   context: NormalizeContext,
 ): ActivityEvent {
   const base = { kind: "question" as const, id, parentId: null, timestamp: timestamp(event) };
-  const given = record(record(event.tool_use_result).answers);
+  const result = record(event.tool_use_result);
+  const given = record(result.answers);
+  const echoed = Array.isArray(result.questions) ? result.questions.map(record) : [];
   const answers = isError
     ? []
     : (context.questions.get(id) ?? []).flatMap((question) => {
-        const answer = string(given[question.question]);
+        const text = string(echoed[question.index - 1]?.question) ?? question.question;
+        const answer = string(given[text]);
         return answer ? [{ index: question.index, answer: trunc(answer, 2_000) }] : [];
       });
   return answers.length > 0 ? { ...base, phase: "answered", answers } : { ...base, phase: "cancelled" };
@@ -243,6 +228,7 @@ function claude(event: Record<string, any>, context: NormalizeContext): Activity
   if (event.type === "system") return claudeSystem(event, context);
   if (event.type === "assistant") return claudeAssistant(event, context);
   if (event.type === "user") return claudeUser(event, context);
+  if (event.type === "question") return questionEvent(event, context);
   return [];
 }
 
@@ -407,11 +393,12 @@ function droidToolResult(event: Record<string, any>, context: NormalizeContext):
 }
 
 /**
- * A questionnaire the harness is blocked on. The three phases replay in log
- * order, so a reconnect rebuilds the card's final state from the same bytes
- * rather than showing a settled question as still open.
+ * A questionnaire the harness is blocked on, as the live driver records it
+ * (Droid's, and Claude's since its questions are answered on stdin). The three
+ * phases replay in log order, so a reconnect rebuilds the card's final state
+ * from the same bytes rather than showing a settled question as still open.
  */
-function droidQuestion(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
+function questionEvent(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
   const id = eventId(event.id, context, "question");
   const phase = event.phase === "answered" || event.phase === "cancelled" ? event.phase : "asked";
   const questions = Array.isArray(event.questions)
@@ -451,7 +438,7 @@ function droid(event: Record<string, any>, context: NormalizeContext): ActivityE
   if (event.type === "reasoning") return droidReasoning(event, context);
   if (event.type === "tool_call") return droidToolCall(event, context);
   if (event.type === "tool_result") return droidToolResult(event, context);
-  if (event.type === "question") return droidQuestion(event, context);
+  if (event.type === "question") return questionEvent(event, context);
   return [];
 }
 

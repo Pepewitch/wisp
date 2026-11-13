@@ -3,7 +3,8 @@
 `needs-input` means the task is waiting on you. Its `state_detail` says why
 (`wisp ls` cuts it short; `wisp show` prints it in full):
 
-- `turn N is asking you`: a Droid `AskUser` questionnaire. Turn N is still
+- `turn N is asking you`: a questionnaire, Droid's `AskUser` or Claude's
+  `AskUserQuestion`. Turn N is still
   running, blocked until you answer, and has no result yet, so `wisp result`
   prints `(turn N is running, no result text)` or an older turn's answer.
   [Read the question](#read-an-open-question) from the raw stream.
@@ -58,7 +59,8 @@ have been answered meanwhile. If the task is still asking,
 
 - A Claude turn reads `needs-input` when its final `result` event lists a
   denied tool call from the main agent's last batch of calls (one model
-  response). A denial the agent went past, making another batch of calls
+  response). An `AskUserQuestion` call Wisp released, because someone sent a
+  message instead or stopped the turn, is listed too but never counts. A denial the agent went past, making another batch of calls
   after it, leaves the finished turn `done`. That includes an agent that
   checked something after the denial and only then asked, and a denial inside
   a subagent: the question is in the turn's answer. To see the denials:
@@ -92,9 +94,9 @@ other question to the user with its options, and send their reply.
 wisp send <id> "1. Library ABC. 2. Keep the current API; the CLI depends on it."
 ```
 
-On an open questionnaire, `send` releases it, recording each answer as
-"(no selection — see the message that follows)", and delivers your message
-into the same turn. The agent reads your words, not a selection, so give a
+On an open questionnaire, `send` releases it, telling the agent that no
+option was picked and to read the message that follows, and delivers your
+message into the same turn. The agent reads your words, not a selection, so give a
 choice for every question. The browser and Desktop show the same
 questionnaire as a card answered option by option. After a stopped or ended
 turn, `send` starts the next turn in the same session.

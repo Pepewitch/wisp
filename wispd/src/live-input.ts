@@ -5,6 +5,7 @@ import type { QuestionAnswer } from "./adapters/live/droid";
 import type { QuestionPrompt } from "./adapters/types";
 import { JsonLineBuffer } from "./adapters/live/json-lines";
 import { createBackgroundFollowUp, isSystem, noticeText, startsModelCall, type TurnKind } from "./adapters/live/claude-background";
+import { ClaudeQuestions } from "./adapters/live/claude-questions";
 import { configureCodex } from "./live-codex";
 import { configureDroid } from "./live-droid";
 import { pipeReader } from "./pipe-drain";
@@ -15,9 +16,9 @@ import {
   type StoredAttachment,
 } from "./attachments";
 import { emit } from "./events";
-import { getTask, runningTurn } from "./store";
+import { db, getTask, runningTurn, transition } from "./store";
 import { clearHarnessBackground, setHarnessBackground } from "./task-processes";
-import { reportFraming } from "./subtask-reports";
+import { recordQuestionReport, reportFraming, settleQuestionReport } from "./subtask-reports";
 import { deliveredMessage, nativeImageAttachments, withWispSection } from "./turn-input";
 import { formatSteerNote } from "./turn-notes";
 import type { HarnessBackgroundTask, Task, TaskMessage, Turn, TurnInput, TurnInputMode } from "./types";
@@ -450,6 +451,8 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
   // step's settling, never its rejection, so a later steer is still written
   // and close still ends stdin after an earlier write was refused.
   private chain = Promise.resolve();
+  /** AskUserQuestion calls Claude is blocked on, answered on stdin (claude-questions.ts). */
+  private readonly questions: ClaudeQuestions;
 
   constructor(
     private readonly options: ConfigureLiveTurnOptions,
@@ -458,6 +461,23 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
   ) {
     this.taskId = options.task.id;
     this.current = { turnId: options.turnId, turn: options.turn, sink: options.recorder };
+    this.questions = new ClaudeQuestions({
+      write: (frame) => this.write(JSON.stringify(frame)),
+      emit: (event) => this.output().recordEvent(event),
+      // A turn waiting on a question is still running, so only the task STATE
+      // moves, as for Droid (live-droid.ts): needs-input also keeps stuck
+      // detection off a turn that is idle on purpose. The report and the
+      // state change it reports commit together.
+      onWaiting: (waiting, question) => db.transaction(() => {
+        if (question) recordQuestionReport(this.taskId, this.current.turn, question.id, question.questions);
+        transition(
+          this.taskId,
+          waiting ? "needs-input" : "running",
+          waiting ? `turn ${this.current.turn} is asking you` : `turn ${this.current.turn}`,
+        );
+      })(),
+      onSettled: (id, phase) => settleQuestionReport(this.taskId, id, phase),
+    });
     this.open(this.current, "spawned");
   }
 
@@ -522,6 +542,7 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
   /** The process exited: stop every timer and forget it. */
   ended(): void {
     this.retire();
+    this.questions.abandon();
     if (lingeringProcesses.get(this.taskId) === this) lingeringProcesses.delete(this.taskId);
     clearHarnessBackground(this.current.turnId);
   }
@@ -553,6 +574,7 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
     }
     this.output().recordStdoutLine(line);
     if (!event) return;
+    if (this.questions.handle(event)) return;
     if (this.phaseValue !== "turn" && isSystem(event, "task_notification")) this.notice = noticeText(event);
     const running = this.phaseValue === "turn" ? null : this.followUp.tasks();
     this.followUp.observe(event, this.current.turn);
@@ -578,9 +600,14 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
       turn: turn.turn,
       send: async (message) => {
         const files = messageAttachments(this.taskId, message);
+        // A message is a legitimate answer to an open question, and Claude
+        // is blocked inside the tool until the question is released.
+        await this.questions.deferToMessage();
         await this.input(envelopeFor(this.strategy, this.options.def, steerText(this.options.def, message, files), files));
         noteDelivery(turn.sink, message, files);
       },
+      answer: (questionId, answers) => this.questions.answer(questionId, answers),
+      question: (questionId) => this.questions.question(questionId),
       close: () => this.close(),
     });
   }
@@ -609,11 +636,13 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
   private close(): Promise<void> {
     this.closing = true;
     this.clearTimers();
-    return this.serialize(async () => {
+    // An open question is released before the input ends, so a resumed
+    // session never inherits a prompt nobody answered.
+    return this.questions.stop().then(() => this.serialize(async () => {
       if (this.closed) return;
       this.closed = true;
       await Promise.resolve(this.sink.end());
-    });
+    }));
   }
 
   private decide(result: Record<string, unknown>): void {
