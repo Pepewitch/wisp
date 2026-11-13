@@ -1,4 +1,4 @@
-import { readContextPoint, type ContextPoint } from "./context";
+import { isCompaction, readContextPoint, type ContextPoint } from "./context";
 import { DroidAnswer, type DroidAnswerState } from "./droid-answer";
 import { addUsageBlobs } from "./usage";
 import type { AdapterDef, ParsedTurn } from "./types";
@@ -40,6 +40,8 @@ export interface OutcomeCheckpointV1 {
   opencodeSteps: unknown[];
   /** Last context reading the adapter's tracker recognized; absent in checkpoints written before it existed. */
   context?: ContextPoint | null;
+  /** The harness compacted its conversation during the turn; absent in checkpoints written before it existed. */
+  compacted?: boolean;
   /** Droid's answer across its messages (droid-answer.ts); absent in checkpoints written before it existed. */
   droidAnswer?: DroidAnswerState;
   /**
@@ -120,6 +122,7 @@ export class IncrementalOutcomeReducer {
   private opencodeMessage: string | null = null;
   private opencodeSteps: unknown[] = [];
   private context: ContextPoint | null = null;
+  private compacted = false;
   private lastToolBatch: { message: string | null; ids: string[] } | null = null;
   private needsInputHeld: boolean | null = null;
   private firstStderr: string | null = null;
@@ -194,6 +197,7 @@ export class IncrementalOutcomeReducer {
     // reducer already makes — no second read of the stream.
     const point = readContextPoint(this.def, event);
     if (point) this.context = point;
+    if (isCompaction(event)) this.compacted = true;
 
     if (this.kind === "codex-jsonl") this.pushCodex(event);
     else if (this.kind === "cursor-stream-json") this.pushCursor(event);
@@ -214,6 +218,11 @@ export class IncrementalOutcomeReducer {
   }
 
   outcome(policy: OutcomePolicy = "legacy"): ParsedTurn {
+    const parsed = this.foldOutcome(policy);
+    return this.compacted ? { ...parsed, compacted: true } : parsed;
+  }
+
+  private foldOutcome(policy: OutcomePolicy): ParsedTurn {
     if (this.kind === "codex-jsonl") {
       const positivelySettled = policy === "legacy" || this.settled;
       const isError = this.failed || !positivelySettled;
@@ -346,6 +355,7 @@ export class IncrementalOutcomeReducer {
       opencodeMessage: this.opencodeMessage,
       opencodeSteps: [...this.opencodeSteps],
       context: this.context,
+      ...(this.compacted ? { compacted: true } : {}),
       droidAnswer: this.droidAnswer.checkpoint(),
       lastToolBatch: this.lastToolBatch ? { message: this.lastToolBatch.message, ids: [...this.lastToolBatch.ids] } : null,
       needsInputHeld: this.needsInputHeld,
@@ -384,6 +394,7 @@ export class IncrementalOutcomeReducer {
     this.opencodeMessage = checkpoint.opencodeMessage ?? null;
     this.opencodeSteps = [...(checkpoint.opencodeSteps ?? [])];
     this.context = checkpoint.context ?? null;
+    this.compacted = checkpoint.compacted === true;
     this.droidAnswer.restore(checkpoint.droidAnswer);
     this.lastToolBatch = checkpoint.lastToolBatch ? { message: checkpoint.lastToolBatch.message, ids: [...checkpoint.lastToolBatch.ids] } : null;
     this.needsInputHeld = checkpoint.needsInputHeld ?? null;

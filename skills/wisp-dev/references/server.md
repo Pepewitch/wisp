@@ -109,7 +109,7 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   only after commit.
 - Everything Wisp writes into a harness input goes in one `<wisp>` section
   per input (`wispSection` / `withWispSection` in `turn-input.ts`). That
-  covers the first turn's task preamble, standing notes (auto-merge), the
+  covers a conversation's task preamble, standing notes (auto-merge), the
   attached-files note, auto-fix rounds, heartbeat wakes and a
   plugin workflow's control lines. A single line goes inline
   (`<wisp>…</wisp>`), several go in a block, and a literal `</wisp>` inside
@@ -127,6 +127,14 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   - A queued `/command` gets no framing of its own, and after the first turn
     no standing notes either: a harness reads it as a command only when the
     input starts with `/`.
+  - The preamble opens every conversation: any turn with no session to
+    resume, so a fresh context after `/fresh` or a harness switch too.
+  - Standing notes (the image-output reminder, autopilot's notes) go into a
+    conversation once (`standing-notes.ts`): again only when their text
+    changes (sent whole, replacing the earlier ones), after a compaction, a
+    slash command, a turn that failed or was interrupted, another session,
+    or a daemon restart. Never move them into a system prompt flag: text that
+    changes there invalidates the prompt cache.
   - A plugin's report is relayed data, so `<wisp` and `</wisp` in it are
     escaped too: it cannot open or close a section of its own.
   - `Turn.prompt` keeps the message as stored, with no framing.

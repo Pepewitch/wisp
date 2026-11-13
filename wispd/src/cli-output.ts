@@ -9,17 +9,23 @@ import { wispCommand } from "./command";
 export async function outputCommand(positional: string[], flags: Flags): Promise<void> {
   const [command, argument, imageId] = positional;
   const taskId = typeof flags.task === "string" ? flags.task : command === "add" ? process.env.WISP_TASK_ID : argument;
+  // `add` without --turn publishes on the task's running turn, else its latest:
+  // a reused harness process cannot learn its turn number from its environment
+  const current = command === "add" && flags.turn === undefined;
   const turn = typeof flags.turn === "string" ? Number(flags.turn) : NaN;
-  if (!taskId || !Number.isSafeInteger(turn) || turn < 1) throw new Error("output requires a task and --turn <n> (add defaults to WISP_TASK_ID)");
-  const path = `/api/tasks/${encodeURIComponent(taskId)}/outputs/${turn}`;
+  if (!taskId || (!current && (!Number.isSafeInteger(turn) || turn < 1))) {
+    throw new Error("output requires a task and --turn <n> (add defaults to WISP_TASK_ID and the running turn)");
+  }
+  const path = `/api/tasks/${encodeURIComponent(taskId)}/outputs/${current ? "current" : turn}`;
   if (command === "add") {
-    if (!argument) throw new Error("usage: wisp output add <image-path> --turn <n> [--task <task>]");
+    if (!argument) throw new Error("usage: wisp output add <image-path> [--turn <n>] [--task <task>]");
     const file = Bun.file(argument);
     if (!(await file.exists())) throw new Error("output image file does not exist");
     if (file.size > 8 * 1024 * 1024) throw new Error("output image exceeds the 8 MiB limit");
     try {
       const data = await daemonRequest(`${path}?name=${encodeURIComponent(basename(argument))}`, "POST", file, "application/octet-stream", 30_000);
-      print(flags.json ? JSON.stringify(data) : `${data.image.name} published\n${data.url}\n${saveCommand(taskId, turn, data.image)}`);
+      const published = typeof data.turn === "number" ? data.turn : turn;
+      print(flags.json ? JSON.stringify(data) : `${data.image.name} published\n${data.url}\n${saveCommand(taskId, published, data.image)}`);
     } catch (error) { exitApi(error); }
     return;
   }

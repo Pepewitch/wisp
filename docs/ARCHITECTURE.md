@@ -59,6 +59,16 @@ queued behind any later message sent without the hold. Each running task
 reports its turn's input mode (`steer`, `wait`, or `interrupt`) and agent so
 a client can say which will happen before the person sends.
 
+A turn's input carries Wisp's own text in one `<wisp>` section before the
+person's words. The task preamble opens each conversation (any turn with no
+session to resume). Standing notes, such as the image-output reminder and
+autopilot's switches, go into a conversation once and again only when their
+text changes, after a compaction or slash command, after a turn that failed,
+or after a daemon restart. Long-running tasks are mostly turns Wisp starts
+itself, each re-reading the whole session, so text repeated on every turn is
+paid for on every turn. Nothing Wisp varies goes into a harness's system
+prompt, whose prompt cache it would invalidate.
+
 Turn transcripts are size-capped. Recorder-capable drivers keep draining
 activity and checkpoint the result independently of retained history.
 The capped transcript leaves out what no reader of it uses (for Claude, the

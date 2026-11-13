@@ -29,7 +29,7 @@ import { checksGate } from "./gate"
 import type { PrSnapshot } from "./github"
 import { withReviewsSent } from "./pending-fix"
 import { pauseAutopilot, reserveRound, writeAutopilotCheckpoint, type AutopilotCheckpoint } from "./store"
-import { activeRecipe, latestDraft } from "../verify/recipe"
+import { hasActiveRecipe, latestDraft } from "../verify/recipe"
 import {
   launchReview, nudgeReviewer, planRound, RETIRE_GRACE_MS, retireReviewer, secondAgent, startRecipeTask, verifyAgent, type ReviewerStart,
 } from "../verify/reviewer"
@@ -565,7 +565,7 @@ async function repairRecipe(look: ReviewLook, round: RoundRow, holding: boolean)
   const area = round.recipe_area ? ` (${round.recipe_area})` : ""
   const started = await startRecipeTask(look.start, {
     // no recipe yet: what the reviewer could not do is set one up
-    repoPath: task.repo_path, projectName: projectName(look.start.cfg, task.repo_path), mode: activeRecipe(task.repo_path) ? "fix" : "setup", area: round.recipe_area, note: null,
+    repoPath: task.repo_path, projectName: projectName(look.start.cfg, task.repo_path), mode: hasActiveRecipe(task.repo_path) ? "fix" : "setup", area: round.recipe_area, note: null,
     complaints: [feedback], agent: verifyAgent(look.start.cfg, look.start.adapters, task.repo_path, task), roundId: round.id, actor: "autopilot",
   })
   if ("error" in started) {

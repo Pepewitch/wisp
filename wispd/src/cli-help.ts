@@ -85,8 +85,9 @@ const COMMAND_USAGE = {
   audit: `  ${COMMAND} audit <task> [--limit <1-500>] [--json]  who did what to the task, newest first (default: the newest 100):
                                                     web, desktop, cli, agent:<task> (an agent running in that task),
                                                     autopilot, workflow:<id>, system, or api (an unnamed client)`,
-  output: `  ${COMMAND} output add <image-path> --turn <n> [--task <task>] [--json]
-                                                    publish an image in the reply (task defaults to WISP_TASK_ID)
+  output: `  ${COMMAND} output add <image-path> [--turn <n>] [--task <task>] [--json]
+                                                    publish an image in the reply (task defaults to WISP_TASK_ID,
+                                                    turn to its running turn, else its latest)
   ${COMMAND} output list <task> --turn <n> [--json]    list image outputs and save commands
   ${COMMAND} output save <task> <image-id> --turn <n> --out <new-file>
                                                     save an output without overwriting an existing file`,

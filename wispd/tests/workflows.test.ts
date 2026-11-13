@@ -120,6 +120,13 @@ test("heartbeat is durable, writes its completion footer outside the worktree, a
   expect(readFileSync(file, "utf8")).toContain(`workflow complete ${item.id}`);
   expect(readFileSync(file, "utf8")).toContain("Push permission: authorized for task changes.");
   expect(readFileSync(file, "utf8")).toContain("Merge permission: authorized after rechecking current provider protections.");
+  // the wake carries its objective and control text itself: the snapshot is
+  // for audit, and reading it would cost the turn one more model call
+  const text = messagesFor(item.taskId)[0]!.text;
+  expect(text.startsWith(`[Wisp heartbeat ${item.id}]\n${String(item.params.prompt)}\n\n`)).toBe(true);
+  expect(text).toContain("Push permission: authorized for task changes.");
+  expect(text).toContain(`workflow complete ${item.id}`);
+  expect(text).not.toContain("HEARTBEAT.md");
   await new WorkflowRuntime(loadConfig(), {}, { now: () => clock, dispatch }).tick();
   expect(messagesFor(item.taskId)).toHaveLength(1);
 });

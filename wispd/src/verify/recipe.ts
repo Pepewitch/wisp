@@ -285,6 +285,15 @@ function readFiles(root: string): RecipeFile[] {
   return files
 }
 
+/**
+ * Whether the project has an active recipe — the test `activeRecipe` starts
+ * with, without reading every file it holds (up to RECIPE_MAX_FILES and
+ * RECIPE_MAX_BYTES, synchronously), for a caller that needs only the answer.
+ */
+export function hasActiveRecipe(repoPath: string): boolean {
+  return existsSync(join(recipeDir(repoPath), RECIPE_INDEX))
+}
+
 /** The active recipe's files and areas, or null when the project has none yet. */
 export function activeRecipe(repoPath: string): RecipeSnapshot | null {
   const root = recipeDir(repoPath)

@@ -61,11 +61,14 @@ function workflowPrompt(row: WorkflowRow, result: WorkflowDecision): string {
       : "Leave this workflow active after handling this update. Its checks decide when it completes.",
   ].join("\n");
   if (row.type !== "heartbeat") return `${control}\n\n${result.message}`;
+  // The wake's own snapshot, for audit: the turn never reads it. Pointing the
+  // agent at it instead cost every heartbeat one more model call over the
+  // whole session, only to read back what the input could have carried.
   const dir = join(TASKS_DIR, row.task_id, "workflows", row.id, `wake-${item.wakeCount + 1}`);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const file = join(dir, "HEARTBEAT.md");
-  writeFileSync(file, `${result.message}\n\n---\n${control}\n`, { mode: 0o600 });
-  return `[Wisp heartbeat ${row.id}]\nRead ${file} and follow its objective and completion instructions.`;
+  writeFileSync(join(dir, "HEARTBEAT.md"), `${result.message}\n\n---\n${control}\n`, { mode: 0o600 });
+  // the objective first: the transcript opens a long wake on its first lines
+  return `[Wisp heartbeat ${row.id}]\n${result.message}\n\n${control.slice(control.indexOf("\n") + 1)}`;
 }
 
 export class WorkflowRuntime {

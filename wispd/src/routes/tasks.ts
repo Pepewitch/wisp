@@ -49,6 +49,7 @@ import {
 import { conversationDetail, conversationResponse, taskUsageResponse } from "./task-conversation";
 import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
 import { recordAudit, recordSendAudit, requestActor } from "../task-audit";
+import { forgetStandingNotes } from "../standing-notes";
 import { taskAuditRoute } from "./task-audit";
 import { reportsToParent } from "../subtask-reports";
 import { reportAckRoute } from "./report-ack";
@@ -584,6 +585,8 @@ export function taskRoute(
         // This action records no turn row, so a cached /context from before it
         // would survive the compaction and report the tokens it just dropped.
         probes?.invalidateTask(task.id);
+        // and the conversation now holds only a summary of Wisp's standing notes
+        forgetStandingNotes(task.id);
         return json<CompactAnswer>({
           ok: true,
           removedCount: result.removedCount,

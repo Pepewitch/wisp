@@ -65,6 +65,27 @@ test("raw publication refuses unsupported files and oversized chunked bodies wit
   expect(() => publishOutputImage(f.turnId, new Uint8Array(), "empty.png", "published")).toThrow("empty");
 });
 
+test("`current` publishes on the running turn, else the latest, and says which", async () => {
+  const f = fixture();
+  finishTurn(f.turnId, "done", 0, "first");
+  const second = createTurn(f.task.id, 2, "Another", null, join(LOG_DIR, `${f.task.id}-2.log`), null);
+  setTaskFields(f.task.id, { turn_count: 2 });
+  const post = async (name: string) => {
+    const req = new Request(`http://fixture/api/tasks/${f.task.id}/outputs/current?name=${name}`, { method: "POST", body: Buffer.concat([samplePng(), Buffer.from(name)]) });
+    const url = new URL(req.url);
+    return await outputRoute(req, url, url.pathname, req.method)!;
+  };
+  const running = await post("running.png");
+  expect(running.status).toBe(201);
+  expect((await running.json()).turn).toBe(2);
+  expect(parseOutputManifest(getTurn(second)!.outputs_json).map((image) => image.name)).toEqual(["running.png"]);
+  finishTurn(second, "done", 0, "second");
+  const settled = await post("latest.png");
+  expect(settled.status).toBe(201);
+  expect((await settled.json()).turn).toBe(2);
+  expect(parseOutputManifest(getTurn(f.turnId)!.outputs_json)).toEqual([]);
+});
+
 test("count and byte limits cannot grow a turn indefinitely", () => {
   const f = fixture();
   for (let n = 0; n < 32; n++) publishOutputImage(f.turnId, Buffer.concat([samplePng(), Buffer.from([n])]), "plot.png", "native");

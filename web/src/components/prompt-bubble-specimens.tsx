@@ -160,7 +160,7 @@ export function PromptBubbleSpecimens() {
             <SpecimenSystemTurn source={{ by: "autopilot", kind: "auto-fix", pr: 128, round: 2, rounds: 5 }} text={SPECIMEN_FIX} />
             <SpecimenSystemTurn
               source={{ by: "workflow", kind: "heartbeat" }}
-              text={"[Wisp heartbeat w4k2]\nRead HEARTBEAT.md and follow its objective and completion instructions."}
+              text={"[Wisp heartbeat w4k2]\nCheck the deployment. Investigate failures. Finish when it is healthy.\n\nPush permission: authorized for task changes.\nDo not sleep or repeatedly poll inside this turn; Wisp does the waiting."}
             />
             <SpecimenSystemTurn
               source={{ by: "harness", kind: "background-update", harness: "claude" }}
