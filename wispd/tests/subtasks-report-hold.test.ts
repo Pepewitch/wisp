@@ -138,6 +138,42 @@ describe("routine reports wait for siblings still working", () => {
     }
   }, 20_000);
 
+  test("a child whose turn failed or ended needing input is blocked on its parent: its report goes at once", async () => {
+    const gate = join(scratch(), "open");
+    const failing: AdapterDef = { bin: "bash", exec: ["-c", "printf 'broke'; exit 1"], parse: { format: "text" }, attach: null };
+    const adapters = { quick, failing, held: held(gate) };
+    const parent = await finished({ repoPath: await repo() }, adapters);
+    const early = await finished({ subtask: { parentId: parent.id, report: true } }, adapters);
+    const broken = await finished({ harness: "failing", subtask: { parentId: parent.id, report: true } }, adapters);
+    await working({ subtask: { parentId: parent.id, report: true } }, adapters);
+    const delivery = new SubtaskDelivery(cfg(), adapters, 0, 60_000);
+    try {
+      const outcome = (child: string) => (db.query("SELECT json_extract(facts_json, '$.outcome') AS outcome FROM subtask_reports WHERE child_task_id = ?")
+        .get(child) as { outcome: string }).outcome;
+      expect([outcome(early.id), outcome(broken.id)]).toEqual(["done", "failed"]);
+      expect(siblingHoldUntil(parent.id, 60_000)).toBeNull();
+      // an ended-needing-input turn is the same ask; a done one alone is routine and waits
+      const setOutcome = (child: string, value: string) =>
+        db.run("UPDATE subtask_reports SET facts_json = json_set(facts_json, '$.outcome', ?) WHERE child_task_id = ?", [value, child]);
+      setOutcome(broken.id, "needs input");
+      expect(siblingHoldUntil(parent.id, 60_000)).toBeNull();
+      setOutcome(broken.id, "done");
+      expect(siblingHoldUntil(parent.id, 60_000)).toBeGreaterThan(Date.now());
+      setOutcome(broken.id, "failed");
+
+      delivery.deliver(parent.id);
+      const [message] = reportMessages(parent.id);
+      await until(() => reportRows(parent.id).every((row) => row.state === "delivered"), "both reports");
+      expect(reportRows(parent.id).map((row) => [row.child_task_id, row.message_id])).toEqual([
+        [early.id, message!.id],
+        [broken.id, message!.id],
+      ]);
+    } finally {
+      await delivery.stop();
+      await Bun.write(gate, "");
+    }
+  }, 20_000);
+
   test("a report already queued behind the parent's own work goes as soon as it is free", async () => {
     const gate = join(scratch(), "open");
     const adapters = { quick, held: held(gate) };

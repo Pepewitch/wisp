@@ -49,10 +49,11 @@ auto-fix, auto-review or auto-merge on, you also hear when a review round
 settles, the PR merges or closes, and when autopilot needs a person. Reports
 wait until your turn ends and never interrupt it. Reports that arrive together
 come as one message. While your other subtasks are still working, a routine
-report (a finished turn, a review round, a merged or closed PR) waits up to two
-minutes for them, so results finishing close together reach you as one turn; a
-question, a stall, a setup failure or a request for a person comes at once and
-brings any waiting report with it. While you are busy they queue in line (`wisp show` lists
+report (a turn that ended done, a review round, a merged or closed PR) waits up
+to two minutes for them, so results finishing close together reach you as one
+turn; a question, a turn that failed or ended needing input, a stall, a setup
+failure or a request for a person comes at once and brings any waiting report
+with it. While you are busy they queue in line (`wisp show` lists
 them as queued) and go before any message sent after them, so a steady stream
 of messages cannot hold them back. Read a review's findings with `wisp review show <child>`
 and a child's full answer with `wisp result <child>`. If you have already read

@@ -54,7 +54,7 @@ const BACKSTOP_MS = 30_000;
  * report waits up to this long, counted from the oldest one waiting, so
  * results finishing minutes apart arrive as one message and one turn. The
  * last working sibling settling releases the wait at once, and so does any
- * report that asks the parent to act (URGENT_REPORT_KINDS).
+ * report that asks the parent to act (urgentReport).
  */
 export const REPORT_IDLE_HOLD_MS = 2 * 60_000;
 
@@ -62,16 +62,28 @@ export const REPORT_IDLE_HOLD_MS = 2 * 60_000;
 const URGENT_REPORT_KINDS = new Set(["question", "needs-you", "stuck", "setup-failed"]);
 
 /**
+ * Whether a pending report asks the parent to act. A `turn` report is routine
+ * only when the child's turn ended done: one that failed or ended needing
+ * input leaves the child blocked on its parent, as a question does. The
+ * outcome is in the facts recordTurnReport wrote (subtask-reports.ts).
+ */
+function urgentReport(row: { kind: string; outcome: string | null }): boolean {
+  return URGENT_REPORT_KINDS.has(row.kind) || (row.kind === "turn" && row.outcome !== "done");
+}
+
+/**
  * When a parent's pending reports may go, if they should wait for working
  * siblings first (REPORT_IDLE_HOLD_MS); null when they may go now. A child
  * counts as working while it is creating, queued or running and reports to
- * this parent; a stuck or needs-input child has already reported why.
+ * this parent; a stuck or needs-input child has already reported why, and
+ * that report goes at once.
  */
 export function siblingHoldUntil(parentId: string, holdMs: number, now = Date.now()): number | null {
   if (holdMs <= 0) return null;
-  const pending = db.query("SELECT kind, created_at FROM subtask_reports WHERE parent_task_id = ? AND state = 'pending'")
-    .all(parentId) as { kind: string; created_at: string }[];
-  if (pending.length === 0 || pending.some((row) => URGENT_REPORT_KINDS.has(row.kind))) return null;
+  const pending = db.query(`SELECT kind, created_at, CASE WHEN json_valid(facts_json) THEN json_extract(facts_json, '$.outcome') END AS outcome
+    FROM subtask_reports WHERE parent_task_id = ? AND state = 'pending'`)
+    .all(parentId) as { kind: string; created_at: string; outcome: string | null }[];
+  if (pending.length === 0 || pending.some(urgentReport)) return null;
   const working = db.query(`SELECT 1 FROM tasks WHERE parent_task_id = ? AND report_to_parent = 1 AND archived = 0
     AND state IN ('creating', 'queued', 'running') LIMIT 1`).get(parentId);
   if (!working) return null;
