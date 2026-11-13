@@ -4,7 +4,6 @@ import {
   useEffect,
   useMemo,
   useRef,
-  useState,
   useSyncExternalStore,
   type ReactNode,
 } from "react"
@@ -36,6 +35,7 @@ import { useMessageGroups } from "@/hooks/useMessageGroups"
 import { useStepImages } from "@/hooks/useStepImages"
 import { useRevealMessage } from "@/hooks/useRevealMessage"
 import { useQuestionnaireController } from "@/hooks/useQuestionnaire"
+import { useSettledActivity } from "@/hooks/useSettledActivity"
 import {
   useConversationPagination,
   useRevealTurnPage,
@@ -45,7 +45,6 @@ import {
   activityByTurn,
   anchoredMessageIds,
   conclusionText,
-  fetchTurnActivity,
   splitByMessage,
   type TurnActivity,
 } from "@/lib/activity"
@@ -53,7 +52,7 @@ import { countPendingQuestions } from "@/lib/questionnaire"
 import { duration } from "@/lib/state"
 import { sourceLabel } from "@/lib/turn-source"
 import { lookedAtLabel, sharedImages, withoutPlacedImageNotes } from "@/lib/turn-images"
-import { useDaemonRuntime, useDaemonTransport } from "@/lib/runtime"
+import { useDaemonRuntime } from "@/lib/runtime"
 import { scheduleConversationPaint } from "@/lib/task-switch-performance"
 import type { ConversationDetail, TaskMessage, Turn } from "@/lib/types"
 import type { OutputImage } from "../../../shared/api/outputs"
@@ -74,8 +73,9 @@ const EMPTY_ITEMS: ActivityItem[] = []
    2. Activity rows are SUMMARY LINES, in the order the harness emitted them:
       a tool call, the prose that explains the next one, the next call. A live
       turn's timeline comes from the log stream; a settled turn's is fetched on
-      demand and dropped on collapse. Primary transcripts and the live browser
-      window are bounded; omissions are visible instead of killing the turn.
+      demand and cached, since it never changes. Primary transcripts and the
+      live browser window are bounded; omissions are visible instead of
+      killing the turn.
    3. The live turn appends into the same list. overflow-anchor + a 60px pin
       threshold; a group opening above the viewport compensates scrollTop.
    4. Raw format replaces the pane — it never interleaves.
@@ -368,9 +368,6 @@ const TurnBlock = memo(function TurnBlock({
 }) {
   const elapsed = duration(turn.started_at, turn.ended_at)
   const running = turn.status === "running"
-  // a settled turn's on-demand activity lives here (lifted from Activity) so
-  // the conclusion rule below can see it
-  const [expanded, setExpanded] = useState<TurnActivity | null>(null)
 
   /**
    * The block under the timeline is the turn's CONCLUSION — `turn.result`,
@@ -390,7 +387,15 @@ const TurnBlock = memo(function TurnBlock({
    */
   const settledWithoutResult = !running && !turn.result
   const evicted = turn.capture_state === "evicted"
-  const timeline = evicted ? null : live ?? expanded
+  // a settled turn's on-demand activity lives here (lifted from Activity) so
+  // the conclusion rule below can see it
+  const settled = useSettledActivity({
+    taskId,
+    turn: turn.n,
+    enabled: !live && !evicted,
+    autoLoad: (latest && settledWithoutResult) || revealActivity,
+  })
+  const timeline = evicted ? null : live ?? settled.activity
   // Rule 5: only a timeline that is on screen can place a message. Everything
   // it cannot place still renders, at the head of the turn.
   const timelineItems = timeline?.items
@@ -445,11 +450,9 @@ const TurnBlock = memo(function TurnBlock({
         taskId={taskId}
         turn={turn}
         live={live}
-        loaded={expanded}
-        onLoaded={setExpanded}
+        settled={settled}
         outputs={outputs}
         removed={archived}
-        autoLoad={(latest && settledWithoutResult) || revealActivity}
         onBeforeToggle={onBeforeToggle}
         renderMessage={(id) => {
           const message = byId.get(id)
@@ -559,41 +562,36 @@ function SteeredMessage({
 /**
  * A turn's timeline: tool calls, thinking and prose in the order they
  * happened. The live turn's arrives over SSE; a settled turn's is fetched only
- * when asked for (rule 2) and thrown away on collapse.
+ * when asked for (rule 2) and cached, since a settled log never changes.
  */
 function Activity({
   taskId,
   turn,
   live,
-  loaded,
-  onLoaded,
+  settled,
   outputs,
   removed,
-  autoLoad = false,
   onBeforeToggle,
   renderMessage,
 }: {
   taskId: string
   turn: Turn
   live?: TurnActivity
-  /** a settled turn's fetched timeline — owned by TurnBlock so the conclusion rule can see it */
-  loaded: TurnActivity | null
-  onLoaded: (activity: TurnActivity | null) => void
+  /** a settled turn's timeline — owned by TurnBlock so the conclusion rule can see it */
+  settled: ReturnType<typeof useSettledActivity>
   /** the turn's images, drawn under the steps that produced them */
   outputs: OutputImage[]
   /** archived without its assets: images keep their names, not their bytes */
   removed: boolean
-  /** fetch on mount instead of waiting for a click — a turn with no result row */
-  autoLoad?: boolean
   onBeforeToggle: (node: HTMLElement | null, before: number) => void
   /** rule 5: what to draw at a message anchor, resolved against the task's rows */
   renderMessage: (messageId: string) => ReactNode
 }) {
-  const transport = useDaemonTransport()
-  const [loading, setLoading] = useState(false)
   const node = useRef<HTMLDivElement>(null)
-  const request = useRef<AbortController | null>(null)
+  // the scroller's height when someone clicked Show, until the timeline lands
+  const opening = useRef<number | null>(null)
 
+  const loaded = settled.activity
   const activity = live ?? loaded
   const items = activity?.items
   const quietEmpty = turn.operation === "compact"
@@ -601,46 +599,20 @@ function Activity({
   const segments = useMemo(() => splitByMessage(withoutPlacedImageNotes(items ?? [], placement)), [items, placement])
   const lookedAt = lookedAtLabel(outputs)
 
-  const load = () => {
-    if (loading) return
-    request.current?.abort()
-    const controller = new AbortController()
-    request.current = controller
-    setLoading(true)
-    const before = node.current?.closest("[data-testid=conversation-viewport]")?.scrollHeight ?? 0
-    void fetchTurnActivity(taskId, turn.n, { transport, signal: controller.signal })
-      .then((a) => {
-        if (controller.signal.aborted) return
-        request.current = null
-        onLoaded(a)
-        setLoading(false)
-        requestAnimationFrame(() => onBeforeToggle(node.current, before))
-      })
-      .catch((error: unknown) => {
-        if (error instanceof DOMException && error.name === "AbortError") return
-        request.current = null
-        setLoading(false)
-      })
-  }
-
-  useEffect(() => () => request.current?.abort(), [])
-
-  // A failed turn's output belongs on screen when you open the task, not
-  // behind a click: you are looking at that turn BECAUSE it failed.
+  // A timeline someone opened above the viewport keeps their line still. One
+  // that opened itself (a failed turn, a find hit) has no line to keep.
   useEffect(() => {
-    if (!autoLoad || live) return
-    const controller = new AbortController()
-    request.current = controller
-    void fetchTurnActivity(taskId, turn.n, { transport, signal: controller.signal })
-      .then((a) => {
-        if (!controller.signal.aborted) onLoaded(a)
-      })
-      .catch(() => {})
-    return () => {
-      controller.abort()
-      if (request.current === controller) request.current = null
-    }
-  }, [autoLoad, live, taskId, turn.n, onLoaded, transport])
+    const before = opening.current
+    if (before === null || !loaded) return
+    opening.current = null
+    requestAnimationFrame(() => onBeforeToggle(node.current, before))
+  }, [loaded, onBeforeToggle])
+
+  const load = () => {
+    if (settled.loading) return
+    opening.current = node.current?.closest("[data-testid=conversation-viewport]")?.scrollHeight ?? 0
+    settled.show()
+  }
 
   if (!activity) {
     // nothing rendered for a turn with no tool calls to show yet — one quiet
@@ -654,11 +626,11 @@ function Activity({
         <button
           type="button"
           onClick={load}
-          disabled={loading}
+          disabled={settled.loading}
           className="flex items-center gap-2 text-[11px] text-faint transition-colors hover:text-muted-foreground"
         >
           <ChevronRight aria-hidden className="size-3" />
-          {loading ? "Loading activity…" : "Show activity"}
+          {settled.loading ? "Loading activity…" : "Show activity"}
           {lookedAt && <span data-looked-at>· {lookedAt}</span>}
         </button>
       </div>
@@ -670,12 +642,7 @@ function Activity({
       {!live && loaded && (
         <button
           type="button"
-          onClick={() => {
-            request.current?.abort()
-            request.current = null
-            onLoaded(null)
-            setLoading(false)
-          }}
+          onClick={settled.hide}
           className="mb-1 flex items-center gap-2 text-[11px] text-faint transition-colors hover:text-muted-foreground"
         >
           <ChevronRight aria-hidden className="size-3 rotate-90" />

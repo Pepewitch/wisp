@@ -633,7 +633,7 @@ describe("useUpdateStatus", () => {
 describe("useStatus", () => {
   beforeEach(() => mocks.request.mockReset())
 
-  it("asks for the task on screen fresh, keeps the last answer across a switch, and still answers a status invalidation", async () => {
+  it("asks for the task on screen fresh once per selection, keeps the last answer across a switch, and answers an invalidation from the cache", async () => {
     mocks.request.mockImplementation((path: string) =>
       Promise.resolve({ tasks: { [path]: { branch: "wisp/x", worktreeReason: null } } }),
     )
@@ -650,9 +650,15 @@ describe("useStatus", () => {
     expect(view.result.current.data).toHaveProperty(["/api/status?fresh=ta1"])
     await waitFor(() => expect(view.result.current.data).toHaveProperty(["/api/status?fresh=tb2"]))
 
+    // an event's invalidation reads what the daemon already knows: no git run
     mocks.request.mockClear()
     await act(() => client.invalidateQueries({ queryKey: qk.status }))
-    expect(mocks.request).toHaveBeenCalledWith("/api/status?fresh=tb2")
+    expect(mocks.request.mock.calls).toEqual([["/api/status"]])
+
+    // coming back to a task is a selection again, so it is asked fresh again
+    mocks.request.mockClear()
+    view.rerender({ id: "ta1" })
+    await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("/api/status?fresh=ta1"))
 
     view.rerender({ id: null })
     await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("/api/status"))

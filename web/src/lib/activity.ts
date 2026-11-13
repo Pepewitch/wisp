@@ -7,6 +7,7 @@ import {
 import type { Turn } from "@/lib/types"
 import {
   initialStreamState,
+  isOmissionNote,
   streamReducer,
   type ActivityItem,
   type StreamBlock,
@@ -83,6 +84,19 @@ export function splitByMessage(items: ActivityItem[]): TimelineSegment[] {
 /** The message ids this turn's timeline can place; everything else is unanchored. */
 export function anchoredMessageIds(items: ActivityItem[]): Set<string> {
   return new Set(items.filter((item) => item.kind === "message").map((item) => item.id))
+}
+
+/**
+ * A live turn's timeline at its turn-end, when it can stand in for the
+ * settled read: the same reducer over the same log, unless the viewer fell
+ * behind (a capture gap) or the live window dropped its oldest items. Then
+ * the settled read, which has neither, is the only complete copy.
+ */
+export function seedableActivity(activity: TurnActivity | undefined): TurnActivity | null {
+  if (!activity) return null
+  const incomplete = (items: ActivityItem[]): boolean =>
+    items.some((item) => isOmissionNote(item) || (item.kind === "subagent" && incomplete(item.items)))
+  return incomplete(activity.items) ? null : activity
 }
 
 /** Split the live stream's blocks by turn. */

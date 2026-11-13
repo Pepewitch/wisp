@@ -1,5 +1,7 @@
-import { useEffect, useReducer } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 
+import { activityByTurn, seedableActivity } from "@/lib/activity";
 import { connectionStore } from "@/lib/conn";
 import {
   addDecodedLogStreamListener,
@@ -8,7 +10,7 @@ import {
 } from "@/lib/log-stream-protocol";
 import { useDaemonRuntime } from "@/lib/runtime";
 import { SSE_CLOSED, type SseFactory, type SseLike } from "@/lib/sse";
-import { initialStreamState, streamReducer, type StreamState } from "@/stream/reducer";
+import { initialStreamState, streamReducer, type StreamAction, type StreamState } from "@/stream/reducer";
 
 /**
  * The per-task log follow: ONE EventSource on /api/tasks/:id/log/stream,
@@ -26,7 +28,9 @@ import { initialStreamState, streamReducer, type StreamState } from "@/stream/re
  * The activity pane asks for `follow=live`: its reducer keeps only the turn in
  * progress, so a turn that settled before the stream reached it arrives as its
  * turn-end alone rather than as its whole transcript. Settled history loads
- * per turn through `fetchTurnActivity`.
+ * per turn through `fetchTurnActivity`, and a turn this stream watched to its
+ * end seeds that cache with what it already holds (`seedableActivity` says
+ * when that is the whole timeline), so opening it costs no second read.
  */
 export function useLogStream(
   taskId: string | null,
@@ -36,9 +40,17 @@ export function useLogStream(
 ): StreamState {
   const runtime = useDaemonRuntime();
   const conn = connectionStore(runtime.connectionId);
-  const [state, dispatch] = useReducer(streamReducer, initialStreamState);
+  const client = useQueryClient();
+  const [state, setState] = useState(initialStreamState);
 
   useEffect(() => {
+    // Reduced here rather than by React, so a turn-end frame can read the
+    // turn it closes even when earlier frames have not rendered yet.
+    let current = initialStreamState;
+    const dispatch = (action: StreamAction) => {
+      current = streamReducer(current, action);
+      setState(current);
+    };
     if (!taskId) {
       dispatch({ type: "reset", note: "select a task" });
       conn.set("log", true); // nothing to stream is not an outage
@@ -115,6 +127,10 @@ export function useLogStream(
         });
       }
       listen("turn-end", decoder.turnEnd, (d) => {
+        if (format === "activity") {
+          const settled = seedableActivity(activityByTurn(current.blocks)[d.turn]);
+          if (settled) client.setQueryData(runtime.qk.activity(taskId, d.turn), settled);
+        }
         dispatch({ type: "turn-end", turn: d.turn, status: d.status });
       });
       next.onopen = () => {
@@ -144,7 +160,7 @@ export function useLogStream(
       source?.close();
       conn.set("log", true);
     };
-  }, [taskId, format, generation, factory, runtime, conn]);
+  }, [taskId, format, generation, factory, runtime, conn, client]);
 
   return state;
 }

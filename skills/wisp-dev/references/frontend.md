@@ -304,8 +304,11 @@ result — not a raw stream pane stacked on a chat pane. Five rules:
    daemon.
 2. **Activity rows render as summary lines only.** The live stream retains
    only its current turn. A settled turn's structured activity is fetched when
-   someone chooses **Show activity**, its SSE closes at `turn-end`, and the
-   body is dropped on **Hide activity** or task switch. Logs cap at
+   someone chooses **Show activity**, and its SSE closes at `turn-end`. A
+   settled log never changes, so the body is cached per connection, task and
+   turn, never refetched, and released a few minutes after nothing shows it;
+   the live stream seeds that cache at turn end unless it saw a gap or its
+   window dropped items. **Hide activity** only stops showing it. Logs cap at
    `turnTranscriptBytes` (25 MB default) **per turn**, and the live reducer also
    keeps a bounded visible tail with an explicit omission marker. Eagerly
    retaining every settled body does not slow the tab down, it kills it.

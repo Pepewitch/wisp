@@ -1,12 +1,41 @@
-import { QueryClient } from "@tanstack/react-query"
+import { QueryClient, type Query } from "@tanstack/react-query"
 
 import { ApiError, LOCAL_CONNECTION_ID } from "./transport"
+
+/**
+ * What `/api/events` keeps fresh (`lib/sse.ts`), by the scope after the
+ * connection in each key. A reconnect refetches all of it, and a stream that
+ * went quiet while the page was hidden is replaced on the way back
+ * (`fetch-event-source.ts`), so returning to the tab is no reason to ask again.
+ */
+const EVENT_FED = new Set(["tasks", "task", "status", "repos", "harnesses", "settings", "skills", "diff", "terminals"])
+
+/**
+ * How long an event-fed read may sit before window focus asks again anyway:
+ * the safety net for a stream that died without anyone noticing, which a
+ * tab switch or a glance at the phone never needs.
+ */
+export const FOCUS_REFRESH_AFTER_MS = 5 * 60_000
+
+/**
+ * Whether window focus refetches `query`. Everything a provider or a timer
+ * owns keeps the default. An event-fed read waits for a long absence, and the
+ * list with archived history never refetches on focus: it is the whole
+ * archive, megabytes on a long-lived daemon, and its own events and the
+ * reconnect resync already cover it.
+ */
+export function refetchOnFocus(query: Query): boolean {
+  const [, scope, detail] = query.queryKey
+  if (typeof scope !== "string" || !EVENT_FED.has(scope)) return true
+  if (scope === "tasks" && (detail as { archived?: boolean } | undefined)?.archived === true) return false
+  return Date.now() - query.state.dataUpdatedAt > FOCUS_REFRESH_AFTER_MS
+}
 
 /**
  * One client for the app. Wisp-owned state is realtime through /api/events.
  * Provider-owned PR state, the daemon-cached release check and the daemon-
  * cached plan limits are the deliberate polling exceptions, and window focus
- * still covers a slept laptop.
+ * still covers a slept laptop (`refetchOnFocus`).
  */
 export const queryClient = new QueryClient({
   defaultOptions: {
@@ -20,7 +49,7 @@ export const queryClient = new QueryClient({
       // online again — while the event stream keeps announcing changes the
       // sidebar can no longer fetch. The transport answers for reachability.
       networkMode: "always",
-      refetchOnWindowFocus: true,
+      refetchOnWindowFocus: refetchOnFocus,
       retry: (failureCount, error) => {
         // 4xx is an honest answer (unknown task, archived diff) — retrying changes nothing
         if (
@@ -54,6 +83,12 @@ export interface ConnectionQueryKeys {
   /** A sent attachment's text, keyed by its daemon path (which names task and turn). */
   attachmentText(path: string): readonly [string, "attachment-text", string]
   skills(id: string): readonly [string, "skills", string]
+  /**
+   * A settled turn's activity timeline. Outside `task(id)` on purpose: it is
+   * immutable, so no invalidation of the task's detail or its panels may
+   * re-stream it.
+   */
+  activity(id: string, turn: number): readonly [string, "activity", string, number]
   terminals(id: string): readonly [string, "terminals", string]
   /** The session id rides the key: a compaction's replacement id refetches. */
   attach(id: string, session: string): readonly [string, "attach", string, string]
@@ -91,6 +126,8 @@ export function createConnectionQueryKeys(
       Object.freeze([connectionId, "attachment-text", path] as const),
     skills: (id: string) =>
       Object.freeze([connectionId, "skills", id] as const),
+    activity: (id: string, turn: number) =>
+      Object.freeze([connectionId, "activity", id, turn] as const),
     terminals: (id: string) =>
       Object.freeze([connectionId, "terminals", id] as const),
     attach: (id: string, session: string) =>
