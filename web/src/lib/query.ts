@@ -22,7 +22,9 @@ export const FOCUS_REFRESH_AFTER_MS = 5 * 60_000
  * owns keeps the default. An event-fed read waits for a long absence, and the
  * list with archived history never refetches on focus: it is the whole
  * archive, megabytes on a long-lived daemon, and its own events and the
- * reconnect resync already cover it.
+ * reconnect resync already cover it. The selected task's git state is the
+ * exception events cannot cover (an edit or commit made outside Wisp): a
+ * return to the app renews that alone (`useStatus`, `onReturnToApp`).
  */
 export function refetchOnFocus(query: Query): boolean {
   const [, scope, detail] = query.queryKey
