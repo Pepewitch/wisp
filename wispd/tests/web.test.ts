@@ -7,7 +7,9 @@ import { BUILTIN_ADAPTERS, type AdapterDef } from "../src/adapters";
 import { ModelProbeCache } from "../src/model-probes";
 import { acceptsGzip, route, serve } from "../src/daemon";
 import { testRouteContext } from "./helpers/daemon-context";
-import { finishResponse, json, JSON_GZIP_MIN_CHARS } from "../src/routes/http";
+import { finishResponse, gzipStream, json, JSON_GZIP_MIN_CHARS } from "../src/routes/http";
+import { constants as zlibConstants, createGunzip } from "node:zlib";
+import { testSseReader } from "./helpers/sse-reader";
 import {
   createTask,
   createTurn,
@@ -332,6 +334,99 @@ describe("every daemon response", () => {
     const small = await fetch(`${base}/api/capabilities`, { headers: { ...auth().headers, "accept-encoding": "gzip" } });
     expect(small.headers.get("content-encoding")).toBeNull();
     await small.arrayBuffer();
+  });
+
+  test("a task's log stream is gzipped frame by frame: decodable before it ends, and much smaller", async () => {
+    writeConfig();
+    server = await serve({ port: 0 });
+    const base = `http://127.0.0.1:${server.port}`;
+    const log = join(mkdtempSync(join(tmpdir(), "wisp-gzip-log-")), "turn.out.log");
+    const line = (i: number) => JSON.stringify({ type: "tool_use", name: "Read", input: { file_path: `/repo/src/file-${i % 40}.ts` } });
+    writeFileSync(log, `${Array.from({ length: 4_000 }, (_, i) => line(i)).join("\n")}\nTHE LAST LINE\n`);
+    const task = createTask({ id: newTaskId(), title: "gzip stream", repo_path: "/tmp/repo", harness: "fake", model: null, slot: freeSlot() });
+    finishTurn(createTurn(task.id, 1, "go", null, log), "done", 0, "done");
+    const url = `${base}/api/tasks/${task.id}/log/stream?format=raw&turn=1`;
+
+    // The stream stays open across turns, so the client never sees its end:
+    // every frame up to turn-end must decode from the bytes sent so far.
+    const raw = await fetch(url, { headers: { ...auth().headers, "accept-encoding": "gzip" }, decompress: false });
+    expect(raw.headers.get("content-encoding")).toBe("gzip");
+    expect(raw.headers.get("vary")).toContain("Accept-Encoding");
+    expect(raw.headers.get("content-type")).toContain("text/event-stream");
+    const reader = raw.body!.getReader();
+    const gunzip = createGunzip();
+    let decoded = "";
+    let wire = 0;
+    gunzip.on("data", (chunk: Buffer) => (decoded += chunk.toString("utf8")));
+    try {
+      while (!decoded.includes("event: turn-end")) {
+        const next = await reader.read();
+        if (next.done) throw new Error("log stream ended before turn-end");
+        wire += next.value.byteLength;
+        await new Promise<void>((resolve) => {
+          gunzip.write(next.value);
+          gunzip.flush(zlibConstants.Z_SYNC_FLUSH, () => resolve());
+        });
+      }
+    } finally {
+      await reader.cancel();
+      gunzip.destroy();
+    }
+    expect(decoded).toContain("event: hello");
+    expect(decoded).toContain("THE LAST LINE");
+    expect(wire).toBeLessThan(decoded.length / 4);
+
+    // What the CLI does: Bun's fetch decodes as it goes and the frames parse.
+    const decoding = await fetch(url, { headers: auth().headers });
+    const decodingReader = decoding.body!.getReader();
+    const sse = testSseReader(decodingReader);
+    const events: (string | null)[] = [];
+    let text = "";
+    for (let frame = await sse.nextFrame(); ; frame = await sse.nextFrame()) {
+      events.push(frame.event);
+      if (frame.event === "turn-end") break;
+      text += (JSON.parse(frame.data) as { text: string }).text;
+    }
+    await decodingReader.cancel();
+    expect(events[0]).toBe("backlog");
+    expect(text).toContain("THE LAST LINE");
+
+    const plain = await fetch(url, { headers: { ...auth().headers, "accept-encoding": "identity" } });
+    expect(plain.headers.get("content-encoding")).toBeNull();
+    await plain.body!.cancel();
+  });
+
+  test("a gzipped stream passes each chunk on before the next exists, and a cancel reaches the source", async () => {
+    let cancelled: unknown = "not cancelled";
+    let push!: (chunk: string) => void;
+    const source = new ReadableStream<Uint8Array>({
+      start(controller) {
+        push = (chunk) => controller.enqueue(new TextEncoder().encode(chunk));
+      },
+      cancel(reason) {
+        cancelled = reason;
+      },
+    });
+    const reader = gzipStream(source).getReader();
+    const gunzip = createGunzip();
+    let decoded = "";
+    gunzip.on("data", (chunk: Buffer) => (decoded += chunk.toString("utf8")));
+    const decodeNext = async (): Promise<void> => {
+      const next = await reader.read();
+      await new Promise<void>((resolve) => {
+        gunzip.write(next.value!);
+        gunzip.flush(zlibConstants.Z_SYNC_FLUSH, () => resolve());
+      });
+    };
+    push("event: hello\ndata: {}\n\n");
+    await decodeNext();
+    expect(decoded).toBe("event: hello\ndata: {}\n\n");
+    push(": hb\n\n");
+    await decodeNext();
+    expect(decoded).toEndWith(": hb\n\n");
+    await reader.cancel("viewer left");
+    gunzip.destroy();
+    expect(cancelled).toBe("viewer left");
   });
 
   test("only json() bodies are compressed, a route's own header wins, and immutable responses still get the baseline", () => {

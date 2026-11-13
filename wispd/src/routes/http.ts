@@ -1,3 +1,4 @@
+import { constants as zlibConstants, createGzip } from "node:zlib";
 import { cleanupSummary } from "../archive-progress";
 import { formatUsage, isCompactPrompt, type AdapterDef, type UsageSummary } from "../adapters";
 import { parseOutputManifest } from "../outputs";
@@ -213,17 +214,124 @@ export function acceptsGzip(header: string | null): boolean {
   return (qualities.get("gzip") ?? qualities.get("*") ?? 0) > 0;
 }
 
+/** Streams a route opted into compression with `compressibleStream()`. */
+const compressibleStreams = new WeakSet<Response>();
+
+/**
+ * Mark a streamed response as worth gzipping for a client that accepts it.
+ *
+ * Only for streams whose opening is large: a task's log stream sends a turn's
+ * transcript (up to the 1 MiB first-read budget) as its first frames, and a
+ * settled turn's history is that stream end to end. Turn transcripts are
+ * repetitive JSON and compress about 5x, which is the wait before a remote
+ * viewer (a phone, a tunnel) sees the conversation. The events stream is not
+ * marked: its frames are small invalidation signals, and every compressed
+ * stream holds its own deflate state for as long as it is open.
+ */
+export function compressibleStream(response: Response): Response {
+  compressibleStreams.add(response);
+  return response;
+}
+
+/**
+ * Gzip a stream frame by frame. Each chunk the source yields is compressed and
+ * sync-flushed before the next is read, so the client can decode every frame
+ * as soon as it is sent: an SSE `append` or heartbeat is never held back for
+ * more input. The deflate window still spans frames, so later frames that
+ * repeat earlier ones compress well.
+ *
+ * Backpressure is the source's own: this reads one chunk only when the client
+ * asks for more, so a log stream's `waitForCapacity` still sees a slow reader.
+ * Cancelling the response cancels the source, which releases its subscriber
+ * slot as before.
+ */
+export function gzipStream(source: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const reader = source.getReader();
+  const gzip = createGzip({ level: 5 });
+  let output: Uint8Array[] = [];
+  // zlib delivers everything a write or flush produced before its callback runs.
+  gzip.on("data", (chunk: Buffer) => output.push(new Uint8Array(chunk)));
+  /** Run one zlib operation; its error, if any, rejects it rather than escaping as an event. */
+  const settle = (start: (done: () => void) => void): Promise<void> =>
+    new Promise((resolve, reject) => {
+      gzip.once("error", reject);
+      start(() => {
+        gzip.off("error", reject);
+        resolve();
+      });
+    });
+  /** One chunk per source chunk: a frame goes out as one write, never as zlib's pieces of it. */
+  const drain = (controller: ReadableStreamDefaultController<Uint8Array>): void => {
+    if (output.length === 0) return;
+    controller.enqueue(output.length === 1 ? output[0]! : Buffer.concat(output));
+    output = [];
+  };
+  const step = async (controller: ReadableStreamDefaultController<Uint8Array>): Promise<void> => {
+    const next = await reader.read();
+    if (next.done) {
+      // `end`, not end()'s callback: it is what follows the trailer's last `data`.
+      await settle((done) => {
+        gzip.once("end", done);
+        gzip.end();
+      });
+      drain(controller);
+      controller.close();
+      return;
+    }
+    gzip.write(next.value);
+    await settle((done) => gzip.flush(zlibConstants.Z_SYNC_FLUSH, done));
+    drain(controller);
+  };
+  return new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        try {
+          await step(controller);
+        } catch (error) {
+          // An errored response is never cancelled by its reader, so release
+          // the source here: a log stream holds a subscriber slot until then.
+          gzip.destroy();
+          await reader.cancel(error).catch(() => {});
+          throw error;
+        }
+      },
+      async cancel(reason) {
+        gzip.destroy();
+        await reader.cancel(reason);
+      },
+    },
+    // Pull only for a waiting reader: nothing is read ahead of the client.
+    { highWaterMark: 0 },
+  );
+}
+
 /**
  * Every response on its way out of the daemon: the baseline headers, and gzip
- * for a large `json()` body when the request accepts it.
+ * for a large `json()` body or a `compressibleStream()` when the request
+ * accepts it.
  *
- * Only `json()` bodies are compressed. Their bytes are one string in memory
- * already. An SSE or ndjson stream must reach the client as it is produced,
- * the page and its chunks are compressed once at startup, and attachments
- * are served as stored. A route's own header wins over a baseline one.
+ * `json()` bodies are one string in memory already. A marked stream is
+ * compressed frame by frame, so it still reaches the client as it is
+ * produced; other SSE and ndjson streams are sent as they are. The page and
+ * its chunks are compressed once at startup, and attachments are served as
+ * stored. A route's own header wins over a baseline one.
  */
 export function finishResponse(req: Request, response: Response): Response {
   let finished = response;
+  if (compressibleStreams.has(response) && response.body && !response.headers.has("content-encoding")) {
+    const headers = new Headers(response.headers);
+    headers.append("vary", "Accept-Encoding");
+    const gzip = req.method !== "HEAD" && acceptsGzip(req.headers.get("accept-encoding"));
+    if (gzip) {
+      headers.set("content-encoding", "gzip");
+      headers.delete("content-length");
+    }
+    finished = new Response(gzip ? gzipStream(response.body) : response.body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+    });
+  }
   const text = jsonBodies.get(response);
   if (text !== undefined && text.length >= JSON_GZIP_MIN_CHARS && !response.headers.has("content-encoding")) {
     const headers = new Headers(response.headers);
