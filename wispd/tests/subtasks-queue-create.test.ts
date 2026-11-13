@@ -9,7 +9,7 @@ import type { AdapterDef } from "../src/adapters";
 import type { WispConfig } from "../src/config";
 import { createTaskRoute, taskRoute } from "../src/routes/tasks";
 import { taskMessageRoute } from "../src/routes/task-messages";
-import { startNextQueuedMessage } from "../src/runner";
+import { drainSubtaskQueues, startNextQueuedMessage } from "../src/runner";
 import { assertTaskCapacity, hasTaskCapacity, reserveTaskCapacity } from "../src/task-admission";
 import { createTask, createTaskMessage, db, freeSlot, getTask, newTaskId, setTaskFields, transition, turnsFor } from "../src/store";
 
@@ -84,6 +84,24 @@ describe("a queued subtask", () => {
     delete process.env.WISP_HOLD;
   }, 40_000);
 
+  test("siblings created in the same millisecond keep their creation order in line and in starting", async () => {
+    const parent = await created({ repoPath: await repo() });
+    await until(() => getTask(parent)!.state === "done");
+    // the later sibling gets the smaller id: a tiebreak on the random id would put it first every time
+    const [later, earlier] = [newTaskId(), newTaskId()].sort();
+    queuedChild(parent, "created first", earlier);
+    queuedChild(parent, "created second", later);
+    db.run("UPDATE tasks SET created_at = ? WHERE id IN (?, ?)", [new Date().toISOString(), earlier, later]);
+    expect([(await detail(earlier)).queue_position, (await detail(later)).queue_position]).toEqual([1, 2]);
+
+    // the parent's cap is one: the earlier starts, the later waits for it
+    drainSubtaskQueues(parent, adapters, cfg);
+    expect(turnsFor(earlier)).toHaveLength(1);
+    expect(turnsFor(later)).toEqual([]);
+    await until(() => getTask(earlier)!.state === "done" && getTask(later)!.state === "done");
+    expect(turnsFor(earlier)[0]!.started_at <= turnsFor(later)[0]!.started_at).toBe(true);
+  }, 30_000);
+
   test("with a slot free, a queued subtask starts as soon as its setup is done", async () => {
     const parent = await created({ repoPath: await repo() });
     await until(() => getTask(parent)!.state === "done");
@@ -153,8 +171,7 @@ describe("a queued subtask", () => {
 });
 
 /** A subtask already set up and queued, its first prompt waiting (as task-launch.ts leaves one). */
-function queuedChild(parent: string, prompt: string): string {
-  const id = newTaskId();
+function queuedChild(parent: string, prompt: string, id = newTaskId()): string {
   createTask({
     id, title: prompt, repo_path: getTask(parent)!.repo_path, harness: "quick", model: null, slot: freeSlot(),
     subtask: { parent_task_id: parent, subtask_kind: "explore", report_to_parent: true, base_from: "project" },
