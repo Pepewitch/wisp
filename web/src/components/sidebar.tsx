@@ -11,6 +11,7 @@ import type { ProjectSearch } from "@/hooks/useProjectSearch"
 import { ArchiveSections } from "@/components/sidebar-sections"
 import { ProjectList } from "@/components/sidebar-projects"
 import { FLAT_VIEW, type SidebarTree } from "@/hooks/useSidebarTree"
+import { useStableCallback } from "@/hooks/useStableCallback"
 import type { ProjectGroup } from "@/lib/projects"
 import { sidebarLists } from "@/lib/subtask-tree"
 import type {
@@ -128,6 +129,9 @@ export function Sidebar({
   touch = false,
 }: SidebarProps) {
   const { lists, view } = tree ?? { lists: sidebarLists(groups, archivedTasks, false), view: FLAT_VIEW }
+  // The shells hand over a fresh closure on every render of the main view;
+  // the memoized rows below get one that never changes.
+  const select = useStableCallback(onSelect)
   return (
     <aside className="flex h-full min-h-0 flex-col bg-sidebar">
       <SidebarHeader
@@ -190,7 +194,7 @@ export function Sidebar({
               status={status}
               pullRequests={pullRequests}
               selectedId={selectedId}
-              onSelect={onSelect}
+              onSelect={select}
               onNewTask={onNewTask}
               onConfigureProject={onConfigureProject}
               verification={verification}
@@ -201,7 +205,7 @@ export function Sidebar({
               lists={lists.filter((list) => list.key.startsWith("archive:"))}
               view={view}
               selectedId={selectedId}
-              onSelect={onSelect}
+              onSelect={select}
               touch={touch}
             />
           </div>

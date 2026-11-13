@@ -6,7 +6,7 @@ import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 import { createConnectionQueryKeys } from "@/lib/query"
 import { connectEventsBridge, type SseLike } from "@/lib/sse"
 import { ApiError, type DaemonTransport } from "@/lib/transport"
-import type { ApiTask, PullRequestInfo, PullRequestStatus } from "@/lib/types"
+import type { ApiTask, ConversationDetail, PullRequestInfo, PullRequestStatus } from "@/lib/types"
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }))
 
@@ -198,6 +198,31 @@ describe("useTaskDetail", () => {
     expect(client.getQueryData(otherKey)).toEqual(page(1, false))
     expect(client.getQueryState(otherKey)?.isInvalidated).toBe(false)
     close(); result.unmount(); client.clear()
+  })
+
+  it("trims a task it leaves back to the newest page, so a return mounts one page", async () => {
+    mocks.request.mockReset()
+    const page = (first: number, hasOlder: boolean) => ({
+      id: "tleave",
+      turns: Array.from({ length: 50 }, (_, i) => ({ n: first + i })),
+      messages: [{ id: "old", turn_n: first }, { id: "queued", turn_n: null }],
+      has_older_turns: hasOlder, older_turns_before: hasOlder ? first : null,
+    })
+    mocks.request.mockResolvedValueOnce(page(51, true)).mockResolvedValueOnce(page(1, false))
+      .mockResolvedValue({ id: "tother", turns: [], messages: [] })
+    const { client, wrapper } = harness("trim-on-leave")
+    const result = renderHook(({ id }) => useTaskDetail(id), { wrapper, initialProps: { id: "tleave" } })
+    await waitFor(() => expect(result.result.current.data?.turns).toHaveLength(50))
+    await act(async () => { await result.result.current.loadOlderTurns() })
+    await waitFor(() => expect(result.result.current.data?.turns).toHaveLength(100))
+
+    result.rerender({ id: "tother" })
+    const left = client.getQueryData<ConversationDetail>(createConnectionQueryKeys("trim-on-leave").task("tleave"))!
+    expect(left.turns.map((turn) => turn.n)).toEqual(Array.from({ length: 50 }, (_, i) => 51 + i))
+    expect(left.has_older_turns).toBe(true)
+    expect(left.older_turns_before).toBe(51)
+    expect(left.messages?.map((message) => message.id)).toEqual(["old", "queued"])
+    result.unmount(); client.clear()
   })
 
   it("reads the DB-only conversation endpoint for the selected task", async () => {

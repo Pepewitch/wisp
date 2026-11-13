@@ -18,6 +18,7 @@ import {
   writeDiagramHeight,
 } from "@/lib/diagram-height"
 import { containAnchorClick } from "@/lib/external-links"
+import { recallDiagram, rememberDiagram } from "@/lib/mermaid-diagrams"
 import { mermaidThemeVariables } from "@/lib/mermaid-theme"
 import { useTheme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
@@ -134,7 +135,14 @@ function useMermaidRender(code: string): [MermaidRender, () => void] {
     null
   >(null)
 
+  // Drawn before, by any fence: taken as this one's result, so a theme
+  // change later still holds the picture. A retry is a request to draw
+  // again, so it never reads what was drawn.
+  const drawn = attempt === 0 ? recallDiagram(theme, settled) : undefined
+  if (drawn !== undefined && done?.key !== key) setDone({ key, code: settled, svg: drawn })
+
   useEffect(() => {
+    if (drawn !== undefined) return
     let cancelled = false
     ;(async () => {
       let moduleLoaded = false
@@ -163,6 +171,7 @@ function useMermaidRender(code: string): [MermaidRender, () => void] {
           const { svg } = await mermaid.render(nextMermaidId(), settled)
           return safety.sanitizeMermaidSvg(svg)
         })
+        rememberDiagram(theme, settled, svg)
         if (!cancelled) setDone({ key, code: settled, svg })
       } catch (error) {
         // A web page kept open across a daemon upgrade can ask for a chunk the
@@ -179,7 +188,7 @@ function useMermaidRender(code: string): [MermaidRender, () => void] {
     return () => {
       cancelled = true
     }
-  }, [key, settled, theme])
+  }, [drawn, key, settled, theme])
 
   const current =
     done === null

@@ -1,4 +1,4 @@
-import { clearAssetCache } from "./asset-src";
+import { clearAssetCache, refreshAssets } from "./asset-src";
 import type { QueryClient } from "@tanstack/react-query";
 
 import { reconnectDelay } from "./backoff";
@@ -92,6 +92,8 @@ function debounce(fn: () => void, ms: number, maxWaitMs = DEBOUNCE_MAX_WAIT_MS):
   };
   return run;
 }
+
+const isOutputPath = (path: string) => /^\/api\/tasks\/[^/]+\/outputs\//.test(path);
 
 export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
   const factory: SseFactory = opts.factory ?? ((path) => opts.transport.openEventStream(path));
@@ -216,14 +218,24 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
       return;
     }
     if (evt.type === "message") {
-      clearAssetCache(qk.connection[0], `/api/tasks/${evt.taskId}/messages/`);
+      // A message's files never change, but cancelling it deletes them. Ask
+      // again for this one message only; what is on screen stays until the
+      // daemon answers.
+      refreshAssets(qk.connection[0], `/api/tasks/${evt.taskId}/messages/${evt.messageId}/`);
       if (evt.taskId === opts.getSelectedId()) invalidateSelectedMessages();
       return;
     }
     // State and turn boundaries can change git-status badges.
     invalidateStatus();
     if (evt.type === "task") {
-      clearAssetCache(qk.connection[0], `/api/tasks/${evt.taskId}/`);
+      // An ordinary task event changes no asset: outputs are addressed by
+      // their content and a turn's attachments by (turn, name). Clearing on
+      // each one refetched every image on screen, blanking it meanwhile, on
+      // every state change of a running task. Bytes go away only with an
+      // archive, a retention change or a permanent deletion; the conversation
+      // clears its own when the detail says so, and an event about a task
+      // already archived (a purge, a retention change) clears it here.
+      if (isArchivedInCache(evt.taskId)) clearAssetCache(qk.connection[0], `/api/tasks/${evt.taskId}/`);
       // state/title/archive changes land in the sidebar
       invalidateTasks(evt.taskId);
       if (evt.taskId === opts.getSelectedId()) {
@@ -251,7 +263,11 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     // the stream went down and came back: refetch the world once, and reopen
     // the log stream so its pane restarts from a fresh backlog
     wasDown = false;
-    clearAssetCache(qk.connection[0]);
+    // Anything may have been cancelled or deleted meanwhile. A content-
+    // addressed output cannot have changed, and a removed one is drawn as
+    // removed from the refetched detail; everything else asks again without
+    // blanking.
+    refreshAssets(qk.connection[0], "", isOutputPath);
     void opts.client.invalidateQueries({ queryKey: qk.tasks });
     void opts.client.invalidateQueries({ queryKey: qk.status });
     void opts.client.invalidateQueries({ queryKey: qk.repos });

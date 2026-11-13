@@ -6,6 +6,13 @@ import { createConnectionQueryKeys, qk, type ConnectionQueryKeys } from "./query
 import { connectEventsBridge, SSE_CLOSED, type SseLike } from "./sse";
 import type { ConversationDetail, WispEvent } from "./types";
 
+// What the bridge asks of the image cache, observed rather than performed.
+const assets = vi.hoisted(() => ({
+  clearAssetCache: vi.fn<(connectionId?: string, pathPrefix?: string) => void>(),
+  refreshAssets: vi.fn<(connectionId: string, pathPrefix?: string, skip?: (path: string) => boolean) => void>(),
+}));
+vi.mock("./asset-src", () => assets);
+
 /** A scriptable EventSource: emit frames, flip readyState, watch lifecycle. */
 class FakeSse implements SseLike {
   onmessage: ((ev: { data: string }) => void) | null = null;
@@ -698,5 +705,45 @@ describe("the bridge's pacing", () => {
       random.mockRestore();
       vi.useRealTimers();
     }
+  });
+});
+
+describe("which events touch cached images", () => {
+  const taskEvent = (taskId: string): WispEvent => ({ type: "task", taskId, state: "running", stateDetail: null, seq: 1 });
+
+  it("an ordinary task event leaves them alone; one about an archived task clears that task's", () => {
+    assets.clearAssetCache.mockClear();
+    const h = bridge("t1");
+    h.client.setQueryData(qk.tasksList(false), [{ id: "t1", archived: false }, { id: "old", archived: true }]);
+    h.sources[0]!.emit(taskEvent("t1"));
+    expect(assets.clearAssetCache).not.toHaveBeenCalled();
+    h.sources[0]!.emit(taskEvent("old"));
+    expect(assets.clearAssetCache).toHaveBeenCalledWith("local", "/api/tasks/old/");
+    h.close();
+  });
+
+  it("a message event asks again for that message's files only", () => {
+    assets.clearAssetCache.mockClear();
+    assets.refreshAssets.mockClear();
+    const h = bridge("t1");
+    h.sources[0]!.emit({ type: "message", taskId: "t1", messageId: "m7" });
+    expect(assets.refreshAssets).toHaveBeenCalledWith("local", "/api/tasks/t1/messages/m7/");
+    expect(assets.clearAssetCache).not.toHaveBeenCalled();
+    h.close();
+  });
+
+  it("a reconnect asks again for everything but content-addressed outputs", () => {
+    assets.refreshAssets.mockClear();
+    const h = bridge("t1");
+    h.sources[0]!.openUp();
+    h.sources[0]!.transientError();
+    h.sources[0]!.openUp();
+    expect(assets.refreshAssets).toHaveBeenCalledTimes(1);
+    const [connection, prefix, skip] = assets.refreshAssets.mock.calls[0]!;
+    expect([connection, prefix]).toEqual(["local", ""]);
+    expect(skip?.(`/api/tasks/t1/outputs/2/${"a".repeat(64)}`)).toBe(true);
+    expect(skip?.("/api/tasks/t1/attachments/2/shot.png")).toBe(false);
+    expect(skip?.("/api/tasks/t1/messages/m1/attachments/shot.png")).toBe(false);
+    h.close();
   });
 });

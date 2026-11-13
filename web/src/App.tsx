@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -113,7 +114,11 @@ type LiveConversationProps = Omit<ComponentProps<typeof Conversation>, "stream" 
 }
 
 /** The log follow lives down here, so a frame re-renders the transcript and not the app shell. */
-function LiveConversation({ taskId, generation, ...props }: LiveConversationProps) {
+/**
+ * Memoized: the main view re-renders for every sidebar, status and composer
+ * change, and none of those is a reason to redraw the transcript.
+ */
+const LiveConversation = memo(function LiveConversation({ taskId, generation, ...props }: LiveConversationProps) {
   const stream = useLogStream(taskId, "activity", generation)
   // Ask for the lazily loaded highlighter with the task rather than with its
   // first fence, so it is normally here before the transcript is.
@@ -125,7 +130,7 @@ function LiveConversation({ taskId, generation, ...props }: LiveConversationProp
       <Conversation {...props} stream={stream} note={stream.note} />
     </PaneErrorBoundary>
   )
-}
+})
 
 function useConnectionTaskSelection(connectionId: string) {
   const [selectedId, setSelectedId] = useState<string | null>(() =>

@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react"
-import { describe, expect, it } from "vitest"
+import { act, render, screen } from "@testing-library/react"
+import { Profiler } from "react"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
-import { BUBBLE_ACTION, PersonBubble, UserMessageCopyButton } from "./person-bubble"
+import { BUBBLE_ACTION, BubbleTimestamp, PersonBubble, UserMessageCopyButton } from "./person-bubble"
 
 /** The card itself: the one element carrying the bubble's fill and radius. */
 function bubble(): HTMLElement {
@@ -137,5 +138,46 @@ describe("a control on the floating toolbar", () => {
       expect(classesOf("Copy user message")).toContain(size)
       expect(classesOf("Cancel queued message")).toContain(size)
     }
+  })
+})
+
+describe("a bubble's relative time", () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-10-26T12:00:10Z"))
+  })
+  afterEach(() => vi.useRealTimers())
+
+  function drawCounted(at: string) {
+    let renders = 0
+    render(
+      <Profiler id="bubble" onRender={() => { renders++ }}>
+        <BubbleTimestamp at={at} />
+      </Profiler>,
+    )
+    return () => renders
+  }
+
+  it("re-renders when its words change, not every second", () => {
+    const renders = drawCounted("2026-10-26T12:00:00Z")
+    expect(screen.getByRole("button")).toHaveTextContent("just now")
+    const settled = renders()
+
+    act(() => vi.advanceTimersByTime(49_000))
+    expect(renders()).toBe(settled)
+
+    act(() => vi.advanceTimersByTime(1_000))
+    expect(screen.getByRole("button")).toHaveTextContent("1 min ago")
+    act(() => vi.advanceTimersByTime(60_000))
+    expect(screen.getByRole("button")).toHaveTextContent("2 min ago")
+    expect(renders()).toBe(settled + 2)
+  })
+
+  it("leaves a day-old bubble alone for the rest of the hour", () => {
+    const renders = drawCounted("2026-10-25T11:30:00Z")
+    expect(screen.getByRole("button")).toHaveTextContent("1d ago")
+    const settled = renders()
+    act(() => vi.advanceTimersByTime(29 * 60_000))
+    expect(renders()).toBe(settled)
   })
 })

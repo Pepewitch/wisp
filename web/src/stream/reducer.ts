@@ -254,8 +254,15 @@ function boundedText(value: string): string {
   return marker + value.slice(-(MAX_TEXT_ACTIVITY_CHARS - marker.length))
 }
 
+/**
+ * Where an item sits: its index in the items of `owner`, the subagent that
+ * holds it, or in the top-level list when `owner` is null. The container is
+ * resolved through the owner rather than held, because writing into a
+ * subagent first replaces that subagent (and every one above it) with this
+ * frame's copy.
+ */
 interface Slot<T extends ActivityItem> {
-  container: ActivityItem[]
+  owner: Slot<SubagentActivityItem> | null
   index: number
   item: T
 }
@@ -283,9 +290,14 @@ function subagentEndedAt(
 }
 
 /**
- * One indexed mutable draft per SSE frame. Existing recursive arrays are
- * cloned once, then every event lookup is O(1); the previous reducer scanned
- * and copied the whole accumulated tree for every backlog event.
+ * One indexed mutable draft per SSE frame. Every event lookup is O(1); the
+ * previous reducer scanned and copied the whole accumulated tree for every
+ * backlog event.
+ *
+ * Copy on write: only the top-level list is copied up front. A subagent, and
+ * each one above it, is copied the first time this frame writes into it, so
+ * every item the frame did not touch keeps its identity and a memoized row
+ * drawing it has nothing to do.
  */
 class ActivityDraft {
   readonly items: ActivityItem[]
@@ -295,25 +307,52 @@ class ActivityDraft {
   private readonly thoughts = new Map<string, Slot<ThinkingActivityItem>>()
   private readonly subagents = new Map<string, Slot<SubagentActivityItem>>()
   private readonly questions = new Map<string, Slot<QuestionActivityItem>>()
+  /** Subagents this frame created or copied, whose items it may write. */
+  private readonly owned = new Set<SubagentActivityItem>()
 
   constructor(items: ActivityItem[]) {
-    this.items = this.clone(items)
+    this.items = items.slice()
+    this.index(items, null)
   }
 
-  private clone(items: ActivityItem[]): ActivityItem[] {
-    const next: ActivityItem[] = []
-    for (const item of items) {
+  private index(items: ActivityItem[], owner: Slot<SubagentActivityItem> | null): void {
+    items.forEach((item, index) => {
       if (item.kind === "subagent") {
-        const copy: SubagentActivityItem = { ...item, items: [] }
-        next.push(copy)
-        this.registerSubagent({ container: next, index: next.length - 1, item: copy })
-        copy.items = this.clone(item.items)
+        const slot = { owner, index, item }
+        this.registerSubagent(slot)
+        this.index(item.items, slot)
       } else {
-        next.push(item)
-        this.register({ container: next, index: next.length - 1, item })
+        this.register({ owner, index, item })
       }
-    }
-    return next
+    })
+  }
+
+  /** The list `owner` holds, writable: the owner and its ancestors become this frame's copies first. */
+  private container(owner: Slot<SubagentActivityItem> | null): ActivityItem[] {
+    if (!owner) return this.items
+    this.own(owner)
+    return owner.item.items
+  }
+
+  private own(slot: Slot<SubagentActivityItem>): void {
+    if (this.owned.has(slot.item)) return
+    const parent = this.container(slot.owner)
+    const copy: SubagentActivityItem = { ...slot.item, items: slot.item.items.slice() }
+    parent[slot.index] = copy
+    slot.item = copy
+    this.owned.add(copy)
+  }
+
+  /** Put a new item at the end of `owner`'s list and say where it went. */
+  private append<T extends ActivityItem>(owner: Slot<SubagentActivityItem> | null, item: T): Slot<T> {
+    const target = this.container(owner)
+    target.push(item)
+    return { owner, index: target.length - 1, item }
+  }
+
+  private replace<T extends ActivityItem>(slot: Slot<ActivityItem>, item: T): void {
+    this.container(slot.owner)[slot.index] = item
+    slot.item = item
   }
 
   private register(slot: Slot<ActivityItem>): void {
@@ -334,12 +373,14 @@ class ActivityDraft {
     }
   }
 
-  private target(parentId: string | null): ActivityItem[] {
-    return (parentId ? this.subagents.get(parentId)?.item.items : null) ?? this.items
+  /** The subagent whose list an event with this parent lands in; null is the top level. */
+  private target(parentId: string | null): Slot<SubagentActivityItem> | null {
+    return (parentId ? this.subagents.get(parentId) : null) ?? null
   }
 
   private applyText(event: Extract<ActivityEvent, { kind: "text" }>): void {
-    const target = this.target(event.parentId)
+    const owner = this.target(event.parentId)
+    const target = this.container(owner)
     const last = target[target.length - 1]
     if (last?.kind === "text" && !isOmissionNote(last) && !event.id.startsWith(CAPTURE_GAP_PREFIX)) {
       const separator = last.text.endsWith("\n") ? "" : "\n"
@@ -356,25 +397,19 @@ class ActivityDraft {
    */
   private applyMessage(event: Extract<ActivityEvent, { kind: "message" }>): void {
     if (this.messages.has(event.id)) return
-    const target = this.target(event.parentId)
-    target.push({ kind: "message", id: event.id, text: event.text })
+    this.append(this.target(event.parentId), { kind: "message", id: event.id, text: event.text })
     this.messages.add(event.id)
     this.changed = true
   }
 
   private applyThinking(event: Extract<ActivityEvent, { kind: "thinking" }>): void {
     const existing = this.thoughts.get(event.id)
+    const item: ThinkingActivityItem = { kind: "thinking", id: event.id, text: event.text }
     if (existing) {
       if (existing.item.text === event.text) return
-      const item: ThinkingActivityItem = { kind: "thinking", id: event.id, text: event.text }
-      existing.container[existing.index] = item
-      existing.item = item
+      this.replace(existing, item)
     } else {
-      const target = this.target(event.parentId)
-      const item: ThinkingActivityItem = { kind: "thinking", id: event.id, text: event.text }
-      const slot = { container: target, index: target.length, item }
-      target.push(item)
-      this.thoughts.set(event.id, slot)
+      this.thoughts.set(event.id, this.append(this.target(event.parentId), item))
     }
     this.changed = true
   }
@@ -392,13 +427,9 @@ class ActivityDraft {
     }
     if (previous) {
       if (sameTool(previous.item, item)) return
-      previous.container[previous.index] = item
-      previous.item = item
+      this.replace(previous, item)
     } else {
-      const target = this.target(event.parentId)
-      const slot = { container: target, index: target.length, item }
-      target.push(item)
-      this.tools.set(event.id, slot)
+      this.tools.set(event.id, this.append(this.target(event.parentId), item))
     }
     this.changed = true
   }
@@ -434,13 +465,12 @@ class ActivityDraft {
         this.registerSubagent(previous, event.id)
         return
       }
-      Object.assign(previous.item, item)
+      this.own(previous)
+      Object.assign(previous.item, { ...item, items: previous.item.items })
       this.registerSubagent(previous, event.id)
     } else {
-      const target = this.target(event.parentId)
-      const slot = { container: target, index: target.length, item }
-      target.push(item)
-      this.registerSubagent(slot, event.id)
+      this.owned.add(item)
+      this.registerSubagent(this.append(this.target(event.parentId), item), event.id)
     }
     this.changed = true
   }
@@ -469,21 +499,17 @@ class ActivityDraft {
     // beside it, leaving a tool row that can never complete.
     const tool = this.tools.get(event.id)
     if (!previous && tool) {
-      tool.container[tool.index] = item
+      this.container(tool.owner)[tool.index] = item
       this.tools.delete(event.id)
-      this.questions.set(event.id, { container: tool.container, index: tool.index, item })
+      this.questions.set(event.id, { owner: tool.owner, index: tool.index, item })
       this.changed = true
       return
     }
     if (previous) {
       if (sameQuestion(previous.item, item)) return
-      previous.container[previous.index] = item
-      previous.item = item
+      this.replace(previous, item)
     } else {
-      const target = this.target(event.parentId)
-      const slot = { container: target, index: target.length, item }
-      target.push(item)
-      this.questions.set(event.id, slot)
+      this.questions.set(event.id, this.append(this.target(event.parentId), item))
     }
     this.changed = true
   }

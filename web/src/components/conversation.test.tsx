@@ -103,23 +103,24 @@ describe("Conversation history pages", () => {
   })
 
   it("restores live-tail pinning when an earlier page fails", async () => {
-    render(
-      <Conversation
-        task={pagedTask([51])}
-        stream={initialStreamState}
-        hasOlderTurns
-        onLoadOlderTurns={() => Promise.reject(new Error("offline"))}
-      />,
-      { wrapper: runtimeWrapper(fakeDaemonTransport("pagination-error")) },
+    const onLoadOlderTurns = vi.fn(() => Promise.reject(new Error("offline")))
+    const view = (stream: StreamState) => (
+      <Conversation task={pagedTask([51])} stream={stream} hasOlderTurns onLoadOlderTurns={onLoadOlderTurns} />
     )
+    const { rerender } = render(view(initialStreamState), { wrapper: runtimeWrapper(fakeDaemonTransport("pagination-error")) })
     const viewport = screen.getByTestId("conversation-viewport")
-    Object.defineProperty(viewport, "scrollHeight", { configurable: true, value: 1_000 })
+    let scrollHeight = 1_000
+    Object.defineProperty(viewport, "scrollHeight", { configurable: true, get: () => scrollHeight })
     Object.defineProperty(viewport, "clientHeight", { configurable: true, value: 400 })
     viewport.scrollTop = 600
     fireEvent.scroll(viewport)
     fireEvent.click(screen.getByRole("button", { name: "Load earlier turns" }))
+    await waitFor(() => expect(screen.getByRole("button", { name: "Load earlier turns" })).toBeEnabled())
 
-    await waitFor(() => expect(viewport.scrollTop).toBe(1_000))
+    // the live turn grows, and the reader is on its tail again
+    scrollHeight = 1_500
+    rerender(view(streamReducer(initialStreamState, { type: "backlog", turn: 51, prompt: "prompt 51", activity: [] })))
+    await waitFor(() => expect(viewport.scrollTop).toBe(1_100))
   })
 
   it("loads toward a cross-project search hit outside the visible page", async () => {

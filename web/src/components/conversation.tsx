@@ -28,8 +28,11 @@ import { Prose } from "@/components/prose"
 import { QuestionnaireProvider } from "@/components/questionnaire-context"
 import { TurnAttachments } from "@/components/turn-attachments"
 import { TurnProgress } from "@/components/turn-progress"
+import { AssetScrollRoot, clearAssetCache } from "@/lib/asset-src"
 import { revealFileHandler } from "@/lib/external-links"
 import { useFindInTask } from "@/hooks/useFindInTask"
+import { useMessageGroups } from "@/hooks/useMessageGroups"
+import { useStepImages } from "@/hooks/useStepImages"
 import { useRevealMessage } from "@/hooks/useRevealMessage"
 import { useQuestionnaireController } from "@/hooks/useQuestionnaire"
 import { useSettledActivity } from "@/hooks/useSettledActivity"
@@ -48,17 +51,18 @@ import {
 import { countPendingQuestions } from "@/lib/questionnaire"
 import { duration } from "@/lib/state"
 import { sourceLabel } from "@/lib/turn-source"
-import { lookedAtLabel, placeStepImages, sharedImages, withoutPlacedImageNotes } from "@/lib/turn-images"
+import { lookedAtLabel, sharedImages, withoutPlacedImageNotes } from "@/lib/turn-images"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { scheduleConversationPaint } from "@/lib/task-switch-performance"
 import type { ConversationDetail, TaskMessage, Turn } from "@/lib/types"
 import type { OutputImage } from "../../../shared/api/outputs"
 import { uiIntentsFor } from "@/lib/ui-intents"
 import { cn } from "@/lib/utils"
-import type { StreamState } from "@/stream/reducer"
+import type { ActivityItem, StreamState } from "@/stream/reducer"
 
 const EMPTY_MESSAGES: TaskMessage[] = []
 const EMPTY_OUTPUTS: OutputImage[] = []
+const EMPTY_ITEMS: ActivityItem[] = []
 
 /* ────────────────────────────────────────────────────────────────────────
    THE SCROLL CONTRACT (skills/wisp-dev/references/frontend.md §5)
@@ -108,24 +112,10 @@ export function Conversation({
   const runtime = useDaemonRuntime()
   const uiIntents = uiIntentsFor(runtime.connectionId)
 
-  const live = activityByTurn(stream.blocks)
-  const { queuedMessages, steeredMessages, uncertainStarts } = useMemo(() => {
-    const queuedMessages: TaskMessage[] = []
-    const steeredMessages = new Map<number, TaskMessage[]>()
-    const uncertainStarts = new Set<number>()
-    for (const message of task?.messages ?? []) {
-      if (message.status === "queued" || (message.status === "cancelled" && message.delivery_uncertain)) {
-        queuedMessages.push(message)
-      } else if (message.delivery === "steered" && message.turn_n !== null) {
-        const group = steeredMessages.get(message.turn_n)
-        if (group) group.push(message)
-        else steeredMessages.set(message.turn_n, [message])
-      } else if (message.delivery === "started" && message.turn_n !== null && message.delivery_uncertain) {
-        uncertainStarts.add(message.turn_n)
-      }
-    }
-    return { queuedMessages, steeredMessages, uncertainStarts }
-  }, [task?.messages])
+  // Only the live turn's activity moves on a stream frame; every other turn's
+  // `live` stays undefined and its memoized block is left alone.
+  const live = useMemo(() => activityByTurn(stream.blocks), [stream.blocks])
+  const { queuedMessages, steeredMessages, uncertainStarts } = useMessageGroups(task?.messages)
 
   // `/log` (A2): the palette asks, this scroller answers. A monotonic counter,
   // so a second request while already pinned is still a request.
@@ -167,6 +157,15 @@ export function Conversation({
     taskId ? scheduleConversationPaint() : undefined
   ), [taskId])
 
+  // An archive that did not keep the task's files deleted them: what this
+  // client still holds of them goes too, on screen or not. The SSE bridge no
+  // longer clears on every task event, so this is where the detail saying so
+  // lands.
+  const assetsRemoved = Boolean(task?.archived && !task.attachmentsRetained)
+  useEffect(() => {
+    if (taskId && assetsRemoved) clearAssetCache(runtime.connectionId, `/api/tasks/${taskId}/`)
+  }, [assetsRemoved, runtime.connectionId, taskId])
+
   // A project-search hit names its turn. Pull cursor pages until that turn is
   // mounted, then the existing find hook reveals activity and walks the match.
   const revealTurn = find.revealTurn
@@ -199,6 +198,7 @@ export function Conversation({
       onReveal={revealFileHandler(runtime.connectionId, task?.worktree_path ?? null)}
     >
       <QuestionnaireProvider value={questionnaire}>
+      <AssetScrollRoot.Provider value={viewport}>
       {/* Out under the summary card's gutter, so the scrollbar sits at the
           pane's edge; the scroller pads its content back by the same width. */}
       <div className="relative -mr-(--summary-gutter) flex min-h-0 flex-1 flex-col">
@@ -308,6 +308,7 @@ export function Conversation({
           </div>
         )}
       </div>
+      </AssetScrollRoot.Provider>
       </QuestionnaireProvider>
     </FileViewerProvider>
   )
@@ -435,6 +436,9 @@ const TurnBlock = memo(function TurnBlock({
         </div>
       </PersonBubble>}
 
+      {/* the bubble stays outside: the containment that skips clips, and its
+          toolbar hangs above it */}
+      <div className={offscreenSkip(turn, latest)}>
       {/* what the person sent WITH the prompt, so it hangs off the bubble */}
       <TurnAttachments taskId={taskId} turn={turn.n} attachments={turn.attachments ?? []} archived={archived} />
 
@@ -480,9 +484,21 @@ const TurnBlock = memo(function TurnBlock({
         {turn.status === "interrupted" && <span>interrupted</span>}
         {turn.model && <span className="font-mono">{turn.model}</span>}
       </div>
+      </div>
     </article>
   )
 })
+
+/**
+ * A settled turn above the latest one is skipped by layout and paint while it
+ * is off screen, so a long history costs what is visible; `auto` remembers
+ * each turn's real height once it has been drawn. The running turn and the
+ * latest one, the bottom the reader is pinned to, are never skipped. Text
+ * stays in the DOM, so find-in-task still reads it.
+ */
+function offscreenSkip(turn: Turn, latest: boolean): string | undefined {
+  return turn.status === "running" || latest ? undefined : "[contain-intrinsic-size:auto_400px] [content-visibility:auto]"
+}
 
 /**
  * One message that reached a RUNNING turn. Same bubble wherever it lands —
@@ -579,12 +595,9 @@ function Activity({
   const activity = live ?? loaded
   const items = activity?.items
   const quietEmpty = turn.operation === "compact"
-  const placement = useMemo(() => placeStepImages(items ?? [], outputs), [items, outputs])
+  const { placement, stepImages } = useStepImages({ taskId, turn: turn.n, removed, items: items ?? EMPTY_ITEMS, outputs })
   const segments = useMemo(() => splitByMessage(withoutPlacedImageNotes(items ?? [], placement)), [items, placement])
   const lookedAt = lookedAtLabel(outputs)
-  const stepImages = (stepId: string) => (
-    <StepImages taskId={taskId} turn={turn.n} images={placement.byStep.get(stepId) ?? []} removed={removed} step={stepId} />
-  )
 
   // A timeline someone opened above the viewport keeps their line still. One
   // that opened itself (a failed turn, a find hit) has no line to keep.
