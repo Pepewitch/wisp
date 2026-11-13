@@ -1,6 +1,7 @@
 import { closeSync, openSync } from "node:fs";
 import { copyFile, mkdir, open } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { BaseRefFetches } from "./base-refs";
 import { branchFor } from "./branch-name";
 import { wispCommand } from "./command";
 import { LOG_DIR, WORKTREE_ROOT, repoConfigFor, type WispConfig } from "./config";
@@ -180,31 +181,39 @@ export interface BaseChoice {
  * no `origin` at all are ordinary states, and none of them is a reason to
  * refuse to start a task — the base simply resolves against the refs already
  * on disk, which is still no worse than the old behaviour.
+ *
+ * True only when the fetch ran and git said it worked: base-refs.ts trusts
+ * nothing else as fresh. Callers go through `baseRefFetches`, never this
+ * directly, so that two fetches never run in one repo at once.
  */
-async function fetchBaseRefs(repo: string): Promise<void> {
+export async function fetchBaseRefs(repo: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<boolean> {
   try {
     // `git fetch` against a repo with no origin is a failure with a scary
     // message and a DNS timeout's worth of latency; ask first, it is one cheap
     // read. --no-tags because a base is a branch: tags are megabytes of refs
     // on a big repo and nothing here resolves through them.
-    if ((await git(["remote"], repo)).out.split("\n").every((name) => name.trim() !== "origin")) return;
-    await git(["fetch", "--no-tags", "--quiet", "origin"], repo, { timeoutMs: FETCH_TIMEOUT_MS });
+    if ((await git(["remote"], repo)).out.split("\n").every((name) => name.trim() !== "origin")) return false;
+    return (await git(["fetch", "--no-tags", "--quiet", "origin"], repo, { timeoutMs })).ok;
   } catch {
     // A non-zero fetch is already a no-op here, but `git()` THROWS on its
     // deadline — so without this catch a black-holed origin would fail the
     // create outright after the timeout, which is strictly worse than the
     // behaviour this change replaced. Swallow it: the refs already on disk
     // are a worse base than a fresh fetch and a better one than no task.
+    return false;
   }
 }
 
 /**
- * Deadline for the create-path fetch. Deliberately far below
- * WRITE_TIMEOUT_MS: this runs before every worktree task, a slow origin must
- * not hold creation for two minutes, and the fallback (resolve against the
- * refs already on disk) is cheap and correct.
+ * Deadline for a base-ref fetch. Deliberately far below WRITE_TIMEOUT_MS: a
+ * create may be waiting on it, a slow origin must not hold creation for two
+ * minutes, and the fallback (resolve against the refs already on disk) is
+ * cheap and correct.
  */
 const FETCH_TIMEOUT_MS = 20_000;
+
+/** Every base-ref fetch in this process: the composer's prefetch and the create path share it. */
+export const baseRefFetches = new BaseRefFetches((repo) => fetchBaseRefs(repo));
 
 /** Resolve a ref to a commit, or null when this repo cannot name it. */
 async function commitFor(repo: string, ref: string): Promise<string | null> {
@@ -296,7 +305,8 @@ export async function createWorktree(
     if ((await commitFor(repo, base.commit)) === null) throw new Error(`base commit ${base.commit.slice(0, 12)} is not in ${repo}`);
     chosen = { ref: base.ref, commit: base.commit, note: null };
   } else {
-    await fetchBaseRefs(repo);
+    // usually free: the composer started this fetch while the prompt was typed
+    await baseRefFetches.beforeCreate(repo);
     chosen = await resolveBase(repo, base, repoConfigFor(cfg, repo)?.baseBranch);
   }
   const base_commit = chosen.commit;

@@ -209,6 +209,19 @@ state detail, since a silently substituted base is the defect this ordering
 exists to remove. The task records the ref it actually forked from in
 `base_ref`, alongside the `base_commit` it forked at.
 
+That fetch costs 0.65–0.9 s against a real remote with nothing new, more
+with new commits, and up to its 20-second deadline on a slow one, so the web
+composer starts it early: opening the composer, changing its project or mode,
+and typing (at most every 20 s) post `POST /api/projects/base-refs` for a
+worktree task. The daemon answers 202 at once, and `wispd/src/base-refs.ts`
+keeps one fetch per repository at a time: a second request or a create joins
+the fetch in flight, a prefetch that started within the last 15 s is not
+repeated, and a create skips its own fetch only when one that succeeded
+started within the last 30 s. A failed or timed-out fetch never counts as
+fresh, so the create fetches as it always did. Only a registered project is
+fetched, never a path the client names. `wisp new` is one shot and still
+fetches at create.
+
 The new branch is created with `--no-track`. With a remote-tracking
 start-point git would otherwise set its upstream to `origin/main`, and an
 agent running a bare `git push` under `push.default=upstream` would push the

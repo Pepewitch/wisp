@@ -55,6 +55,8 @@ The UI reads or mutates these route families:
   webhook queue);
 - daemon-owned configuration: `/api/repos`, `/api/repos/order`, `/api/projects`,
   `/api/projects/copy-preview`, `/api/harnesses`, and `/api/suffix-prompts`;
+- the create composer's base-ref prefetch: `POST /api/projects/base-refs`,
+  fire and forget; an older daemon answers 404, which the composer ignores;
 - project folders for the composer's `@` list:
   `/api/projects/entries?project=…&dir=…&q=…`, whose query a proxy forwards
   verbatim like search's; an older daemon answers 404, which the list shows as
