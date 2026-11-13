@@ -214,6 +214,50 @@ describe("a warm Claude process", () => {
     expect(readFileSync(first.log_file, "utf8")).not.toContain("Wisp stopped the background work");
   });
 
+  test("background work that just ended still counts until the call it wakes opens its turn", async () => {
+    const backgrounded = (id: string) => emit({ type: "system", subtype: "task_started", task_id: id, is_backgrounded: true, description: "sleep 15" });
+    const ended = (id: string) => emit({ type: "system", subtype: "task_notification", task_id: id, status: "completed" });
+    const def = claudeDef([
+      "IFS= read -r first",
+      emit({ type: "system", subtype: "init", session_id: "session-warm" }),
+      backgrounded("b1"),
+      emit({ type: "result", result: "STARTED", session_id: "session-warm", num_turns: 1 }),
+      // the task ends; the CLI starts the call it owes the model a moment later (about 0.1 s on claude 2.1.322)
+      "while [ ! -f ended ]; do sleep 0.02; done",
+      ended("b1"),
+      "while [ ! -f call ]; do sleep 0.02; done",
+      emit({ type: "system", subtype: "init", session_id: "session-warm" }),
+      backgrounded("b2"),
+      emit({ type: "result", result: "FINISHED", session_id: "session-warm", num_turns: 1 }),
+      "while [ ! -f ended-again ]; do sleep 0.02; done",
+      // no call follows this end: it stops counting after the quiet window, not after the warm one
+      ended("b2"),
+      ...UNTIL_EOF,
+    ]);
+    await withTiming({ quietMs: 300 }, async () => {
+      const task = makeTask();
+      startTurn(task, "start it in the background", def, cfg);
+      await until(done(task.id, 1));
+      await refreshProcessGroups(task.id);
+      expect(backgroundWork(task.id).state).toBe("running");
+      const log = turnsFor(task.id)[0]!.log_file;
+
+      writeFileSync(join(task.worktree_path!, "ended"), "");
+      await until(() => readFileSync(log, "utf8").includes("task_notification"));
+      // `wisp wait --settled`, a report hold or a heartbeat reading now must not take the task as settled
+      expect(backgroundWork(task.id).state).toBe("running");
+      expect(backgroundWork(task.id).details[0]!.tasks?.map((t) => t.name)).toEqual(["sleep 15"]);
+      expect(backgroundHoldsReport(task.id)).toBe(true);
+
+      writeFileSync(join(task.worktree_path!, "call"), "");
+      await until(done(task.id, 2));
+      expect(turnsFor(task.id)[1]).toMatchObject({ origin: "background", result: "FINISHED" });
+      writeFileSync(join(task.worktree_path!, "ended-again"), "");
+      await until(() => readFileSync(turnsFor(task.id)[1]!.log_file, "utf8").includes("task_notification"));
+      await until(() => backgroundWork(task.id).state === "none", 2000);
+    });
+  });
+
   test("archive takes a warm task as it is, and stops the process", async () => {
     const def = claudeDef(["IFS= read -r first", ...answer("FIRST"), ...UNTIL_EOF]);
     const task = makeTask();

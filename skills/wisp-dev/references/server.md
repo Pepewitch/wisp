@@ -107,7 +107,9 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   counts only for its own background tasks or for a member that no longer
   descends from it (`isBackground` in `task-processes.ts`, from the
   inventory's `ppid`), so workflows, subtask reports and autopilot are never
-  held by one. A message for another agent, `/fresh`, Stop, archive and a
+  held by one. Tasks that just ended still count until the call they wake
+  opens its follow-up turn (at most `lingerTiming.quietMs`; `backgroundTasks`
+  in `live-input.ts`), or the task reads settled before that answer. A message for another agent, `/fresh`, Stop, archive and a
   daemon exit end it as they end a lingering process.
 - Stopping a turn signals that group, not just the leader: a harness is a
   supervisor, and killing only it left builds, servers, and sub-agents running
