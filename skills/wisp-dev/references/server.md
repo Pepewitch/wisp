@@ -95,6 +95,20 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   `ClaudeLiveProcess` in `live-input.ts`, `DroidLiveProcess` in
   `live-droid.ts`, `CodexLiveProcess` in `live-codex.ts`,
   `adapters/live/droid-background.ts`, and `turn-process.ts`.
+- A live Claude turn whose answer leaves nothing in the background settles
+  the same way and its process stays WARM (`keepWarm` in `live-input.ts`): it
+  takes the task's next turn through the same adoption, saving the CLI's boot,
+  its cold first call and its exit (0.9 s off a small session's median turn,
+  measured). Bounded: 10
+  minutes idle (`lingerTiming.warmMs`), and `warmHarnessProcesses` (default 4)
+  across the daemon, least recently warmed first; never after an error answer
+  or for a verification task, whose turns carry a per-round token in their
+  environment. A warm process is not background work: a kept harness's group
+  counts only for its own background tasks or for a member that no longer
+  descends from it (`isBackground` in `task-processes.ts`, from the
+  inventory's `ppid`), so workflows, subtask reports and autopilot are never
+  held by one. A message for another agent, `/fresh`, Stop, archive and a
+  daemon exit end it as they end a lingering process.
 - Stopping a turn signals that group, not just the leader: a harness is a
   supervisor, and killing only it left builds, servers, and sub-agents running
   (ENG-03). A descendant that calls `setsid` itself leaves the group by design

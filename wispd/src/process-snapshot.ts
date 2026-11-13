@@ -5,6 +5,8 @@ import { compareStartTimes, lstartWallClock, matchStartTime, psTimeEnv, readProc
 export interface ProcessMember { pid: number; started: string | null }
 export interface GroupMember extends ProcessMember {
   pgid: number;
+  /** Its parent's pid: which members still descend from the group's leader (task-processes `strays`). */
+  ppid?: number;
   /** When the process started (epoch ms), from ps(1)'s lstart column read in UTC. */
   observedStartedAt: number | null;
 }
@@ -34,7 +36,7 @@ export async function sameProcessConfirmed(recorded: ProcessMember, current: Pro
 export async function processSnapshot(groups: Set<number>): Promise<GroupMember[]> {
   if (groups.size === 0) return [];
   // UTC in the C locale, so the start column reads the same in every daemon.
-  const child = Bun.spawn({ cmd: ["ps", "-axo", "pid=,pgid=,stat=,lstart="], env: psTimeEnv(), stdout: "pipe", stderr: "ignore" });
+  const child = Bun.spawn({ cmd: ["ps", "-axo", "pid=,ppid=,pgid=,stat=,lstart="], env: psTimeEnv(), stdout: "pipe", stderr: "ignore" });
   // ps is a single trusted system executable. Bound its own pipe and lifetime
   // without depending on Git's subprocess runner or a descendant's EOF.
   const reader = child.stdout.getReader();
@@ -54,13 +56,13 @@ export async function processSnapshot(groups: Set<number>): Promise<GroupMember[
     if (bytes === 0) throw new Error("empty process inventory");
     const members: GroupMember[] = [];
     for (const line of Buffer.concat(chunks).toString().split("\n")) {
-      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
+      const match = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
       if (!line.trim()) continue;
       if (!match) throw new Error("unrecognized process inventory row");
-      const pid = Number(match[1]); const pgid = Number(match[2]);
+      const pid = Number(match[1]); const ppid = Number(match[2]); const pgid = Number(match[3]);
       // Zombies have exited and cannot write files, even before they are reaped.
-      if (!groups.has(pgid) || match[3]!.startsWith("Z")) continue;
-      const observedStartedAt = lstartWallClock(match[4]!);
+      if (!groups.has(pgid) || match[4]!.startsWith("Z")) continue;
+      const observedStartedAt = lstartWallClock(match[5]!);
       let started: string | null;
       if (process.platform === "linux") {
         const read = await readProcessStartTime(pid);
@@ -69,7 +71,7 @@ export async function processSnapshot(groups: Set<number>): Promise<GroupMember[
         // An unreadable start is an unconfirmed identity, never a guessed one.
         started = observedStartedAt === null ? null : startToken(observedStartedAt);
       }
-      members.push({ pid, pgid, started, observedStartedAt });
+      members.push({ pid, pgid, ppid, started, observedStartedAt });
     }
     return members;
   } finally {

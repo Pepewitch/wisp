@@ -43,6 +43,13 @@ const namedPids = new Map<number, string>();
  * boot recovery stops the process (turn-process stopOrphanedHarnesses).
  */
 const harnessTasks = new Map<number, () => HarnessBackgroundTask[]>();
+/**
+ * Settled turn id -> how many members of a kept harness's group no longer
+ * descend from it, at the last inventory: what a turn left running on its own
+ * (`nohup server &`), as against the harness's own children (its MCP
+ * servers). Memory only, like `harnessTasks`.
+ */
+const strays = new Map<number, number>();
 let refreshing: Promise<void> = Promise.resolve();
 const TURN_LAUNCH_CLOCK_SLOP_MS = 10_000;
 
@@ -164,6 +171,36 @@ export function transferProcessGroup(fromTurnId: number, toTurnId: number): void
   namedPids.delete(fromTurnId);
   announced.delete(fromTurnId);
   harnessTasks.delete(fromTurnId);
+  strays.delete(fromTurnId);
+}
+
+/**
+ * Whether a recorded group is background work. A harness Wisp keeps alive
+ * past its turn's answer (a lingering or warm Claude, Droid or Codex process)
+ * is only for what it still runs: its own background tasks, or a process a
+ * turn left behind that no longer descends from it. A warm process with
+ * neither is merely waiting for the task's next turn, and must hold up no
+ * workflow wake, subtask report or autopilot step, nor show the badge. A group
+ * Wisp cannot read, or one being stopped, is reported as before.
+ */
+function isBackground(row: GroupRow, settleMs: number): boolean {
+  const turn = getTurn(row.turn_id);
+  if (turn?.status === "running") return false;
+  const kept = harnessTasks.get(row.turn_id);
+  if (!kept) return !settling(turn, settleMs);
+  return kept().length > 0 || (strays.get(row.turn_id) ?? 0) > 0 || row.state !== "running" || row.stop_requested !== 0;
+}
+
+/** Members of `leader`'s group that no longer descend from it; one whose parent is unknown counts. */
+function strayCount(leader: number, members: GroupMember[]): number {
+  const byPid = new Map(members.map(member => [member.pid, member]));
+  let count = 0;
+  for (const member of members) {
+    let at: GroupMember | undefined = member;
+    for (let depth = 0; at && at.pid !== leader && depth < members.length; depth++) at = at.ppid === undefined ? undefined : byPid.get(at.ppid);
+    if (at?.pid !== leader) count++;
+  }
+  return count;
 }
 
 /**
@@ -175,10 +212,7 @@ export function transferProcessGroup(fromTurnId: number, toTurnId: number): void
  */
 export function backgroundWork(taskId: string, settleMs = 0): BackgroundWork {
   const all = rows(taskId);
-  const background = all.filter(row => {
-    const turn = getTurn(row.turn_id);
-    return turn?.status !== "running" && (harnessTasks.has(row.turn_id) || !settling(turn, settleMs));
-  });
+  const background = all.filter(row => isBackground(row, settleMs));
   if (stops.has(taskId)) return { state: "stopping", groups: all.length, details: describe(all) };
   const details = describe(background);
   if (background.some(row => row.state === "unknown" || row.stop_requested)) return { state: "unknown", groups: background.length, details };
@@ -289,6 +323,10 @@ export function refreshProcessGroups(taskId?: string, exitedTurnId?: number): Pr
       const original = getTurn(row.turn_id);
       const state = await groupState(row, members, original, exitedTurnId);
       if (state === "none" || row.turn_id === exitedTurnId) localGroups.delete(row.turn_id);
+      // a kept harness's group is background work only for what no longer descends from it (isBackground)
+      const strayed = harnessTasks.has(row.turn_id) && state === "running" ? strayCount(row.pgid, members) : null;
+      const straysChanged = strayed !== null && strayed !== (strays.get(row.turn_id) ?? 0);
+      if (strayed !== null) strays.set(row.turn_id, strayed);
       const identities = state === "running" ? JSON.stringify(members.map(({ pid, started }) => ({ pid, started }))) : row.members_json;
       if (state !== row.state || identities !== row.members_json) {
         db.query("UPDATE turn_process_groups SET state = ?, members_json = ?, stop_requested = CASE WHEN ? = 'none' THEN 0 ELSE stop_requested END WHERE turn_id = ?")
@@ -298,12 +336,12 @@ export function refreshProcessGroups(taskId?: string, exitedTurnId?: number): Pr
       // the state comparison below would never announce it. Emit once when it
       // crosses, or the badge it earned would wait for an unrelated event.
       const reportable = state !== "none" && original?.status !== "running" && !settling(original, BACKGROUND_SETTLE_MS);
-      if (state === "none") { liveNames.delete(row.turn_id); namedPids.delete(row.turn_id); announced.delete(row.turn_id); harnessTasks.delete(row.turn_id); }
+      if (state === "none") { liveNames.delete(row.turn_id); namedPids.delete(row.turn_id); announced.delete(row.turn_id); harnessTasks.delete(row.turn_id); strays.delete(row.turn_id); }
       // Only groups the report will actually show are worth a naming call.
       else if (reportable) living.push({ turnId: row.turn_id, pids: members.map(member => member.pid) });
       const crossed = reportable && !announced.has(row.turn_id);
       if (crossed) announced.add(row.turn_id);
-      if (state !== row.state || state === "none" || crossed) notify(row.task_id);
+      if (state !== row.state || state === "none" || crossed || straysChanged) notify(row.task_id);
     }
     await nameGroups(living);
   });

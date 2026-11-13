@@ -130,6 +130,11 @@ export interface WispConfig extends SubtaskConfig {
   /** Simultaneously running tasks, including setup; never a conversation-turn budget. */
   maxConcurrentTasks?: number;
   /**
+   * Idle Claude processes kept warm for their task's next turn, daemon-wide
+   * (live-input.ts); the least recently used goes first. 0 turns it off.
+   */
+  warmHarnessProcesses?: number;
+  /**
    * Primary-transcript capture budget for one turn. Reaching this budget is
    * non-fatal for recorder-owned turns; legacy turns retain their old cap
    * behavior until the recorder rollout is complete.
@@ -285,6 +290,7 @@ const DEFAULTS: WispConfig = {
   repos: [],
   stuckMinutes: 10,
   maxConcurrentTasks: 100,
+  warmHarnessProcesses: 4,
   turnTranscriptBytes: 25_000_000,
   logMaxBytes: 25_000_000,
   diagnosticEnabled: true,
@@ -311,6 +317,7 @@ const CONFIG_KEYS = [
   "stuckMinutes",
   "terminalShell",
   "maxConcurrentTasks",
+  "warmHarnessProcesses",
   "turnTranscriptBytes",
   "logMaxBytes",
   "diagnosticEnabled",
@@ -509,12 +516,16 @@ export function validateConfig(raw: unknown, warn: (msg: string) => void = warnO
   if (out.terminalShell !== undefined) assertTerminalShell(out.terminalShell);
   str("jevApiKey");
   str("factoryApiKey");
-  if (raw.maxConcurrentTasks !== undefined) {
-    if (!Number.isSafeInteger(raw.maxConcurrentTasks) || (raw.maxConcurrentTasks as number) < 1) {
-      throw new Error("config.json: maxConcurrentTasks must be a positive integer");
+  const count = (key: "maxConcurrentTasks" | "warmHarnessProcesses", min: 0 | 1): void => {
+    const v = raw[key];
+    if (v === undefined) return;
+    if (!Number.isSafeInteger(v) || (v as number) < min) {
+      throw new Error(`config.json: ${key} must be a ${min === 1 ? "positive" : "non-negative"} integer`);
     }
-    out.maxConcurrentTasks = raw.maxConcurrentTasks as number;
-  }
+    out[key] = v as number;
+  };
+  count("maxConcurrentTasks", 1);
+  count("warmHarnessProcesses", 0);
   num("turnTranscriptBytes");
   num("logMaxBytes");
   if (

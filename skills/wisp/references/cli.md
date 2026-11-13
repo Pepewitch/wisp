@@ -350,6 +350,11 @@ whose thread has an active Goal works the same way: Codex goes on to the
 goal's next turn by itself after each answer, Wisp records each such turn,
 and the app-server exits once the goal is complete, paused, blocked or out of
 budget (`wisp wait --settled` waits for that).
+A Claude process whose answer leaves nothing running also stays alive, idle,
+for up to 10 minutes, so the task's next turn starts at once in it instead of
+booting a new one. It is not background work: `show` and `wait --settled` do
+not report it, and it ends on its own. At most `warmHarnessProcesses` (4)
+are kept across the daemon; set it to 0 in `config.json` to turn this off.
 `interrupt` explicitly stops the active turn and all tracked task groups and waits
 for completion, escalating if needed. Sending and archiving are refused while
 Stop is pending or incomplete; retry Stop after resolving the reported failure.

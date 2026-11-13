@@ -14,6 +14,7 @@ import {
   type LingeringLiveProcess,
   type LiveOutputSink,
   type LiveTurn,
+  type WarmPolicy,
 } from "./live-input";
 import { closeDescriptors, fileOverCap, pidIdentity } from "./process-watch";
 import { settlePipes } from "./pipe-drain";
@@ -33,7 +34,7 @@ import {
   setTurnKillDetail,
   transition,
 } from "./store";
-import { processStop, processStopPending, refreshProcessGroups, settledGroupLeaders, transferProcessGroup } from "./task-processes";
+import { backgroundWork, processStop, processStopPending, refreshProcessGroups, settledGroupLeaders, transferProcessGroup } from "./task-processes";
 import { finalizeTurn } from "./turn-finalize";
 import { isTaskStopping, waitForInterrupt } from "./turn-interrupt";
 import { startLoggedImageCapture } from "./logged-images";
@@ -46,7 +47,9 @@ import type { Task, TurnOrigin } from "./types";
  * Every process serves one turn, except a live Claude, Droid or Codex process whose
  * answer arrived while work it started in the background is still running:
  * that turn settles, and the process lingers for the work (see live-input's
- * ClaudeLiveProcess and DroidLiveProcess). The next message becomes a turn ON it (`adoptTurn`), a
+ * ClaudeLiveProcess and DroidLiveProcess); a Claude process with nothing left
+ * in the background may linger warm for the task's next turn (`warmPolicy`).
+ * The next message becomes a turn ON it (`adoptTurn`), a
  * model call the work wakes becomes a follow-up turn (`openFollowUpTurn`), and
  * a message for another agent ends it (`endLingeringProcess`). The runner
  * spawns and owns the message queue; this module owns the process from then
@@ -291,7 +294,25 @@ export function lingerHooks(proc: TurnProcess): LingerHooks {
     between: () => betweenTurnsSink(proc.slot),
     wake: (reason) => openFollowUpTurn(proc, reason),
     idle: () => proc.startQueue(),
+    warm: () => warmPolicy(proc),
   };
+}
+
+/**
+ * Whether a Claude process whose answer left nothing in the background stays
+ * warm for the task's next turn (live-input `keepWarm`). Not when the config
+ * keeps none (`warmHarnessProcesses: 0`; absent, as in a config built in
+ * code, means none too), and not for Wisp's verification tasks: a reviewer's
+ * turn carries its round's token in its environment, which a reused process
+ * would keep. Only Claude's: Codex's app-server boots and exits in about
+ * 0.1 s, so a warm one saves nothing worth holding a process for, and
+ * Droid's is left as it is until its boot is measured against a working turn.
+ */
+function warmPolicy(proc: TurnProcess): WarmPolicy | null {
+  const cap = proc.cfg.warmHarnessProcesses ?? 0;
+  if (cap < 1 || proc.def.liveInput !== "claude-stream-json") return null;
+  const task = getTask(proc.taskId);
+  return task && !task.verify_role ? { cap } : null;
 }
 
 /** Only a turn nothing else owns may settle early: not one being stopped, killed, archived, or outlived by its process. */
@@ -388,7 +409,8 @@ function betweenTurnsSink(slot: TurnSlot): LiveOutputSink {
 export function endLingeringProcess(proc: TurnProcess, why: string): void {
   if (proc.ending) return;
   proc.ending = true;
-  proc.live?.output().recordNote(`· Wisp stopped the background work this turn left running: ${why}`);
+  // a warm process ran nothing in the background: its transcript has nothing to explain
+  if (backgroundWork(proc.taskId).state !== "none") proc.live?.output().recordNote(`· Wisp stopped the background work this turn left running: ${why}`);
   proc.live?.retire();
   killChildTree(proc.child, "SIGTERM");
   const timer = setTimeout(() => childRunning(proc.child) && killChildTree(proc.child, "SIGKILL"), KILL_GRACE_MS);
