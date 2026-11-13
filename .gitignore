@@ -11,6 +11,8 @@ web/web-dist/
 .context/
 .agent-team/
 *.bun-build
+# `bun run profile:usage` output, and its private task-id mapping
+wisp-profile-*.json
 __pycache__/
 *.py[cod]
 

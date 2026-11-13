@@ -40,6 +40,8 @@
     "check:fast": "bun run docs:check && bun run version:check && bun run toolchain:check && bun run workflows:check && bun run lint:all && bun run typecheck:all",
     "smoke": "bun run build:web && bash wispd/scripts/smoke.sh",
     "bench": "bun run build:all-ui && bun bench/run.ts",
+    "bench:scale": "bun run build:web && bun bench/scale.ts",
+    "profile:usage": "bun scripts/usage-profile.ts",
     "check:browser-security": "bun run build:web && bun run scripts/browser-security-check.ts",
     "check:capture": "bun run scripts/capture-check.ts",
     "harness:check": "bun run wispd/scripts/harness/check.ts",
