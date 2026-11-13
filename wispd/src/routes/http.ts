@@ -9,7 +9,8 @@ import { safeString } from "../text";
 import { typeName } from "../validate";
 import { backgroundWork, BACKGROUND_SETTLE_MS, liveGroupsByTask } from "../task-processes";
 import { turnInput } from "../live-input";
-import { queuePosition } from "../subtasks";
+import { queuePosition, queuePositions } from "../subtasks";
+import { runningTurnsByTask } from "../store";
 
 /** The relationship as the API serves it; a row written before migration 26 reads as a root task. */
 function subtaskFields(t: Task): Pick<ApiTask, "parent_task_id" | "subtask_kind" | "report_to_parent" | "base_from" | "base_sha" | "merge_granted_by"> {
@@ -25,15 +26,18 @@ function subtaskFields(t: Task): Pick<ApiTask, "parent_task_id" | "subtask_kind"
 
 /**
  * What apiTask reads beside the row, read once for a whole task list: the
- * archived list used to run three statements per row for these.
+ * archived list used to run three statements per row for these, a live row
+ * one, and each queued subtask a read of all its siblings.
  */
 export interface TaskListReads {
   groups: ReturnType<typeof liveGroupsByTask>;
   cleanup: ReturnType<typeof cleanupSummaries>;
+  queuePosition: ReturnType<typeof queuePositions>;
+  running: ReturnType<typeof runningTurnsByTask>;
 }
 
 export function taskListReads(): TaskListReads {
-  return { groups: liveGroupsByTask(), cleanup: cleanupSummaries() };
+  return { groups: liveGroupsByTask(), cleanup: cleanupSummaries(), queuePosition: queuePositions(), running: runningTurnsByTask() };
 }
 
 /**
@@ -58,11 +62,11 @@ export function apiTask(t: Task, reads?: TaskListReads): ApiTask {
     context_n: t.context_n, base_ref: t.base_ref, context_tokens: t.context_tokens, fast: t.fast !== 0,
     verify_role: t.verify_role,
     ...subtaskFields(t),
-    ...(t.state === "queued" ? { queue_position: queuePosition(t) } : {}),
+    ...(t.state === "queued" ? { queue_position: (reads?.queuePosition ?? queuePosition)(t) } : {}),
     attachmentsRetained: !t.archived || Boolean(t.archive_assets_retained),
     deletionPending: Boolean(t.purge_pending),
     background: backgroundWork(t.id, BACKGROUND_SETTLE_MS, reads?.groups),
-    turn_input: t.archived ? null : turnInput(t.id),
+    turn_input: t.archived ? null : turnInput(t.id, reads?.running),
     ...(t.archived ? { cleanup: reads ? reads.cleanup(t.id) : cleanupSummary(t.id) } : {}),
   };
 }

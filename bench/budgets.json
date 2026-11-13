@@ -8,7 +8,7 @@
   "plan.taskList.scans": 1,
   "plan.search.scans": 2,
   "plan.autopilotStatuses.scans": 0,
-  "statements.archivedTaskList.count": 17,
+  "statements.archivedTaskList.count": 6,
   "daemon.statusAfterOneEvent.spawns": 7,
   "daemon.finishedTaskStream.bytes": 65536,
   "github.autopilotPass.requests": 5,
