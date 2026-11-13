@@ -26,6 +26,26 @@ export function prependConversationPage(
 }
 
 /**
+ * Back to the newest `size` turns, as if the older pages were never loaded:
+ * the cursor points at the first turn kept, and messages that belong only to
+ * dropped turns go with them. A task the reader left keeps this, so coming
+ * back mounts one page rather than every page they once scrolled through.
+ */
+export function trimConversationPage(current: ConversationDetail, size: number): ConversationDetail {
+  // a legacy detail without turns has no pages to trim
+  if ((current.turns?.length ?? 0) <= size) return current
+  const turns = current.turns.slice(-size)
+  const first = turns[0]!.n
+  return {
+    ...current,
+    turns,
+    messages: current.messages?.filter((message) => message.turn_n === null || message.turn_n >= first),
+    has_older_turns: true,
+    older_turns_before: first,
+  }
+}
+
+/**
  * A realtime refresh replaces the newest page and its pending-message scope,
  * while preserving only rows that belong to previously loaded older pages.
  */

@@ -165,6 +165,36 @@ describe("activity tree", () => {
     expect(reduceActivity(items, [completed])).toBe(items)
   })
 
+  /**
+   * A memoized row skips work only for an item whose identity held. The draft
+   * used to copy every subagent on every frame, so each one re-rendered.
+   */
+  it("copies only the subagents a frame writes into, and never the frame before", () => {
+    const before = reduceActivity([], [
+      taskStart("quiet", "Quiet"),
+      taskStart("busy", "Busy"),
+      taskStart("inner", "Inner", "busy"),
+      { kind: "text", id: "t1", parentId: "inner", text: "first" },
+    ]) as SubagentActivityItem[]
+    const snapshot = JSON.stringify(before)
+    const after = reduceActivity(before, [{ kind: "text", id: "t2", parentId: "inner", text: "second" }]) as SubagentActivityItem[]
+
+    expect(after[0]).toBe(before[0])
+    expect(after[1]).not.toBe(before[1])
+    const inner = after[1]!.items[0] as SubagentActivityItem
+    expect(inner).not.toBe(before[1]!.items[0])
+    expect(inner.items).toEqual([{ kind: "text", id: "t1", text: "first\nsecond" }])
+    expect(JSON.stringify(before)).toBe(snapshot)
+  })
+
+  it("updates a subagent's own fields without touching the previous frame's copy", () => {
+    const before = reduceActivity([], [taskStart("a", "A"), { kind: "tool", id: "r", parentId: "a", phase: "started", name: "Read", input: null }])
+    const after = reduceActivity(before, [{ kind: "subagent", id: "a", parentId: null, phase: "completed", status: "completed", result: "done" }])
+    expect((before[0] as SubagentActivityItem).status).toBe("running")
+    expect(after[0]).toMatchObject({ status: "completed", result: "done" })
+    expect((after[0] as SubagentActivityItem).items[0]).toBe((before[0] as SubagentActivityItem).items[0])
+  })
+
   it("places nested child activity under the correct subagent", () => {
     const items = reduceActivity([], [
       taskStart("agent-a", "Review A"),

@@ -1,3 +1,5 @@
+import { memo } from "react"
+
 import { ChevronRight } from "@/components/icons"
 import { TaskRow, TaskRowTouch } from "@/components/task-row"
 import type { SubtaskTreeView } from "@/hooks/useSidebarTree"
@@ -47,11 +49,10 @@ function DisclosureButton({ task, count, open, onToggle, touch }: {
 }
 
 /** The count, and while the children are hidden, whether one runs or needs the person. */
-function SubtaskCount({ node, open }: { node: TaskNode; open: boolean }) {
-  const { running, needsInput } = open ? { running: false, needsInput: false } : rollup(node)
+function SubtaskCount({ count, running, needsInput }: { count: number; running: boolean; needsInput: boolean }) {
   const says = needsInput ? "a subtask needs input" : running ? "a subtask is running" : null
   return (
-    <span className="flex shrink-0 items-center gap-1 font-mono text-[10.5px] text-faint" data-subtask-count={node.children.length}>
+    <span className="flex shrink-0 items-center gap-1 font-mono text-[10.5px] text-faint" data-subtask-count={count}>
       {says && (
         <span
           role="img"
@@ -61,16 +62,14 @@ function SubtaskCount({ node, open }: { node: TaskNode; open: boolean }) {
           className={cn("size-1.5 rounded-full", needsInput ? "bg-state-needs-input" : "bg-state-running")}
         />
       )}
-      <span aria-hidden>{node.children.length}</span>
+      <span aria-hidden>{count}</span>
     </span>
   )
 }
 
-/** A subtask drawn as a root names its parent; an orphan says its parent is gone. */
-function ParentNote({ task, depth, titleOf }: { task: ApiTask; depth: number; titleOf: (id: string) => string | null }) {
-  const parent = parentOutside(task, depth)
-  if (parent) {
-    const title = titleOf(parent) ?? parent
+/** A subtask drawn as a root names its parent (`title`); an orphan says its parent is gone. */
+function ParentNote({ task, title }: { task: ApiTask; title: string | null }) {
+  if (title) {
     return (
       <span className="max-w-[45%] shrink truncate text-[10.5px] text-faint" title={`Subtask of ${title}`} data-parent-note>
         ↳ {title}
@@ -79,6 +78,53 @@ function ParentNote({ task, depth, titleOf }: { task: ApiTask; depth: number; ti
   }
   return isOrphan(task) ? <span className="shrink-0 text-[10.5px] text-faint" data-parent-note>parent deleted</span> : null
 }
+
+const QUIET = { running: false, needsInput: false }
+
+/**
+ * One row of the tree. Its props are data, never elements or tree nodes: the
+ * sidebar redraws whenever the main view does and rebuilds its nodes on every
+ * list refetch, while Query hands back the same task for a row that did not
+ * change. A row whose task, status and selection held is skipped.
+ */
+const TreeRow = memo(function TreeRow({ task, depth, count, open, running, needsInput, onToggle, status, pullRequest, selected, onSelect, parentTitle, parentNote, touch }: {
+  task: ApiTask
+  depth: number
+  /** how many subtasks it has; 0 draws no disclosure */
+  count: number
+  open: boolean
+  /** while its subtasks are hidden: whether one of them runs, or needs the person */
+  running: boolean
+  needsInput: boolean
+  onToggle: (id: string) => void
+  status?: StatusEntry
+  pullRequest?: PullRequestOverviewEntry
+  selected: boolean
+  onSelect: (id: string) => void
+  parentTitle: string | null
+  /** the parent this row names because it is drawn outside it */
+  parentNote: string | null
+  touch: boolean
+}) {
+  const family = count > 0
+  const props = {
+    task,
+    status,
+    pullRequest,
+    selected,
+    onSelect,
+    depth,
+    lead: family ? <DisclosureButton task={task} count={count} open={open} onToggle={() => onToggle(task.id)} touch={touch} /> : undefined,
+    trail: (
+      <>
+        {family && <SubtaskCount count={count} running={running} needsInput={needsInput} />}
+        <ParentNote task={task} title={parentNote} />
+      </>
+    ),
+    parentTitle,
+  }
+  return touch ? <TaskRowTouch {...props} /> : <TaskRow {...props} />
+})
 
 /** The rows of one list, nested. */
 export function TaskTree({ nodes, view, status, pullRequests, selectedId, onSelect, touch }: {
@@ -94,24 +140,27 @@ export function TaskTree({ nodes, view, status, pullRequests, selectedId, onSele
   const { disclosure, titleOf } = view
   return visibleRows(nodes, disclosure.isOpen).map(({ node, depth }) => {
     const { task } = node
+    const parent = parentOutside(task, depth)
     const open = disclosure.isOpen(task.id)
-    const family = node.children.length > 0
-    const props = {
-      task,
-      status: status?.[task.id],
-      pullRequest: pullRequests?.[task.id],
-      selected: task.id === selectedId,
-      onSelect,
-      depth,
-      lead: family ? <DisclosureButton task={task} count={node.children.length} open={open} onToggle={() => disclosure.toggle(task.id)} touch={touch} /> : undefined,
-      trail: (
-        <>
-          {family && <SubtaskCount node={node} open={open} />}
-          <ParentNote task={task} depth={depth} titleOf={titleOf} />
-        </>
-      ),
-      parentTitle: task.parent_task_id ? titleOf(task.parent_task_id) : null,
-    }
-    return touch ? <TaskRowTouch key={task.id} {...props} /> : <TaskRow key={task.id} {...props} />
+    const { running, needsInput } = open || node.children.length === 0 ? QUIET : rollup(node)
+    return (
+      <TreeRow
+        key={task.id}
+        task={task}
+        depth={depth}
+        count={node.children.length}
+        open={open}
+        running={running}
+        needsInput={needsInput}
+        onToggle={disclosure.toggle}
+        status={status?.[task.id]}
+        pullRequest={pullRequests?.[task.id]}
+        selected={task.id === selectedId}
+        onSelect={onSelect}
+        parentTitle={task.parent_task_id ? titleOf(task.parent_task_id) : null}
+        parentNote={parent ? (titleOf(parent) ?? parent) : null}
+        touch={touch}
+      />
+    )
   })
 }

@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { forgetDiagrams } from "@/lib/mermaid-diagrams"
 import * as safety from "@/lib/mermaid-safety"
 import { DEFAULT_THEME_PREFERENCE, themeStore } from "@/lib/theme"
 
@@ -37,6 +38,7 @@ describe("a hostile mermaid fence", () => {
     parseDiagram.mockReset()
     parseDiagram.mockResolvedValue({ diagramType: "flowchart-v2", config: {} })
     vi.mocked(safety.sanitizeMermaidSvg).mockClear()
+    forgetDiagrams()
     localStorage.clear()
     themeStore.set(DEFAULT_THEME_PREFERENCE)
   })
@@ -124,5 +126,29 @@ describe("a hostile mermaid fence", () => {
     expect(middle.defaultPrevented).toBe(true)
     expect(open).toHaveBeenCalledOnce()
     open.mockRestore()
+  })
+})
+
+describe("a diagram drawn before", () => {
+  beforeEach(() => {
+    renderDiagram.mockReset()
+    getMermaid.mockReset()
+    getMermaid.mockImplementation(() => ({ render: renderDiagram }))
+    getDiagramFromText.mockResolvedValue({ db: {} })
+    parseDiagram.mockResolvedValue({ diagramType: "flowchart-v2", config: {} })
+    forgetDiagrams()
+    themeStore.set(DEFAULT_THEME_PREFERENCE)
+  })
+
+  it("is not drawn again when its fence mounts again in the same theme", async () => {
+    renderDiagram.mockResolvedValue({ svg: "<svg data-test='drawn'></svg>" })
+    const first = render(<Prose text={FENCE} />)
+    await screen.findByRole("application", { name: "Mermaid diagram" })
+    first.unmount()
+
+    const { container } = render(<Prose text={FENCE} />)
+    // there from the first render: no spinner, no second layout
+    expect(container.querySelector("[data-test='drawn']")).not.toBeNull()
+    expect(renderDiagram).toHaveBeenCalledOnce()
   })
 })

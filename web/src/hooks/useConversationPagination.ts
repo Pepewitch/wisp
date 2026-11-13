@@ -40,6 +40,30 @@ export function useConversationPagination({
     wasPinned: boolean
   } | null>(null)
 
+  const pinnedRef = useRef(pinned)
+  useLayoutEffect(() => {
+    pinnedRef.current = pinned
+  }, [pinned])
+
+  // A live turn commits many times a frame, and every tail write reads
+  // layout. So the write waits for the frame, which still runs before it is
+  // painted, happens once however many commits asked, and is skipped when the
+  // reader is already on the tail.
+  const pinFrame = useRef<number | null>(null)
+  const pinToTail = useCallback(() => {
+    if (pinFrame.current !== null) return
+    pinFrame.current = requestAnimationFrame(() => {
+      pinFrame.current = null
+      const el = viewport.current
+      if (!el || !pinnedRef.current) return
+      const tail = el.scrollHeight - el.clientHeight
+      if (el.scrollTop < tail - 1) el.scrollTop = tail
+    })
+  }, [])
+  useEffect(() => () => {
+    if (pinFrame.current !== null) cancelAnimationFrame(pinFrame.current)
+  }, [])
+
   useLayoutEffect(() => {
     const el = viewport.current
     const pending = pendingPrepend.current
@@ -50,7 +74,7 @@ export function useConversationPagination({
       pendingPrepend.current = null
       return
     }
-    if (pinned && el) el.scrollTop = el.scrollHeight
+    if (pinned && el) pinToTail()
   }, [
     firstTurn,
     focusRequests,
@@ -60,24 +84,19 @@ export function useConversationPagination({
     task?.turns.length,
     taskIdentity,
     viewport,
+    pinToTail,
   ])
 
   // The viewport can shrink with no scroll event and no new content: a band
   // above it growing (a new revision, Compare opening) or the composer
   // growing. A pinned reader must stay on the tail.
-  const pinnedRef = useRef(pinned)
-  useEffect(() => {
-    pinnedRef.current = pinned
-  }, [pinned])
   useEffect(() => {
     const el = viewport.current
     if (!el || typeof ResizeObserver === "undefined") return
-    const observer = new ResizeObserver(() => {
-      if (pinnedRef.current) el.scrollTop = el.scrollHeight
-    })
+    const observer = new ResizeObserver(pinToTail)
     observer.observe(el)
     return () => observer.disconnect()
-  }, [taskIdentity])
+  }, [taskIdentity, pinToTail])
 
   // A task switch and `/log` request each make this a fresh tail read.
   const [seenTask, setSeenTask] = useState(taskIdentity)

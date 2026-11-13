@@ -6,7 +6,7 @@ import type { AutopilotHistoryResponse } from "../../../shared/api/autopilot";
 import type { ProjectEntriesResponse } from "../../../shared/api/project-entries";
 import type { Workflow, WorkflowDefinition } from "../../../shared/workflows";
 import { ApiError } from "@/lib/api";
-import { prependConversationPage, refreshConversationPage } from "@/lib/conversation-pages";
+import { prependConversationPage, refreshConversationPage, trimConversationPage } from "@/lib/conversation-pages";
 import { parseDiff, type ParsedDiff } from "@/lib/diff";
 import { reconcilePullRequests } from "@/lib/pull-request-record";
 import { useDaemonRuntime, type DaemonRuntime } from "@/lib/runtime";
@@ -275,6 +275,16 @@ export function useTaskDetail(id: string | null) {
   useEffect(() => {
     resetOlder()
   }, [id, resetOlder])
+  // Leaving a task drops the pages scrolled back through: the cache keeps
+  // only the newest one, so coming back mounts fifty turns, not hundreds.
+  useEffect(() => {
+    if (id === null) return
+    return () => {
+      client.setQueryData<ConversationDetail>(qk.task(id), (current) =>
+        current ? trimConversationPage(current, CONVERSATION_PAGE_SIZE) : current,
+      )
+    }
+  }, [client, id, qk])
   return {
     ...query,
     hasOlderTurns: query.data?.has_older_turns === true,
