@@ -179,12 +179,14 @@ export function clearAssetCache(connectionId?: string, pathPrefix = ""): void {
  * bytes until the refetch answers, then swaps, or turns unavailable when the
  * daemon refuses. Anything else just drops its entry and fetches on its next
  * way into view. `skip` keeps paths whose bytes cannot change, such as a
- * content-addressed output.
+ * content-addressed output; one that failed has no bytes to keep, so it is
+ * asked again all the same (a fetch that met the daemon going down).
  */
 export function refreshAssets(connectionId: string, pathPrefix = "", skip?: (path: string) => boolean): void {
   const prefixed = matcher(connectionId, pathPrefix)
   const matches = (key: string) => prefixed(key) && !skip?.(key.slice(connectionId.length + 1))
   const touched = new Set<string>()
+  for (const key of failures) if (prefixed(key)) { failures.delete(key); touched.add(key) }
   for (const [key, entry] of cache) {
     if (!matches(key)) continue
     if ((heldAssets.get(key) ?? 0) > 0) {
