@@ -2,6 +2,7 @@
 // turn reports through the turn it read, never anything actionable, with the
 // audit kept and a queued message that loses everything cancelled.
 import { describe, expect, test } from "bun:test";
+import { parseArgs } from "../src/cli-args";
 import { parseReport, reportAckLine, REPORT_USAGE } from "../src/cli-report";
 import type { WispConfig } from "../src/config";
 import { route } from "../src/routes";
@@ -170,6 +171,14 @@ describe("wisp report ack", () => {
     expect(parseReport(["ack", "tkid"], { "through-turn": "0" })).toContain("--through-turn must be a turn number");
     expect(parseReport(["ack"], {})).toBe(REPORT_USAGE);
     expect(parseReport(["drop", "tkid"], {})).toBe(REPORT_USAGE);
+  });
+
+  test("reads the turn from the command line as typed, not as a stray argument", () => {
+    // the words after `wisp report`, as the CLI hands them to the parser
+    const { positional, flags } = parseArgs(["ack", "tkid", "--through-turn", "1"]);
+    expect(parseReport(positional, flags)).toEqual({ child: "tkid", throughTurn: 1 });
+    const json = parseArgs(["ack", "tkid", "--through-turn", "2", "--json"]);
+    expect(parseReport(json.positional, json.flags)).toEqual({ child: "tkid", throughTurn: 2 });
   });
 
   test("says what it marked and what still waits", () => {
