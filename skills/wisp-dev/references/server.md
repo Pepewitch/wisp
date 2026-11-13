@@ -109,8 +109,13 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   inventory's `ppid`), so workflows, subtask reports and autopilot are never
   held by one. Tasks that just ended still count until the call they wake
   opens its follow-up turn (at most `lingerTiming.quietMs`; `backgroundTasks`
-  in `live-input.ts`), or the task reads settled before that answer. A message for another agent, `/fresh`, Stop, archive and a
-  daemon exit end it as they end a lingering process.
+  in `live-input.ts`), or the task reads settled before that answer. A
+  message for another agent, Stop, archive and a daemon exit end it as they
+  end a lingering process; `/fresh` ends a warm one at once
+  (`retireWarmProcess`). A message that has to wait for an old process to
+  exit marks its task `running` until its turn starts (`awaitProcessExit` in
+  `runner.ts`), so `wisp wait`, workflows, reports and autopilot never read
+  the previous answer as its reply.
 - Stopping a turn signals that group, not just the leader: a harness is a
   supervisor, and killing only it left builds, servers, and sub-agents running
   (ENG-03). A descendant that calls `setsid` itself leaves the group by design

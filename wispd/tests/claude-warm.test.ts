@@ -9,8 +9,11 @@ import { archiveTaskRows } from "../src/domain/archive";
 import { activeLiveInput, lingerTiming, warmProcessCount } from "../src/live-input";
 import { processGroupAlive, signalProcessGroup } from "../src/process-tree";
 import { startTurn, submitTaskMessage } from "../src/runner";
+import { route } from "../src/daemon";
 import { createTask, freeSlot, getTask, getTaskMessage, newTaskId, setTaskFields, turnsFor } from "../src/store";
+import { cancelQueuedTaskMessage } from "../src/store-messages";
 import { BACKGROUND_SETTLE_MS, backgroundWork, refreshProcessGroups } from "../src/task-processes";
+import { testRouteContext } from "./helpers/daemon-context";
 
 const base: WispConfig = {
   instanceId: "123e4567-e89b-42d3-a456-426614174000",
@@ -256,6 +259,61 @@ describe("a warm Claude process", () => {
       await until(() => readFileSync(turnsFor(task.id)[1]!.log_file, "utf8").includes("task_notification"));
       await until(() => backgroundWork(task.id).state === "none", 2000);
     });
+  });
+
+  test("a message waiting for the warm process to exit reads running until its turn starts", async () => {
+    // a process that takes a moment to exit, as claude does (about 0.5 s)
+    const def = claudeDef(["trap 'sleep 0.6; exit 0' TERM", resumed("resume", "SECOND"), "IFS= read -r first", ...answer("FIRST"), ...UNTIL_EOF]);
+    const task = makeTask();
+    startTurn(task, "first", def, cfg);
+    await until(done(task.id, 1));
+    await until(() => warmProcessCount() >= 1);
+
+    writeFileSync(join(task.worktree_path!, "resume"), "");
+    const sent = await submitTaskMessage(getTask(task.id)!, "switch models", def, cfg, [], undefined, { fake: def }, {
+      harness: "fake", model: "another-model", effort: null, fast: false, freshContext: false,
+    });
+    expect(sent.disposition).toBe("queued-next");
+    // `wisp wait`, a heartbeat, a report hold and autopilot must not read the old answer as the task's last word
+    expect(getTask(task.id)!.state).toBe("running");
+    await until(done(task.id, 2));
+    expect(turnsFor(task.id)[1]!.result).toBe("SECOND");
+    expect(getTask(task.id)!.state).toBe("done");
+  });
+
+  test("a waiting message withdrawn before the process exits leaves the task as it was", async () => {
+    const def = claudeDef(["trap 'sleep 0.6; exit 0' TERM", "IFS= read -r first", ...answer("FIRST"), ...UNTIL_EOF]);
+    const task = makeTask();
+    startTurn(task, "first", def, cfg);
+    await until(done(task.id, 1));
+    await until(() => warmProcessCount() >= 1);
+    const before = getTask(task.id)!;
+    const pid = turnsFor(task.id)[0]!.pid!;
+
+    const sent = await submitTaskMessage(getTask(task.id)!, "switch models", def, cfg, [], undefined, { fake: def }, {
+      harness: "fake", model: "another-model", effort: null, fast: false, freshContext: false,
+    });
+    expect(getTask(task.id)!.state).toBe("running");
+    expect(cancelQueuedTaskMessage(sent.message.id, task.id)).not.toBeNull();
+    await until(() => !processGroupAlive(pid));
+    await until(() => getTask(task.id)!.state === "done");
+    expect(getTask(task.id)!.state_detail).toBe(before.state_detail);
+    expect(turnsFor(task.id)).toHaveLength(1);
+  });
+
+  test("/fresh ends a warm process at once: no turn can ever take it", async () => {
+    const def = claudeDef(["IFS= read -r first", ...answer("FIRST"), ...UNTIL_EOF]);
+    const task = makeTask();
+    startTurn(task, "first", def, cfg);
+    await until(done(task.id, 1));
+    const pid = turnsFor(task.id)[0]!.pid!;
+    await until(() => warmProcessCount() >= 1);
+
+    const url = new URL(`http://wisp.test/api/tasks/${task.id}/fresh-session`);
+    const res = await route(new Request(url, { method: "POST" }), url, url.pathname, testRouteContext(cfg, { fake: def }));
+    expect(res.status).toBe(200);
+    await until(() => !processGroupAlive(pid));
+    expect(getTask(task.id)!.state).toBe("done");
   });
 
   test("archive takes a warm task as it is, and stops the process", async () => {

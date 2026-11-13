@@ -356,6 +356,9 @@ for up to 10 minutes, so the task's next turn starts at once in it instead of
 booting a new one. It is not background work: `show` and `wait --settled` do
 not report it, and it ends on its own. At most `warmHarnessProcesses` (4)
 are kept across the daemon; set it to 0 in `config.json` to turn this off.
+A message for another model, effort or context starts once that process has
+exited (about half a second); meanwhile the task reads `running`, so a
+`wait` right after the `send` waits for the new answer.
 `interrupt` explicitly stops the active turn and all tracked task groups and waits
 for completion, escalating if needed. Sending and archiving are refused while
 Stop is pending or incomplete; retry Stop after resolving the reported failure.
