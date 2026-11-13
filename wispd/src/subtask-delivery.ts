@@ -15,7 +15,9 @@
  *     would otherwise keep its reports waiting without bound;
  *  3. starts the report message already queued for it, by id, or else turns
  *     every pending row into ONE message (reports close together arrive
- *     together) and starts that.
+ *     together) and starts that. While other children are still working,
+ *     routine reports first wait for them, up to REPORT_IDLE_HOLD_MS, so a
+ *     fan-out's results cost the parent one turn rather than one each.
  * "Delivered" is set by a trigger when the message starts or steers a turn, so a crash
  * anywhere leaves the rows where a later pass picks them up. Passes run a
  * short debounce after anything about the parent or a child changes, at
@@ -41,6 +43,42 @@ export const REPORT_STEER_AFTER_MS = 5 * 60_000;
 export const REPORT_DEBOUNCE_MS = 3_000;
 const BACKSTOP_MS = 30_000;
 
+/**
+ * How long a routine report waits for its siblings while the parent is idle.
+ *
+ * Every report an idle parent takes starts a whole turn, and a turn re-reads
+ * the parent's entire conversation: an orchestrating task fanning out to many
+ * subtasks paid that once per finished child (in one measured home, 458
+ * reports started 421 parent turns, each re-reading ~355k tokens). While
+ * other children that report to the same parent are still working, a routine
+ * report waits up to this long, counted from the oldest one waiting, so
+ * results finishing minutes apart arrive as one message and one turn. The
+ * last working sibling settling releases the wait at once, and so does any
+ * report that asks the parent to act (URGENT_REPORT_KINDS).
+ */
+export const REPORT_IDLE_HOLD_MS = 2 * 60_000;
+
+/** Reports that ask the parent to act now: never held for siblings, and they carry any held report with them. */
+const URGENT_REPORT_KINDS = new Set(["question", "needs-you", "stuck", "setup-failed"]);
+
+/**
+ * When a parent's pending reports may go, if they should wait for working
+ * siblings first (REPORT_IDLE_HOLD_MS); null when they may go now. A child
+ * counts as working while it is creating, queued or running and reports to
+ * this parent; a stuck or needs-input child has already reported why.
+ */
+export function siblingHoldUntil(parentId: string, holdMs: number, now = Date.now()): number | null {
+  if (holdMs <= 0) return null;
+  const pending = db.query("SELECT kind, created_at FROM subtask_reports WHERE parent_task_id = ? AND state = 'pending'")
+    .all(parentId) as { kind: string; created_at: string }[];
+  if (pending.length === 0 || pending.some((row) => URGENT_REPORT_KINDS.has(row.kind))) return null;
+  const working = db.query(`SELECT 1 FROM tasks WHERE parent_task_id = ? AND report_to_parent = 1 AND archived = 0
+    AND state IN ('creating', 'queued', 'running') LIMIT 1`).get(parentId);
+  if (!working) return null;
+  const until = Math.min(...pending.map((row) => Date.parse(row.created_at))) + holdMs;
+  return Number.isFinite(until) && until > now ? until : null;
+}
+
 function dropPending(parentId: string, reason: string): void {
   db.run("UPDATE subtask_reports SET state = 'dropped', reason = ?, updated_at = ? WHERE parent_task_id = ? AND state = 'pending'",
     [reason, new Date().toISOString(), parentId]);
@@ -48,6 +86,8 @@ function dropPending(parentId: string, reason: string): void {
 
 export class SubtaskDelivery {
   private readonly timers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** One wake per parent for the moment its sibling hold ends; the backstop alone would add up to 30 s. */
+  private readonly holds = new Map<string, ReturnType<typeof setTimeout>>();
   private unsubscribe: (() => void) | null = null;
   private backstop: ReturnType<typeof setInterval> | null = null;
 
@@ -55,6 +95,7 @@ export class SubtaskDelivery {
     private readonly cfg: WispConfig,
     private readonly adapters: Readonly<Record<string, AdapterDef>>,
     private readonly debounceMs = REPORT_DEBOUNCE_MS,
+    private readonly idleHoldMs = REPORT_IDLE_HOLD_MS,
   ) {}
 
   start(): void {
@@ -69,8 +110,18 @@ export class SubtaskDelivery {
   async stop(): Promise<void> {
     this.unsubscribe?.();
     if (this.backstop) clearInterval(this.backstop);
-    for (const timer of this.timers.values()) clearTimeout(timer);
+    for (const timer of [...this.timers.values(), ...this.holds.values()]) clearTimeout(timer);
     this.timers.clear();
+    this.holds.clear();
+  }
+
+  /** A pass for this parent when its sibling hold ends; an earlier pass meanwhile may already have delivered. */
+  private wakeAt(parentId: string, at: number): void {
+    if (this.holds.has(parentId)) return;
+    this.holds.set(parentId, setTimeout(() => {
+      this.holds.delete(parentId);
+      this.deliver(parentId);
+    }, Math.max(0, at - Date.now()) + 50));
   }
 
   /** A pass for this parent after the debounce; a second kick meanwhile does not move it. */
@@ -103,7 +154,12 @@ export class SubtaskDelivery {
         this.steerIfWaitedTooLong(parent);
         return;
       }
-      const id = queuedReport(parent.id) ?? queueReports(parent);
+      const queued = queuedReport(parent.id);
+      // A report already queued waited behind the parent's own work: it goes now. Otherwise
+      // routine reports wait a little for siblings still working, to arrive as one turn.
+      const holdUntil = queued ? null : siblingHoldUntil(parent.id, this.idleHoldMs);
+      if (holdUntil !== null) return this.wakeAt(parent.id, holdUntil);
+      const id = queued ?? queueReports(parent);
       if (id) startNextQueuedMessage(parent.id, this.adapters, this.cfg, id);
     } catch (error) {
       console.error(`[wisp] subtask reports for ${parentId}: ${error instanceof Error ? error.message : String(error)}`);
