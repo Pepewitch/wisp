@@ -96,7 +96,8 @@ states, diagnostics, and stop behavior.
 
 A Claude turn settles on its answer. When nothing it started still runs in
 the background, its process stays warm for up to 10 minutes and takes the
-task's next turn on the same stdin, instead of a resumed spawn paying the
+task's next turn on the same stdin (for at most 60 minutes from its spawn,
+so a busy task still picks up settings, skills and CLAUDE.md edits), instead of a resumed spawn paying the
 CLI's boot, a cold first call and its exit again. The daemon keeps at most
 `warmHarnessProcesses` (4) of these, least recently used first. A warm
 process is not background work, so it holds up no workflow, subtask report

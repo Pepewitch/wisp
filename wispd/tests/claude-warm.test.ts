@@ -142,6 +142,50 @@ describe("a warm Claude process", () => {
     });
   });
 
+  test("past its maximum lifetime it finishes the turn it serves, then exits, and the next turn starts fresh", async () => {
+    await withTiming({ warmMaxAgeMs: 1500 }, async () => {
+      const def = claudeDef([
+        resumed("resume", "THIRD"),
+        "IFS= read -r first",
+        ...answer("FIRST"),
+        "IFS= read -r second || exit 7",
+        // a turn still running when the lifetime ends is never cut short
+        "sleep 1.7",
+        ...answer("SECOND"),
+        ...UNTIL_EOF,
+      ]);
+      const task = makeTask();
+      startTurn(task, "first", def, cfg);
+      await until(done(task.id, 1));
+      const first = turnsFor(task.id)[0]!;
+      await until(() => warmProcessCount() >= 1);
+
+      await submitTaskMessage(getTask(task.id)!, "a long one", def, cfg);
+      await until(done(task.id, 2));
+      const second = turnsFor(task.id)[1]!;
+      expect(second).toMatchObject({ status: "done", result: "SECOND", pid: first.pid });
+      // its input closed at that answer: EOF, exit 0
+      await until(() => existsSync(join(task.worktree_path!, "exited")) && !processGroupAlive(first.pid!));
+
+      writeFileSync(join(task.worktree_path!, "resume"), "");
+      await submitTaskMessage(getTask(task.id)!, "again", def, cfg);
+      await until(done(task.id, 3));
+      expect(turnsFor(task.id)[2]!.pid).not.toBe(first.pid);
+    });
+  }, 15_000);
+
+  test("a warm process that reaches its maximum lifetime while idle exits then, not after the idle window", async () => {
+    await withTiming({ warmMaxAgeMs: 600 }, async () => {
+      const def = claudeDef(["IFS= read -r first", ...answer("FIRST"), ...UNTIL_EOF]);
+      const task = makeTask();
+      startTurn(task, "first", def, cfg);
+      await until(done(task.id, 1));
+      const pid = turnsFor(task.id)[0]!.pid!;
+      await until(() => existsSync(join(task.worktree_path!, "exited")) && !processGroupAlive(pid), 3000);
+      expect(warmProcessCount()).toBe(0);
+    });
+  });
+
   test("the least recently warmed goes first when the daemon keeps its cap", async () => {
     const one = { ...cfg, warmHarnessProcesses: 1 };
     const def = claudeDef(["IFS= read -r first", ...answer("FIRST"), ...UNTIL_EOF]);

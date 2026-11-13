@@ -353,7 +353,9 @@ and the app-server exits once the goal is complete, paused, blocked or out of
 budget (`wisp wait --settled` waits for that).
 A Claude process whose answer leaves nothing running also stays alive, idle,
 for up to 10 minutes, so the task's next turn starts at once in it instead of
-booting a new one. It is not background work: `show` and `wait --settled` do
+booting a new one. A process serves turns for at most an hour from its start,
+then the next turn boots a new one that reads current settings, skills and
+CLAUDE.md. It is not background work: `show` and `wait --settled` do
 not report it, and it ends on its own. At most `warmHarnessProcesses` (4)
 are kept across the daemon; set it to 0 in `config.json` to turn this off.
 `interrupt` explicitly stops the active turn and all tracked task groups and waits

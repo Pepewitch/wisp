@@ -290,9 +290,11 @@ function configureClaude(options: ConfigureLiveTurnOptions, strategy: ImageInput
  * in the background waits for a call that end may wake before its input closes.
  * `recheckMs`: how often a lingering Droid checks that the commands it waits
  * for still run. `warmMs`: how long a warm Claude process waits for its task's
- * next turn (see `keepWarm`). A test seam; production never changes them.
+ * next turn (see `keepWarm`). `warmMaxAgeMs`: how long after its spawn a
+ * Claude process may still be kept warm. A test seam; production never
+ * changes them.
  */
-export const lingerTiming = { followOnMs: 1_500, quietMs: 10_000, recheckMs: 5_000, warmMs: 10 * 60_000 };
+export const lingerTiming = { followOnMs: 1_500, quietMs: 10_000, recheckMs: 5_000, warmMs: 10 * 60_000, warmMaxAgeMs: 60 * 60_000 };
 
 /**
  * Claude processes kept WARM: the turn's answer is in, nothing runs in the
@@ -307,10 +309,18 @@ export const lingerTiming = { followOnMs: 1_500, quietMs: 10_000, recheckMs: 5_0
  * come minutes apart (subtask reports, five-minute heartbeats, autopilot), so
  * most of them find their process warm.
  *
- * Bounded both ways. In time, `lingerTiming.warmMs` (10 minutes): long enough
- * for that traffic, short enough that a process does not sit on its memory
- * (about 270 MB each) or on settings, skills or CLAUDE.md edits it read at
- * boot for long. In number, the config's `warmHarnessProcesses` (4) across
+ * Bounded both ways. In time, `lingerTiming.warmMs` (10 minutes) idle: long
+ * enough for that traffic, short enough that a process does not sit on its
+ * memory (about 270 MB each) for long. And `lingerTiming.warmMaxAgeMs` (60
+ * minutes) from its spawn, however busy: every adoption restarts the idle
+ * window, so a task woken every five minutes would otherwise keep one process
+ * for days, never reading the settings, skills, plugins or CLAUDE.md edits
+ * made since its boot, and growing as a long-lived CLI does. Past it the
+ * process takes no new turn: the one it serves finishes, and it exits at that
+ * answer, or at once when it is idle. An hour still serves a five-minute
+ * heartbeat eleven turns in twelve warm, one boot an hour costs about 2 s,
+ * and the provider's prompt cache lives an hour at most anyway, so the cold
+ * call after it loses little. In number, the config's `warmHarnessProcesses` (4) across
  * the daemon, the least recently warmed going first. Only the process
  * changes: the session, the prompt and the harness's own choices are the
  * same either way.
@@ -427,6 +437,8 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
   private notice: string | null = null;
   /** The last answer was an error: its process is not kept warm, so the next turn starts on a fresh one. */
   private answerFailed = false;
+  /** When the process started, for its maximum warm lifetime (`lingerTiming.warmMaxAgeMs`). */
+  private readonly spawnedAt = Date.now();
   /**
    * The background tasks that just ended while no turn was open, and until when
    * they still count (see `backgroundTasks`); null once the call they wake has
@@ -640,7 +652,17 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
    * closes its input and exits, which ends the turn.
    */
   private finish(turnId: number): void {
-    if (this.answerFailed || !this.options.linger?.warm?.() || !this.linger()) void closeLiveInput(this.taskId, turnId);
+    if (!this.warmTerms() || !this.linger()) void closeLiveInput(this.taskId, turnId);
+  }
+
+  /** Whether the process may stay warm now: not after an error answer, nor past its maximum lifetime. */
+  private warmTerms(): WarmPolicy | null {
+    if (this.answerFailed || this.warmLeftMs() <= 0) return null;
+    return this.options.linger?.warm?.() ?? null;
+  }
+
+  private warmLeftMs(): number {
+    return this.spawnedAt + lingerTiming.warmMaxAgeMs - Date.now();
   }
 
   /** Settle the current turn and keep the process: for its background work, or warm. False when it may not. */
@@ -718,12 +740,13 @@ export class ClaudeLiveProcess implements LingeringLiveProcess {
     if (this.quiet) return;
     // Warm, it waits for the task's next turn; otherwise only for a call the
     // background work's end may still wake.
-    const warm = this.answerFailed ? null : (this.options.linger?.warm?.() ?? null);
+    // Its maximum lifetime ends an idle wait early: the process then takes no new turn.
+    const warm = this.warmTerms();
     if (warm) keepWarm(this, warm.cap);
     this.quiet = setTimeout(() => {
       this.quiet = null;
       if (this.phase === "lingering" && this.followUp.activeCount() === 0) void this.close().catch(() => {});
-    }, warm ? lingerTiming.warmMs : lingerTiming.quietMs);
+    }, warm ? Math.min(lingerTiming.warmMs, this.warmLeftMs()) : lingerTiming.quietMs);
     this.quiet.unref?.();
   }
 

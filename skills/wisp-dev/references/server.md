@@ -100,7 +100,9 @@ schemas, strategy names, and timeouts belong in source and tests, not here.
   takes the task's next turn through the same adoption, saving the CLI's boot,
   its cold first call and its exit (0.9 s off a small session's median turn,
   measured). Bounded: 10
-  minutes idle (`lingerTiming.warmMs`), and `warmHarnessProcesses` (default 4)
+  minutes idle (`lingerTiming.warmMs`), 60 minutes from its spawn however busy
+  (`lingerTiming.warmMaxAgeMs`: past it the turn it serves finishes and the
+  process exits at that answer, or at once when idle), and `warmHarnessProcesses` (default 4)
   across the daemon, least recently warmed first; never after an error answer
   or for a verification task, whose turns carry a per-round token in their
   environment. A warm process is not background work: a kept harness's group
