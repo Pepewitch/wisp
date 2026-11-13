@@ -120,7 +120,8 @@ export async function waitCommand(positional: string[], flags: Flags): Promise<v
   const deadline = Date.now() + timeoutSec * 1000;
   for (;;) {
     const tasks: WaitTask[] = [];
-    for (const id of ids) tasks.push((await api(`/api/tasks/${id}`)) as ApiTask);
+    // the task row alone, not the full detail (an older daemon sends that, a superset)
+    for (const id of ids) tasks.push((await api(`/api/tasks/${id}?view=summary`)) as ApiTask);
     const outcome = waitOutcome(tasks, mode, settled);
     if (outcome) {
       for (const task of outcome.report) print(waitLine(task));

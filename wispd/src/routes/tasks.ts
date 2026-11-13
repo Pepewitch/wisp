@@ -393,6 +393,31 @@ function pullRequestResponse(task: Task, pullRequests?: PullRequestCache): Respo
 }
 
 /**
+ * GET /api/tasks/:id: the Git-aware detail, or with `?view=summary` the task
+ * row alone. `wisp wait` reads the summary every two seconds per task and
+ * `wisp send` once: the full detail is every turn and message plus git, 5.5 MB
+ * on a 1,341-turn task. An older daemon ignores the parameter and answers the
+ * full detail, which carries every field the summary has.
+ */
+function taskDetailRoute(task: Task, url: URL, adapters: Record<string, AdapterDef>): Response | Promise<Response> {
+  const view = url.searchParams.get("view");
+  if (view === "summary") return json<ApiTask>(apiTask(task));
+  if (view !== null) return err(`view must be summary, got '${view}'`, 400);
+  return (async () => {
+    // An archived task is ALREADY modelled as "the worktree is gone", so it
+    // is not asked — a health sentence there would tell the user to archive a
+    // task they archived.
+    const health = task.archived || !task.worktree_path ? null : await worktreeHealth(task.worktree_path);
+    const stat = health?.ok ? await diffStat(task.worktree_path!) : null;
+    return json<TaskDetail>({
+      ...conversationDetail(task, adapters),
+      diffstat: stat,
+      worktreeReason: health?.reason ?? null,
+    });
+  })();
+}
+
+/**
  * /api/tasks/:id and its action sub-routes. `null` means the path is not a
  * task route at all, so the dispatcher carries on down its chain — exactly
  * what the single if-chain did by falling through.
@@ -447,20 +472,7 @@ export function taskRoute(
     })();
   }
 
-  if (!action && m === "GET") {
-    return (async () => {
-      // An archived task is ALREADY modelled as "the worktree is gone", so it
-      // is not asked — a health sentence there would tell the user to archive a
-      // task they archived.
-      const health = task.archived || !task.worktree_path ? null : await worktreeHealth(task.worktree_path);
-      const stat = health?.ok ? await diffStat(task.worktree_path!) : null;
-      return json<TaskDetail>({
-        ...conversationDetail(task, adapters),
-        diffstat: stat,
-        worktreeReason: health?.reason ?? null,
-      });
-    })();
-  }
+  if (!action && m === "GET") return taskDetailRoute(task, url, adapters);
 
   if (action === "log" && m === "GET") {
     return taskLogResponse(task, url);

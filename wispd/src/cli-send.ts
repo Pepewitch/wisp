@@ -98,7 +98,7 @@ export async function sendCommand(options: SendCommandOptions): Promise<void> {
   if (agent.model !== undefined || agent.effort !== undefined) {
     let offerError: string | null = null;
     try {
-      const task = (await options.request(`/api/tasks/${id}`, "GET", undefined)) as { harness: string };
+      const task = (await options.request(`/api/tasks/${id}?view=summary`, "GET", undefined)) as { harness: string };
       const { harnesses } = (await options.request("/api/harnesses", "GET", undefined)) as { harnesses: HarnessOffer[] };
       offerError = agentOfferError(agent, task.harness, harnesses);
     } catch (error) {

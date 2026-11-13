@@ -237,7 +237,7 @@ exited nonzero), harness, the latest turn's actual model (`(requested)` when
 the harness never reported one), turn count, age, title, and `state_detail`.
 
 ```
-wisp show <task>
+wisp show <task> [--all]
 wisp result <task> [turn]
 wisp log <task> [turn] [-f|--follow] [--raw] [--diagnostic]
 ```
@@ -249,7 +249,8 @@ excerpt, attached files), diffstat of the worktree. A prompt excerpt is headed
 `Wisp · auto-fix · PR #12 · round 2 of 5:`, `Wisp · workflow · heartbeat:`,
 `Claude Code · background update:`. For a subtask it prints
 `parent:` (kind, where its base came from) and, for a parent, a `subtasks:`
-list (id, state, kind, title). `result`: the full prompt
+list (id, state, kind, title) of its unarchived children, with a count of the
+archived ones; `--all` lists those too. `result`: the full prompt
 and the agent's full answer for one turn (default: latest turn with a result)
 — the token-cheap way to read an outcome. `log`: the activity feed, rendered
 per-harness (`--raw` for the retained harness stream, `-f` to follow live).

@@ -84,8 +84,13 @@ export function nestedTasks(tasks: ApiTaskListItem[]): { task: ApiTaskListItem; 
   return out;
 }
 
-/** `wisp show`'s family lines; silent for a root task without children and on a daemon from before subtasks. */
-export async function printFamily(task: TaskDetail): Promise<void> {
+/**
+ * `wisp show`'s family lines; silent for a root task without children and on
+ * a daemon from before subtasks. Archived children are counted, not listed,
+ * unless `all`: an orchestrator that has run 258 subtasks printed every one
+ * of them, about 6,000 tokens of finished work, on every `show`.
+ */
+export async function printFamily(task: TaskDetail, all = false): Promise<void> {
   if (!("parent_task_id" in task)) return;
   if (task.subtask_kind) {
     const parent = task.parent_task_id ?? "deleted";
@@ -98,11 +103,14 @@ export async function printFamily(task: TaskDetail): Promise<void> {
     return;
   }
   if (children.length === 0) return;
+  const listed = all ? children : children.filter((child) => !child.archived);
   print("subtasks:");
-  for (const child of children) {
+  for (const child of listed) {
     const what = child.reviewer ? "reviewer" : child.kind ?? "subtask";
     print(`  ${child.id}  ${child.archived ? "archived" : child.state}  ${what}  ${child.title.slice(0, 50)}`);
   }
+  const hidden = children.length - listed.length;
+  if (hidden > 0) print(`  … and ${hidden} archived (${COMMAND} show ${task.id} --all lists them)`);
 }
 
 /** `wisp archive <id> [--force] [--subtasks archive|force]` */
