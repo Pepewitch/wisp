@@ -39,7 +39,7 @@ import { autopilotUpdateError } from "./autopilot";
 import { archiveTaskRows, drainAfterArchive } from "../domain/archive";
 import { createAndLaunchTask, type NewTaskRefusal } from "../domain/task-create";
 import { invalidateStatus } from "./projects";
-import { apiTask, apiTaskMessage, err, json, jsonError, jsonObjectBody } from "./http";
+import { apiTask, apiTaskMessage, err, json, jsonError, jsonObjectBody, taskListReads } from "./http";
 import {
   agentSwitch,
   resolveSendAgent,
@@ -62,11 +62,13 @@ export function listTasksRoute(url: URL): Response {
   // "failed" when the work landed but the harness CLI exited badly (Theme B)
   const includeArchived = url.searchParams.get("archived") === "1";
   const includeCleanup = url.searchParams.get("cleanup") === "1";
+  const rows = listTasksWithLatestTurn(includeArchived, includeCleanup);
   const attachedWorkflows = taskIdsWithAttachedWorkflows();
-  const autopilot = autopilotStatuses();
+  const autopilot = autopilotStatuses(rows.map(({ task }) => task.id));
+  const reads = taskListReads();
   return json<ApiTaskListItem[]>(
-    listTasksWithLatestTurn(includeArchived, includeCleanup).map(({ task: t, latestTurn }) => ({
-      ...apiTask(t),
+    rows.map(({ task: t, latestTurn }) => ({
+      ...apiTask(t, reads),
       has_workflow: attachedWorkflows.has(t.id),
       autopilot: autopilot.get(t.id) ?? null,
       latest_turn_model: latestTurn.model,

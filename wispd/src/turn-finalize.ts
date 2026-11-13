@@ -22,6 +22,7 @@ import {
   setTurnUsage,
   reconcileTaskState,
   settleTurn,
+  turnOutcomeCheckpoint,
 } from "./store";
 import { summarize } from "./text";
 import { INTERRUPTED, isUnresolvedInterrupt } from "./interrupt-state";
@@ -269,13 +270,15 @@ export async function finalizeTurn(
   let recorderErrorDetail: string | null = null;
   let parsed: ParsedTurn;
   if (recorderMode) {
-    const restored = liveRecorderOutcome ?? await restoreRecorderOutcome(def, turn?.outcome_json ?? null, outPath, errPath);
+    // the one read that wants the checkpoint every other turn read leaves out
+    const checkpoint = liveRecorderOutcome ? null : turnOutcomeCheckpoint(turnId);
+    const restored = liveRecorderOutcome ?? await restoreRecorderOutcome(def, checkpoint, outPath, errPath);
     parsed = restored?.parsed ?? emptyFailedOutcome();
     recorderErrorDetail = restored?.errorDetail ?? null;
     recorderDetail = restored
       // A checkpoint that restored cleanly but names no error is not "unreadable".
       ? restored.errorDetail ?? (liveRecorderOutcome ? null : ENDED_WITHOUT_RESULT)
-      : turn?.outcome_json ? "outcome checkpoint is unreadable" : "outcome checkpoint is unavailable";
+      : checkpoint ? "outcome checkpoint is unreadable" : "outcome checkpoint is unavailable";
   } else {
     rawOut = await safeRead(outPath);
     parsed = parseOutput(def, rawOut);

@@ -50,7 +50,6 @@ const compactTurn = (status: Turn["status"]): Turn =>
     model: "claude-sonnet-4-6",
     usage: null,
     attachments: [],
-    log_file: "/tmp/compact.log",
     started_at: "2026-09-15T00:00:00Z",
     ended_at: status === "running" ? null : "2026-09-15T00:01:00Z",
   }) as Turn

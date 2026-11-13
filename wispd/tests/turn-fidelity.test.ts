@@ -20,6 +20,7 @@ import {
   setTurnCaptureCheckpoint,
   setTurnInterrupt,
   transition,
+  turnOutcomeCheckpoint,
   turnsFor,
   undeliveredOutbox,
 } from "../src/store";
@@ -94,7 +95,7 @@ function recorderTurn() {
 }
 
 function storedCheckpoint(turnId: number): RecorderCheckpoint {
-  return JSON.parse(getTurn(turnId)!.outcome_json!) as RecorderCheckpoint;
+  return JSON.parse(turnOutcomeCheckpoint(turnId)!) as RecorderCheckpoint;
 }
 
 /** Make every write of this turn's outcome checkpoint fail until the returned function runs. */

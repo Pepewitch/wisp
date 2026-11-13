@@ -25,7 +25,7 @@ function settledTask(): ConversationDetail {
     created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", messages: [],
     turns: [1, 2].map((n) => ({
       id: n, task_id: "tsettled", n, prompt: `prompt ${n}`, result: `answer ${n}`, status: "done", model: null,
-      usage: null, attachments: [], log_file: "/synthetic/log", started_at: "2026-01-01T00:00:00Z", ended_at: "2026-01-01T00:01:00Z",
+      usage: null, attachments: [], started_at: "2026-01-01T00:00:00Z", ended_at: "2026-01-01T00:01:00Z",
     })),
   } as ConversationDetail
 }

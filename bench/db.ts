@@ -33,6 +33,8 @@ const store = await import("../wispd/src/store");
 const storeDatabase = await import("../wispd/src/store-database");
 const { putTurnText, TURN_TEXT_PROSE } = await import("../wispd/src/turn-texts");
 const search = await import("../wispd/src/store-search");
+const { autopilotStatuses } = await import("../wispd/src/autopilot/store");
+const { listTasksRoute } = await import("../wispd/src/routes/tasks");
 
 const ownership = acquireHomeOwnership();
 store.initializeStore();
@@ -89,11 +91,15 @@ function statementsOf(fn: () => unknown): string[] {
   return seen.filter((sql) => /^\s*(SELECT|WITH)\b/i.test(sql));
 }
 
-/** A full-table (or full-index) walk; a table reached through a key is a SEARCH. */
+/**
+ * A full-table (or full-index) walk; a table reached through a key is a SEARCH.
+ * Walking a json_each() of the statement's own arguments (a list of ids) is
+ * not a walk of the database.
+ */
 function scansIn(sql: string): { scans: number; plan: string[] } {
   const rows = db.query(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[];
   const plan = rows.map((row) => row.detail);
-  return { scans: plan.filter((detail) => /^SCAN /.test(detail) && detail !== "SCAN CONSTANT ROW").length, plan };
+  return { scans: plan.filter((detail) => /^SCAN /.test(detail) && detail !== "SCAN CONSTANT ROW" && !/^SCAN json_each VIRTUAL TABLE/.test(detail)).length, plan };
 }
 
 function planCase(name: string, fn: () => unknown): Measurement {
@@ -119,6 +125,14 @@ const results: Measurement[] = [
   planCase("runningTurnForTask", () => store.runningTurn("live0")),
   planCase("taskList", () => store.listTasksWithLatestTurn(false, false)),
   planCase("search", () => searchTasks(MISS, db)),
+  planCase("autopilotStatuses", () => autopilotStatuses(plan.worktrees.map((_, i) => `live${i}`))),
+  {
+    // Statements, not scans: each is a keyed SEARCH, but the archived list
+    // used to run three of them per row, so its count grew with the history.
+    name: "statements.archivedTaskList.count",
+    value: statementsOf(() => listTasksRoute(new URL("http://wisp.bench/api/tasks?archived=1"))).length,
+    unit: `statements for ${plan.archived + plan.worktrees.length} tasks`,
+  },
   { name: "time.db.searchMissMs", value: median(() => searchTasks(MISS, db)), unit: "ms", informational: true },
   { name: "time.db.seedMs", value: Math.round(seedMs), unit: "ms", informational: true },
 ];
