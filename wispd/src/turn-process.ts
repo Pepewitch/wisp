@@ -419,6 +419,19 @@ export function endLingeringProcess(proc: TurnProcess, why: string): void {
 }
 
 /**
+ * The task's agent changed with no message yet (`/fresh`): its warm process
+ * can never take the next turn, so it goes now, not when that turn arrives
+ * and has to wait for its exit. A process kept for background work stays
+ * until then, as it always did.
+ */
+export function retireWarmProcess(taskId: string): void {
+  const proc = turnProcesses.get(taskId);
+  const task = getTask(taskId);
+  if (!proc || !task || !adoptable(proc) || sameAgent(proc.agent, agentOf(task)) || backgroundWork(taskId).state !== "none") return;
+  endLingeringProcess(proc, "the task starts a fresh context");
+}
+
+/**
  * Boot: stop every harness an earlier daemon kept alive past its turn for
  * background work. This daemon cannot write to its stdin, so it can never take
  * the next message; a send would start `--resume` beside it while it keeps

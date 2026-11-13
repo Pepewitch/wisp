@@ -65,9 +65,7 @@ import { recordAudit } from "./task-audit";
 import { drainLines, TurnRecorder } from "./recording/turn-recorder";
 import {
   agentOf,
-  adoptable,
   adoptTurn,
-  endLingeringProcess,
   failLiveTurn,
   followingSink,
   killChildTree,
@@ -78,7 +76,6 @@ import {
   FORCE_ARCHIVE_DETAIL,
   FORCE_ARCHIVE_ESCALATED_DETAIL,
   killedForArchive,
-  sameAgent,
   stopOrphanedHarnesses,
   turnProcesses,
   watchTurn,
@@ -89,6 +86,7 @@ import { isTaskMerging } from "./autopilot/merging";
 import { autopilotTurnNotes, noteTurnSigning, type TurnNotes } from "./autopilot/store";
 import { deliverToRunningTurn, persistTaskSubmission } from "./task-submit";
 import { finalizeTurn } from "./turn-finalize";
+import { lingeringHoldsStart, settlePendingStart } from "./pending-start";
 import { forgetStandingNotes, standingTurnNotes } from "./standing-notes";
 import { reviewTurnEnv } from "./verify/reviews";
 import { startLoggedImageCapture } from "./logged-images";
@@ -343,6 +341,7 @@ export function startTurn(
     startQueue: () => {
       // a turn just ended: a report that waited behind it goes before the next message
       startNextQueuedMessage(task.id, adapters, cfg, "", true);
+      settlePendingStart(task.id);
       drainSubtaskQueues(task.parent_task_id, adapters, cfg);
     },
   };
@@ -585,17 +584,7 @@ export function startNextQueuedMessage(
   // Recovery may find a legacy/incomplete row whose denormalized turn_count
   // lagged the actual turns table. Never reuse a turn number.
   const turn = nextTurnNumber(taskId, task.turn_count);
-  const lingering = turnProcesses.get(taskId);
-  if (lingering) {
-    // Still settling its last answer, or exited and not yet let go by its
-    // watcher: either one starts the queue itself when it is done.
-    if (!adoptable(lingering)) return null;
-    const agent = { context_n: message.context_n, harness: message.harness, model: message.model, effort: message.effort, fast: message.fast === 1 };
-    if (!sameAgent(lingering.agent, agent)) {
-      endLingeringProcess(lingering, `turn ${turn} asks for another agent`);
-      return null;
-    }
-  }
+  if (lingeringHoldsStart(task, message, turn)) return null;
   const current: Task = {
     ...task,
     turn_count: turn - 1,

@@ -16,6 +16,7 @@ import { liveProcess } from "../live-input";
 import { answerQuestionResponse } from "./task-answer";
 import type { PullRequestCache } from "../pull-requests";
 import { hasRunningTurn, interruptTurn, submitTaskMessage } from "../runner";
+import { retireWarmProcess } from "../turn-process";
 import { InterruptConflict } from "../turn-interrupt";
 import type { TaskCompactor } from "../compacts";
 import type { TaskProbeCache } from "../probes";
@@ -352,6 +353,7 @@ function basicTaskAction(
       { harness: task.harness, model: task.model, effort: task.effort, fast: task.fast === 1 },
       true,
     );
+    retireWarmProcess(task.id);
     recordAudit(task.id, "fresh-session", requestActor(req));
     emit({ type: "task", taskId: task.id, state: task.state, stateDetail: task.state_detail, seq: task.seq });
     return json(apiTask(updated));
