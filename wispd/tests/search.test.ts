@@ -317,8 +317,9 @@ describe("GET /api/search", () => {
     // LIKE retries the needle at every position of a run of one letter when
     // the needle is that letter repeated and then another, so this one row
     // costs the search hundreds of milliseconds — the time a long history
-    // costs any search.
-    turn(id, 1, "a".repeat(2 * 1024 * 1024), null);
+    // costs any search. It ends in the needle, so the trigram index offers
+    // the row to that LIKE rather than ruling it out.
+    turn(id, 1, `${"a".repeat(2 * 1024 * 1024)}b`, null);
     try {
       let searched = false;
       const search = get(base, `/api/search?q=${"a".repeat(199)}b`).then((response) => {

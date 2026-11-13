@@ -139,6 +139,10 @@ try {
   await measure(`UI: archived list (${ARCHIVED} archived)`, "/api/tasks?archived=1");
   await measure("UI: diff", "/api/tasks/long/diff");
   await measure("UI: diff summary (Changes hint)", "/api/tasks/long/diff/summary");
+  // ⌘⇧F: a needle in no row, one in a few, and one in nearly every row
+  await measure("UI: search, no match", "/api/search?q=zzqxv-no-such-text");
+  await measure("UI: search, a phrase in a few rows", `/api/search?q=${encodeURIComponent("build function error")}`);
+  await measure("UI: search, a common word", "/api/search?q=function");
 
   // One settled turn's history (`turn=1`, no follow), read to a second past
   // its turn-end: everything a history load is sent before it closes.

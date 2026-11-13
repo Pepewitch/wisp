@@ -62,9 +62,11 @@ try {
   );
   // LIKE retries the needle at every position of a run of one letter when the
   // needle is that letter repeated and then another: hundreds of milliseconds.
+  // The row ends in the needle, so the trigram index offers it to that LIKE
+  // rather than ruling it out.
   db.run(
     `INSERT INTO turns (task_id, n, prompt, status, log_file, started_at) VALUES ('tbinsearch', 1, ?, 'done', '/synthetic/turn.log', ?)`,
-    ["a".repeat(2 * 1024 * 1024), now],
+    [`${"a".repeat(2 * 1024 * 1024)}b`, now],
   );
   db.close();
 

@@ -37,6 +37,7 @@ import { TURN_FAILURE } from "./migration-turn-failure";
 import { MESSAGE_REPORT } from "./migration-message-report";
 import { REPORT_STEERED } from "./migration-report-steered";
 import { RETIRED_SCHEMA } from "./migration-retired-schema";
+import { SEARCH_INDEX } from "./migration-search-index";
 
 /** `ALTER TABLE … ADD COLUMN`, unless a partly upgraded profile already has the column. */
 function addColumn(db: Database, table: string, column: string, definition: string): void {
@@ -609,6 +610,7 @@ CREATE INDEX IF NOT EXISTS idx_task_messages_source ON task_messages(task_id, so
   MESSAGE_REPORT,
   REPORT_STEERED,
   RETIRED_SCHEMA,
+  SEARCH_INDEX,
 ];
 
 /** The newest schema this build knows how to run. */

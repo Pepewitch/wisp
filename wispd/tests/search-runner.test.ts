@@ -9,7 +9,9 @@ import { searchTasks } from "../src/store-search";
 
 // LIKE retries the needle at every position of a run of one letter when the
 // needle is that letter repeated and then another: one 2 MB row makes a search
-// that takes hundreds of milliseconds, standing in for a long history.
+// that takes hundreds of milliseconds, standing in for a long history. The row
+// ends in the needle, so the trigram index offers it to that LIKE rather than
+// ruling it out.
 const SLOW = `${"a".repeat(199)}b`;
 let slowTask = "";
 const runners: SearchRunner[] = [];
@@ -35,7 +37,7 @@ async function quietly<T>(run: () => Promise<T>): Promise<T> {
 beforeAll(() => {
   slowTask = newTaskId();
   createTask({ id: slowTask, title: "runner fixture runner-needle", repo_path: "/synthetic/repo", harness: "fake", model: null, slot: freeSlot() });
-  createTurn(slowTask, 1, "a".repeat(2 * 1024 * 1024), null, "/synthetic/logs/runner.out.log");
+  createTurn(slowTask, 1, `${"a".repeat(2 * 1024 * 1024)}b`, null, "/synthetic/logs/runner.out.log");
   mkdirSync(fixtures, { recursive: true });
 });
 
