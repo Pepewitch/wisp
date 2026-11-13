@@ -209,14 +209,26 @@ function strayCount(leader: number, members: GroupMember[]): number {
  * `settleMs` is for the report only — the API passes `BACKGROUND_SETTLE_MS` so
  * a straggler that dies with its turn never reaches the badge. Every caller
  * that deletes, archives or signals passes nothing and sees every row.
+ * `recorded` is liveGroupsByTask()'s one read, when a whole list asks.
  */
-export function backgroundWork(taskId: string, settleMs = 0): BackgroundWork {
-  const all = rows(taskId);
+export function backgroundWork(taskId: string, settleMs = 0, recorded?: ReadonlyMap<string, GroupRow[]>): BackgroundWork {
+  const all = recorded ? recorded.get(taskId) ?? [] : rows(taskId);
   const background = all.filter(row => isBackground(row, settleMs));
   if (stops.has(taskId)) return { state: "stopping", groups: all.length, details: describe(all) };
   const details = describe(background);
   if (background.some(row => row.state === "unknown" || row.stop_requested)) return { state: "unknown", groups: background.length, details };
   return { state: background.length ? "running" : "none", groups: background.length, details };
+}
+
+/**
+ * Every live recorded group, by task, for backgroundWork() across a whole task
+ * list: one read of the (partially indexed, always small) live groups instead
+ * of one per row.
+ */
+export function liveGroupsByTask(): ReadonlyMap<string, GroupRow[]> {
+  const byTask = new Map<string, GroupRow[]>();
+  for (const row of rows()) byTask.set(row.task_id, [...byTask.get(row.task_id) ?? [], row]);
+  return byTask;
 }
 
 /**

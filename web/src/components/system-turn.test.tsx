@@ -23,7 +23,7 @@ function turn(n: number, prompt: string, source?: TurnSource | null, origin: "ba
   // a settled turn with a result: nothing loads its timeline unasked
   return {
     id: n, task_id: "tsys", n, prompt, origin, result: `answer ${n}`, status: "done", model: "fake-model", usage: null,
-    attachments: [], log_file: "/tmp/turn.log", started_at: at, ended_at: at, ...(source === undefined ? {} : { source }),
+    attachments: [], started_at: at, ended_at: at, ...(source === undefined ? {} : { source }),
   }
 }
 

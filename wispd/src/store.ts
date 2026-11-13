@@ -451,8 +451,28 @@ export function settleTurn(
   if (seq !== null) emit({ type: "task", taskId, state, stateDetail: detail, seq });
 }
 
+/**
+ * Every column a Turn carries: all of `turns` but `outcome_json` (see Turn).
+ * Named, not `*`, because that one column repeats the result of every recorded turn;
+ * tests/store.test.ts holds this list to the table's own.
+ */
+export const TURN_COLUMNS = [
+  "id", "task_id", "n", "prompt", "result", "status", "pid", "pid_start_time", "interrupt_detail", "exit_code",
+  "log_file", "started_at", "ended_at", "capture_mode", "capture_state", "captured_bytes", "omitted_bytes",
+  "omitted_records", "capture_categories_json", "capture_detail", "kill_detail", "diagnostic_state",
+  "diagnostic_bytes", "diagnostic_first_seq", "diagnostic_last_seq", "diagnostic_detail", "diagnostic_evicted_at",
+  "model", "attachments_json", "usage_json", "context_n", "harness", "requested_model", "requested_effort",
+  "requested_fast", "origin", "outputs_json", "source_message_id", "failure_detail",
+].join(", ");
+
+/** The recorder's outcome checkpoint, which finalize restores a turn's result from; null when none was written. */
+export function turnOutcomeCheckpoint(id: number): string | null {
+  const row = db.query(`SELECT outcome_json FROM turns WHERE id = ?`).get(id) as { outcome_json: string | null } | null;
+  return row?.outcome_json ?? null;
+}
+
 export function getTurn(id: number): Turn | null {
-  return (db.query(`SELECT * FROM turns WHERE id = ?`).get(id) as Turn | null) ?? null;
+  return (db.query(`SELECT ${TURN_COLUMNS} FROM turns WHERE id = ?`).get(id) as Turn | null) ?? null;
 }
 
 /** Persist (or with null, clear) user-interrupt intent on the turn row (a prior audit). */
@@ -537,7 +557,7 @@ export function setTurnDiagnosticCheckpoint(id: number, checkpoint: TurnDiagnost
 }
 
 export function turnsFor(taskId: string): Turn[] {
-  return db.query(`SELECT * FROM turns WHERE task_id = ? ORDER BY n ASC`).all(taskId) as Turn[];
+  return db.query(`SELECT ${TURN_COLUMNS} FROM turns WHERE task_id = ? ORDER BY n ASC`).all(taskId) as Turn[];
 }
 
 export interface TurnPage {
@@ -570,10 +590,10 @@ export function turnUsageFor(taskId: string): TurnUsageRow[] {
 export function turnPageFor(taskId: string, before: number | null, limit: number): TurnPage {
   const rows = (before === null
     ? db
-      .query(`SELECT * FROM turns WHERE task_id = ? ORDER BY n DESC LIMIT ?`)
+      .query(`SELECT ${TURN_COLUMNS} FROM turns WHERE task_id = ? ORDER BY n DESC LIMIT ?`)
       .all(taskId, limit + 1)
     : db
-      .query(`SELECT * FROM turns WHERE task_id = ? AND n < ? ORDER BY n DESC LIMIT ?`)
+      .query(`SELECT ${TURN_COLUMNS} FROM turns WHERE task_id = ? AND n < ? ORDER BY n DESC LIMIT ?`)
       .all(taskId, before, limit + 1)) as Turn[];
   const hasOlder = rows.length > limit;
   if (hasOlder) rows.pop();
@@ -583,13 +603,13 @@ export function turnPageFor(taskId: string, before: number | null, limit: number
 
 export function turnForTask(taskId: string, n: number): Turn | null {
   return (
-    (db.query(`SELECT * FROM turns WHERE task_id = ? AND n = ?`).get(taskId, n) as Turn | null) ?? null
+    (db.query(`SELECT ${TURN_COLUMNS} FROM turns WHERE task_id = ? AND n = ?`).get(taskId, n) as Turn | null) ?? null
   );
 }
 
 export function latestTurnForTask(taskId: string): Turn | null {
   return (
-    (db.query(`SELECT * FROM turns WHERE task_id = ? ORDER BY n DESC LIMIT 1`).get(taskId) as Turn | null) ??
+    (db.query(`SELECT ${TURN_COLUMNS} FROM turns WHERE task_id = ? ORDER BY n DESC LIMIT 1`).get(taskId) as Turn | null) ??
     null
   );
 }
@@ -624,15 +644,15 @@ export {
 
 export function runningTurns(taskId?: string): Turn[] {
   if (taskId) {
-    return db.query(`SELECT * FROM turns WHERE status = 'running' AND task_id = ?`).all(taskId) as Turn[];
+    return db.query(`SELECT ${TURN_COLUMNS} FROM turns WHERE status = 'running' AND task_id = ?`).all(taskId) as Turn[];
   }
-  return db.query(`SELECT * FROM turns WHERE status = 'running'`).all() as Turn[];
+  return db.query(`SELECT ${TURN_COLUMNS} FROM turns WHERE status = 'running'`).all() as Turn[];
 }
 
 export function runningTurn(taskId: string): Turn | null {
   return (
     (db
-      .query(`SELECT * FROM turns WHERE status = 'running' AND task_id = ? ORDER BY n DESC LIMIT 1`)
+      .query(`SELECT ${TURN_COLUMNS} FROM turns WHERE status = 'running' AND task_id = ? ORDER BY n DESC LIMIT 1`)
       .get(taskId) as Turn | null) ?? null
   );
 }

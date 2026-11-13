@@ -250,9 +250,15 @@ export function autopilotStatus(taskId: string): AutopilotStatus {
   return statusOf(latestRow(taskId))
 }
 
-/** Every task's latest autopilot row, for the task list. */
-export function autopilotStatuses(): Map<string, AutopilotStatus> {
-  const rows = db.query("SELECT * FROM workflows WHERE type = ? ORDER BY created_at, rowid").all(AUTOPILOT_TYPE) as WorkflowRow[]
+/**
+ * The latest autopilot row of each of `taskIds`, for the task list. It used
+ * to read every autopilot row ever written and build a status for every task
+ * that ever had one, archived ones included, on every live-list request that
+ * shows a dozen tasks.
+ */
+export function autopilotStatuses(taskIds: readonly string[]): Map<string, AutopilotStatus> {
+  const rows = db.query(`SELECT * FROM workflows WHERE type = ? AND task_id IN (SELECT value FROM json_each(?))
+    ORDER BY created_at, rowid`).all(AUTOPILOT_TYPE, JSON.stringify(taskIds)) as WorkflowRow[]
   const latest = new Map<string, WorkflowRow>()
   for (const row of rows) latest.set(row.task_id, row)
   return new Map([...latest].map(([taskId, row]) => [taskId, statusOf(row)]))

@@ -42,7 +42,6 @@ function pagedTask(turns: number[]): ConversationDetail {
       model: "fake",
       usage: null,
       attachments: [],
-      log_file: `/tmp/turn-${n}.log`,
       started_at: "2026-09-03T00:00:00Z",
       ended_at: "2026-09-03T00:00:01Z",
     })),
@@ -189,7 +188,6 @@ describe("Conversation top fade", () => {
           diagnostic_detail: null,
           diagnostic_evicted_at: null,
           attachments: [],
-          log_file: "/tmp/turn.log",
           started_at: "2026-09-03T00:00:00Z",
           ended_at: "2026-09-03T00:00:01Z",
         },
@@ -240,7 +238,6 @@ describe("Conversation top fade", () => {
           model: "fake",
           usage: null,
           attachments: [],
-          log_file: "/tmp/turn.log",
           started_at: "2026-09-03T00:00:00Z",
           ended_at: null,
         },
@@ -334,7 +331,6 @@ describe("Conversation context boundaries", () => {
       model,
       usage: null,
       attachments: [],
-      log_file: `/tmp/turn-${n}.log`,
       started_at: `2026-09-09T00:00:0${n}Z`,
       ended_at: `2026-09-09T00:00:1${n}Z`,
     })
@@ -417,7 +413,6 @@ describe("the reading column's axis", () => {
         model: "claude-opus-5",
         usage: null,
         attachments: [],
-        log_file: "/tmp/turn.log",
         started_at: "2026-09-03T00:00:00Z",
         ended_at: "2026-09-03T00:00:01Z",
       },
@@ -512,7 +507,6 @@ describe("a steer that lands inside a running turn", () => {
         model: "fake-model",
         usage: null,
         attachments: [],
-        log_file: "/tmp/turn.log",
         started_at: "2026-09-03T00:00:00Z",
         ended_at: null,
       },
@@ -642,7 +636,6 @@ describe("when a user bubble was sent", () => {
     model: "fake-model",
     usage: null,
     attachments: [],
-    log_file: "/tmp/turn.log",
     started_at: startedAt,
     ended_at: null,
   })
@@ -756,7 +749,6 @@ describe("copying user messages", () => {
           model: "fake",
           usage: null,
           attachments: [],
-          log_file: "/tmp/turn.log",
           started_at: "2026-09-03T00:00:00Z",
           ended_at: null,
         },
@@ -841,7 +833,6 @@ describe("the bubble's caption", () => {
         model: "fake",
         usage: null,
         attachments: [],
-        log_file: "/tmp/turn.log",
         started_at: "2026-09-03T00:00:00Z",
         ended_at: null,
       },
@@ -957,7 +948,7 @@ describe("a turn a subtask report started", () => {
   const turn = (n: number, origin: "report" | null, prompt: string) => ({
     // a settled turn with a result: nothing loads its timeline unasked
     id: n, task_id: "tparent", n, prompt, origin, result: `answer ${n}`, status: "done", model: "fake-model", usage: null,
-    attachments: [], log_file: "/tmp/turn.log", started_at: at, ended_at: at,
+    attachments: [], started_at: at, ended_at: at,
   })
   const task = {
     id: "tparent", title: "Orchestrate", repo_path: "/tmp/repo", worktree_path: "/tmp/worktree", branch: "wisp/tparent",
