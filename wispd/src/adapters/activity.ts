@@ -5,7 +5,7 @@ import { eventId, newNormalizeContext, type NormalizeContext, status } from "./a
 import { boundedInput, number, record, string, text, timestamp } from "./activity-value";
 import { formatParsedEvent } from "./format";
 import { parseQuestionnaire } from "./questionnaire";
-import type { ActivityEvent, ActivityStatus, AdapterDef } from "./types";
+import type { ActivityEvent, ActivityStatus, AdapterDef, QuestionPrompt } from "./types";
 import { createEventLineDecoder, cursorToolCall, messageContent } from "./wire";
 
 type ActivityNormalizer = (event: Record<string, any>, context: NormalizeContext) => ActivityEvent[];
@@ -131,11 +131,62 @@ function claudeAssistant(event: Record<string, any>, context: NormalizeContext):
           ...taskFields(item.input),
         });
       } else {
-        out.push({ kind: "tool", id, parentId, timestamp: at, phase: "started", name, input: boundedInput(item.input) });
+        const questions = name === "AskUserQuestion" ? claudeQuestions(item.input) : [];
+        if (questions.length > 0) {
+          context.questions.set(id, questions);
+          out.push({ kind: "question", id, parentId: null, timestamp: at, phase: "asked", questions });
+        } else {
+          out.push({ kind: "tool", id, parentId, timestamp: at, phase: "started", name, input: boundedInput(item.input) });
+        }
       }
     }
   }
   return out;
+}
+
+/**
+ * AskUserQuestion's input, as the shared card describes a question. Claude's
+ * own schema: 1–4 `{question, header, options: [{label, description}],
+ * multiSelect}`. Only the labels reach the card, the same as Droid's options;
+ * the description is advice to the model's reader that the card has no row
+ * for. A call with nothing the card can show stays an ordinary tool row.
+ */
+function claudeQuestions(inputValue: unknown): QuestionPrompt[] {
+  const asked = record(inputValue).questions;
+  if (!Array.isArray(asked)) return [];
+  return asked.map(record).flatMap((entry) => {
+    const question = string(entry.question);
+    const options = (Array.isArray(entry.options) ? entry.options : [])
+      .map((option: unknown) => string(record(option).label) ?? string(option))
+      .filter((option: string | null): option is string => option !== null)
+      .map((option: string) => trunc(option, 300));
+    return question ? [{ question: trunc(question, 1_000), topic: string(entry.header), multiSelect: entry.multiSelect === true, options }] : [];
+  }).map((entry, position) => ({ index: position + 1, ...entry }));
+}
+
+/**
+ * How a Claude question settled, from its tool result. Claude hands the tool
+ * the answers keyed by question text (AskUserQuestion's `answers` input,
+ * echoed in the result), so they map back to the card's indices by that
+ * text. A result without them was never answered by the person: in print
+ * mode nobody can answer, and the denied call comes back as an error. The
+ * card says it expired, and the person answers in a message.
+ */
+function claudeQuestionSettled(
+  id: string,
+  event: Record<string, any>,
+  isError: boolean,
+  context: NormalizeContext,
+): ActivityEvent {
+  const base = { kind: "question" as const, id, parentId: null, timestamp: timestamp(event) };
+  const given = record(record(event.tool_use_result).answers);
+  const answers = isError
+    ? []
+    : (context.questions.get(id) ?? []).flatMap((question) => {
+        const answer = string(given[question.question]);
+        return answer ? [{ index: question.index, answer: trunc(answer, 2_000) }] : [];
+      });
+  return answers.length > 0 ? { ...base, phase: "answered", answers } : { ...base, phase: "cancelled" };
 }
 
 function claudeUser(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
@@ -145,6 +196,11 @@ function claudeUser(event: Record<string, any>, context: NormalizeContext): Acti
   for (const item of messageContent(event.message)) {
     if (item.type !== "tool_result") continue;
     const id = eventId(item.tool_use_id, context, "tool");
+    // The card settles from the result; the result itself is not a second row.
+    if (context.questions.has(id)) {
+      out.push(claudeQuestionSettled(id, event, item.is_error === true, context));
+      continue;
+    }
     const result = text(item.content);
     const error = item.is_error === true ? result ?? "Subagent failed" : null;
     if (context.subagents.has(id)) {
@@ -297,7 +353,7 @@ function droidToolCall(event: Record<string, any>, context: NormalizeContext): A
   if (name === "AskUser") {
     const questions = parseQuestionnaire(string(record(input).questionnaire) ?? "");
     if (questions.length > 0) {
-      context.questions.add(id);
+      context.questions.set(id, questions);
       return [{ kind: "question", id, parentId: null, timestamp: timestamp(event), phase: "asked", questions }];
     }
   }
@@ -358,7 +414,6 @@ function droidToolResult(event: Record<string, any>, context: NormalizeContext):
 function droidQuestion(event: Record<string, any>, context: NormalizeContext): ActivityEvent[] {
   const id = eventId(event.id, context, "question");
   const phase = event.phase === "answered" || event.phase === "cancelled" ? event.phase : "asked";
-  context.questions.add(id);
   const questions = Array.isArray(event.questions)
     ? event.questions.map(record).map((entry, position) => ({
         index: number(entry.index) ?? position + 1,
@@ -371,6 +426,7 @@ function droidQuestion(event: Record<string, any>, context: NormalizeContext): A
           .map((option: string) => trunc(option, 300)),
       }))
     : undefined;
+  context.questions.set(id, questions ?? context.questions.get(id) ?? []);
   const answers = Array.isArray(event.answers)
     ? event.answers.map(record).map((entry, position) => ({
         index: number(entry.index) ?? position + 1,
