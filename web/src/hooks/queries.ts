@@ -6,6 +6,7 @@ import type { AutopilotHistoryResponse } from "../../../shared/api/autopilot";
 import type { ProjectEntriesResponse } from "../../../shared/api/project-entries";
 import type { Workflow, WorkflowDefinition } from "../../../shared/workflows";
 import { ApiError } from "@/lib/api";
+import { onReturnToApp } from "@/lib/app-return";
 import { prependConversationPage, refreshConversationPage, trimConversationPage } from "@/lib/conversation-pages";
 import { parseDiff, type ParsedDiff } from "@/lib/diff";
 import { reconcilePullRequests } from "@/lib/pull-request-record";
@@ -156,13 +157,29 @@ export function useTaskSearch(query: string) {
  * key extends `qk.status`, so every existing invalidation still reaches it,
  * and the previous answer stays up meanwhile (it covers every task).
  *
- * `fresh` is asked once per selection, not on every refetch: each one makes
- * the daemon run git for that task, and the refetches events cause are about
- * what the daemon already knows.
+ * `fresh` is asked once per selection, and once per return to the app, not
+ * on every refetch: each one makes the daemon run git for that task, and the
+ * refetches events cause are about what the daemon already knows.
  */
+export { RETURN_REFRESH_GAP_MS } from "@/lib/app-return";
+
 export function useStatus(selectedId: string | null) {
   const { transport, qk } = useDaemonRuntime();
+  const client = useQueryClient();
   const freshFor = useRef<string | null>(null);
+  // Back from an editor or a terminal: the task on screen may have new edits
+  // or commits, and nothing outside Wisp announces them. Its badges are asked
+  // fresh once more, and its diff (the Changes count, and the pane if it is
+  // open) again. Window focus refetches event-fed reads only after a long
+  // absence (`refetchOnFocus`), so this is the one read a return renews.
+  useEffect(() => {
+    if (selectedId === null) return;
+    return onReturnToApp(() => {
+      freshFor.current = null;
+      void client.invalidateQueries({ queryKey: [...qk.status, selectedId], exact: true });
+      void client.invalidateQueries({ queryKey: qk.diff(selectedId) });
+    });
+  }, [client, qk, selectedId]);
   return useQuery({
     queryKey: [...qk.status, selectedId],
     queryFn: () => {

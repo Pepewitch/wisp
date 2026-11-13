@@ -3,15 +3,17 @@ import { act, renderHook, waitFor } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
-import { createConnectionQueryKeys } from "@/lib/query"
+import { createConnectionQueryKeys, refetchOnFocus } from "@/lib/query"
 import { connectEventsBridge, type SseLike } from "@/lib/sse"
 import { ApiError, type DaemonTransport } from "@/lib/transport"
 import type { ApiTask, ConversationDetail, PullRequestInfo, PullRequestStatus } from "@/lib/types"
 
 const mocks = vi.hoisted(() => ({ request: vi.fn() }))
 
+import { useChangedFileCount } from "./useChangedFileCount"
 import {
   PULL_REQUEST_OVERVIEW_POLL_MS,
+  RETURN_REFRESH_GAP_MS,
   PULL_REQUEST_POLL_MS,
   pullRequestPollInterval,
   usePullRequestOverview,
@@ -662,5 +664,77 @@ describe("useStatus", () => {
 
     view.rerender({ id: null })
     await waitFor(() => expect(mocks.request).toHaveBeenCalledWith("/api/status"))
+  })
+})
+
+/**
+ * A file edited in an editor or a commit made in a terminal fires no event,
+ * so coming back to Wisp is when the task on screen asks git again: its
+ * badges (fresh), the Changes count and an open Changes pane. Nothing else
+ * the events keep fresh, and the archive least of all, is asked for it.
+ */
+describe("returning to the app", () => {
+  beforeEach(() => {
+    mocks.request.mockReset()
+  })
+
+  function returningHarness() {
+    mocks.request.mockImplementation((path: string) => Promise.resolve(
+      path === "/api/harnesses" ? { harnesses: [], features: { diffSummary: true } }
+        : path.startsWith("/api/status") ? { tasks: {} }
+          : path.endsWith("/diff/summary") ? { files: 2, worktreeReason: null }
+            : path.endsWith("/diff") ? { diff: "", truncated: false, untracked: [], worktreeReason: null }
+              : [],
+    ))
+    // the app's own focus policy, so only what this change asks for refetches
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: refetchOnFocus } } })
+    const transport = fakeDaemonTransport("local", { request: mocks.request as DaemonTransport["request"] })
+    const view = renderHook(() => {
+      useTasks(true)
+      useStatus("ta1")
+      useChangedFileCount({ id: "ta1", archived: false })
+      useDiff("ta1", false)
+    }, { wrapper: runtimeWrapper(transport, client) })
+    return view
+  }
+  const asked = () => mocks.request.mock.calls.map(([path]) => path as string)
+  const settle = () => waitFor(() => expect(asked()).toEqual(expect.arrayContaining([
+    "/api/status?fresh=ta1", "/api/tasks/ta1/diff/summary", "/api/tasks/ta1/diff", "/api/tasks?archived=1",
+  ])))
+
+  it("asks the selected task's git state again, fresh, and not the archive", async () => {
+    returningHarness()
+    await settle()
+    mocks.request.mockClear()
+
+    act(() => { window.dispatchEvent(new Event("focus")) })
+    await waitFor(() => expect(asked()).toEqual(expect.arrayContaining([
+      "/api/status?fresh=ta1", "/api/tasks/ta1/diff/summary", "/api/tasks/ta1/diff",
+    ])))
+    expect(asked()).not.toContain("/api/tasks?archived=1")
+    expect(asked()).not.toContain("/api/tasks?cleanup=1")
+  })
+
+  it("counts a focus flicker, or focus and visibility on one return, once", async () => {
+    returningHarness()
+    await settle()
+    mocks.request.mockClear()
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"))
+      document.dispatchEvent(new Event("visibilitychange"))
+      window.dispatchEvent(new Event("focus"))
+    })
+    await waitFor(() => expect(asked()).toContain("/api/status?fresh=ta1"))
+    expect(asked().filter((path) => path === "/api/status?fresh=ta1")).toHaveLength(1)
+    expect(asked().filter((path) => path === "/api/tasks/ta1/diff/summary")).toHaveLength(1)
+
+    // a later return, past the gap, asks again
+    mocks.request.mockClear()
+    const now = Date.now()
+    vi.spyOn(Date, "now").mockReturnValue(now + RETURN_REFRESH_GAP_MS + 1)
+    act(() => { document.dispatchEvent(new Event("visibilitychange")) })
+    await waitFor(() => expect(asked()).toContain("/api/status?fresh=ta1"))
+    vi.restoreAllMocks()
   })
 })
