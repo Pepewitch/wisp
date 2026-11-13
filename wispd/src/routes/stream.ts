@@ -8,7 +8,7 @@ import { trunc } from "../text";
 import { acquireTranscriptRead, TRANSCRIPT_EVICTED_NOTICE } from "../transcript-access";
 import type { Task, Turn } from "../types";
 import { BUILD_INFO } from "../version";
-import { err, integerQueryParam } from "./http";
+import { compressibleStream, err, integerQueryParam } from "./http";
 
 /**
  * Bytes of a turn's log the follow stream seeds from its START.
@@ -551,5 +551,6 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
       resume?.();
     },
   });
-  return new Response(stream, { headers: SSE_HEADERS });
+  // A turn's backlog is the bulk of what a viewer waits for; see compressibleStream.
+  return compressibleStream(new Response(stream, { headers: SSE_HEADERS }));
 }
