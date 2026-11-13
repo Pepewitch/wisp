@@ -320,8 +320,11 @@ address's last new wrong token. The web UI is served at `/`.
 - `GET /api/tasks/:id/attachments/:turn/:name` — attachment bytes (kept after
   archive; `410` while a purge is pending, or for a legacy archive made before
   attachments were retained)
-- `GET /api/tasks/:id/diff` · `GET /api/tasks/:id/log/stream` (SSE) ·
-  `GET /api/events` (SSE, all task transitions)
+- `GET /api/tasks/:id/diff` · `GET /api/tasks/:id/diff/summary` (`{files,
+  worktreeReason}`: the changed-file count without the diff) ·
+  `GET /api/tasks/:id/log/stream` (SSE; with `turn=N` and no `follow`, the
+  stream stops at that turn's `turn-end`) · `GET /api/events` (SSE, all task
+  transitions)
 - `GET /api/tasks/:id/pull-request` (selected task) ·
   `GET /api/pull-requests` (batched live-task overview)
 - `POST /api/tasks/:id/probe` (`{command: "context"|"usage"}`) ·

@@ -415,6 +415,17 @@ export interface TaskDetail extends ConversationDetail {
 }
 
 /**
+ * GET /api/tasks/:id/diff/summary: what the full diff (GET /api/tasks/:id/diff)
+ * would count, without the diff. 409s match the full diff's.
+ */
+export interface DiffSummary {
+  /** files changed since the diff's base, untracked files included; 0 when the worktree is unreadable */
+  files: number;
+  /** The daemon's one sentence for a worktree it can no longer read; null when readable. */
+  worktreeReason: string | null;
+}
+
+/**
  * GET /api/tasks/:id/attach: the harness's own interactive resume command for
  * the task's session. `argv: null` means there is nothing honest to show (no
  * session yet, or no attach command) and `message` says which; `cwd` is the

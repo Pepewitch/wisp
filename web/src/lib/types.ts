@@ -36,6 +36,7 @@ export type {
   CleanupSummary,
   HarnessBackgroundTask,
   CompactAnswer,
+  DiffSummary,
   SearchResponse,
   SearchSnippet,
   SearchSnippetKind,
@@ -493,6 +494,11 @@ export interface HarnessesResponse {
      * palette has no registry to read and offers nothing.
      */
     projectSkills?: boolean;
+    /**
+     * GET /api/tasks/:id/diff/summary: the changed-file count without the
+     * diff. Absent: the top bar counts the full diff's files instead.
+     */
+    diffSummary?: boolean;
   };
 }
 

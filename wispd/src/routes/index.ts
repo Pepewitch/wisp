@@ -32,7 +32,7 @@ import {
 import { outputRoute } from "./outputs";
 import { CAPTURE_PATH, captureRoute } from "./capture";
 import { attachmentRoute, taskMessageRoute, taskMessageSendNowRoute } from "./task-messages";
-import { createTaskRoute, listTasksRoute, taskRoute } from "./tasks";
+import { createTaskRoute, diffSummaryRoute, listTasksRoute, taskRoute } from "./tasks";
 import { updateRoute } from "./update";
 import { capabilitiesRoute } from "./capabilities";
 import { terminalOriginRoute } from "./auth";
@@ -75,6 +75,12 @@ function taskRoutes(
     const task = getTask(logStreamMatch[1]!);
     if (!task) return err(`no such task: ${logStreamMatch[1]}`, 404);
     return logStream(task, url, adapters);
+  }
+  const diffSummaryMatch = path.match(/^\/api\/tasks\/([a-z0-9]+)\/diff\/summary$/);
+  if (diffSummaryMatch && method === "GET") {
+    const task = getTask(diffSummaryMatch[1]!);
+    if (!task) return err(`no such task: ${diffSummaryMatch[1]}`, 404);
+    return diffSummaryRoute(task);
   }
   if (CAPTURE_PATH.test(path)) return captureRoute(req, path, cfg);
   const outputResponse = outputRoute(req, url, path, method);
