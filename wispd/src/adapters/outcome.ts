@@ -526,9 +526,23 @@ export class IncrementalOutcomeReducer {
 
   /** The mapped kind's needs-input: any entry in the declared field, unless every one names a tool call the agent went past. */
   private mappedNeedsInput(event: Record<string, unknown>): boolean {
+    const entries = this.needsInputEntries(event);
+    return entries !== null && entries.length > 0 && this.needsInputHeld !== false;
+  }
+
+  /**
+   * The declared needs-input field's entries, less the questions Wisp itself
+   * released. Claude lists an AskUserQuestion call Wisp denied in
+   * `permission_denials`, and Wisp denies one only because the person sent a
+   * message instead or stopped the turn (live/claude-questions.ts): either
+   * way they already acted, so it holds nothing for them. Print mode offers
+   * the tool only on a live turn, where Wisp answers it.
+   */
+  private needsInputEntries(event: Record<string, unknown>): unknown[] | null {
     const field = this.def.parse.needsInput;
     const entries = field ? event[field] : undefined;
-    return Array.isArray(entries) && entries.length > 0 && this.needsInputHeld !== false;
+    if (!Array.isArray(entries)) return null;
+    return entries.filter((entry) => !(isRecord(entry) && entry.tool_name === "AskUserQuestion"));
   }
 
   /**
@@ -565,9 +579,8 @@ export class IncrementalOutcomeReducer {
    * rule (null).
    */
   private heldByEntries(event: Record<string, any>): boolean | null {
-    const field = this.def.parse.needsInput;
-    const entries: unknown = field ? event[field] : undefined;
-    if (!Array.isArray(entries) || entries.length === 0 || this.lastToolBatch === null) return null;
+    const entries = this.needsInputEntries(event);
+    if (entries === null || entries.length === 0 || this.lastToolBatch === null) return null;
     const ids = entries.map((entry) => (isRecord(entry) && typeof entry.tool_use_id === "string" ? entry.tool_use_id : null));
     if (ids.some((id) => id === null)) return null;
     return ids.some((id) => this.lastToolBatch!.ids.includes(id!));

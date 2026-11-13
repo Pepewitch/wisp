@@ -211,10 +211,15 @@ describe("buildArgv", () => {
       const argv = buildArgv(claude, { prompt: "plain" });
       expect(argv[argv.length - 1]).toBe("plain");
       expect(argv).not.toContain("--input-format");
-      expect(buildArgv(claude, { prompt: "plain", live: true }).slice(-2)).toEqual([
+      // a live turn also answers Claude's permission prompts on stdin (AskUserQuestion)
+      expect(buildArgv(claude, { prompt: "plain", live: true }).slice(-4)).toEqual([
         "--input-format",
         "stream-json",
+        "--permission-prompt-tool",
+        "stdio",
       ]);
+      // a one-shot image turn closes stdin after the prompt, so nobody could answer
+      expect(buildArgv(claude, { prompt: "look", images: ["/t/a.png"] })).not.toContain("--permission-prompt-tool");
     });
 
     test("images for a def with no image field insert nothing (the API rejects these earlier)", () => {

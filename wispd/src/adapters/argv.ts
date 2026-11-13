@@ -1,4 +1,5 @@
 import { IMAGE_INPUT_STRATEGIES } from "./images";
+import { CLAUDE_LIVE_ARGV } from "./live/claude-questions";
 import type { AdapterDef } from "./types";
 
 /**
@@ -79,6 +80,10 @@ export function buildArgv(
       throw new Error(`adapter ${field} '${inputStrategy}' is not a known strategy (known: ${known})`);
     }
     argv.push(...strategy.argv);
+    // A live turn has someone on stdin to answer Claude's permission prompts,
+    // which is what makes AskUserQuestion available in print mode at all. A
+    // one-shot image turn closes stdin after the prompt, so it never asks.
+    if (opts.live && inputStrategy === "claude-stream-json") argv.push(...CLAUDE_LIVE_ARGV);
   }
   if (!inputStrategy) {
     // The prompt is text, never flags: past `--` a prompt such as "--help" or
