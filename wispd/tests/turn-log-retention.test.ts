@@ -72,9 +72,16 @@ test("no live logs or missing, partial, unavailable prose rows are eligible at a
 });
 
 test("byte quota evicts oldest whole turns, including stderr, never individual file tails", async () => {
+  // The quota counts every archived log in this scratch ledger, other suites'
+  // too, and one still settling (its archive cleanup running, its prose not
+  // yet indexed) cannot be evicted yet: in CI a subtask suite's 4-byte log
+  // made this 19 rather than 15. So stand one in, evict whatever else can go,
+  // and hold these three to a quota above what stays.
+  fixture({ prose: "none", age: 0 });
+  const kept = (await retainTurnLogs({ ...cfg, turnLogMaxBytes: 1 }, now)).retainedBytes;
   const oldest = fixture({ age: 3 }), middle = fixture({ age: 2 }), newest = fixture({ age: 1 });
-  const result = await retainTurnLogs({ ...cfg, turnLogMaxBytes: 20 }, now);
-  expect(result.evicted).toBe(2); expect(result.reclaimedBytes).toBe(30); expect(result.retainedBytes).toBe(15);
+  const result = await retainTurnLogs({ ...cfg, turnLogMaxBytes: kept + 20 }, now);
+  expect(result.evicted).toBe(2); expect(result.reclaimedBytes).toBe(30); expect(result.retainedBytes).toBe(kept + 15);
   for (const f of [oldest, middle]) { expect(existsSync(f.log)).toBe(false); expect(existsSync(f.err)).toBe(false); }
   expect(existsSync(newest.log)).toBe(true);
 });
