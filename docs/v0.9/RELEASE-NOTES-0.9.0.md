@@ -122,9 +122,10 @@ things:
   daemon's endpoints against it; `bun run profile:usage` reads a real Wisp
   home, read-only, and reports where time and bytes go per harness, per
   cohort and per report pipeline, without prompts or paths.
-- **Desktop dependency hygiene** (#545). `rustix` and `tokio` move to patched
-  releases, clearing two unsound notices that were not reachable in the
-  shipped app.
+- **Desktop dependency hygiene** (#545, #580). `rustix` and `tokio` move to
+  patched releases, clearing two unsound notices, and `quinn-udp` moves to
+  0.5.16 for RUSTSEC-2026-0538. None of the three was reachable in the
+  shipped app; `quinn-udp` is locked but not compiled into any build.
 - **Tests and docs:** the turn-log quota test counts only its own logs (#567),
   and 0.8.8's publication was recorded (#544).
 
