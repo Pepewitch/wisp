@@ -1,7 +1,7 @@
 import { BranchRequest, Clock, Console, DocumentList, Flowchart, type FluentIcon } from "@/components/icons"
-import { parsedDiff, useDiff, useHarnessFeatures, useTaskShells, useTaskWorkflows } from "@/hooks/queries"
+import { useHarnessFeatures, useTaskShells, useTaskWorkflows } from "@/hooks/queries"
+import { useChangedFileCount } from "@/hooks/useChangedFileCount"
 import { useSubtaskCount } from "@/hooks/useSubtasks"
-import { changedFileCount } from "@/lib/diff"
 import type { ToolName } from "@/lib/tools"
 import type { ApiTask, PullRequestInfo, PullRequestStatus } from "@/lib/types"
 
@@ -26,8 +26,9 @@ export const TOOL_ICON: Record<ToolName, FluentIcon> = {
  * counts files, Subtasks counts children, Workflows counts the ones still
  * watching, a shell with a program in the foreground names it, and the
  * pull-request icon takes its PR's tone. The top bar's icons and the phone's
- * task sheet both draw them. Every count is a query the tool's pane makes
- * anyway: one key, one request.
+ * task sheet both draw them. Every count but one is a query the tool's pane
+ * makes anyway: one key, one request. Changes is the exception, because its
+ * pane's query is the whole diff: the hint asks for the count alone.
  */
 export interface ToolHints {
   /** files changed, children, workflows still watching */
@@ -40,14 +41,13 @@ export interface ToolHints {
 
 export function useToolHints(task: ApiTask, pullRequest?: PullRequestStatus): ToolHints {
   const features = useHarnessFeatures()
-  const diff = useDiff(task.id, task.archived).data
+  const files = useChangedFileCount(task)
   const workflows = useTaskWorkflows(task.id, features.data?.taskWorkflows === true).data
   const children = useSubtaskCount(task.id)
   const shells = useTaskShells(
     task.id,
     features.data?.taskTerminals === true && !task.archived && task.worktree_path !== null,
   ).data
-  const files = diff?.kind === "ok" ? changedFileCount(parsedDiff(diff).files, diff.untracked) : 0
   const watching = workflows?.filter((workflow) => workflow.state !== "completed").length ?? 0
   return {
     count: { changes: files, subtasks: children, workflows: watching },

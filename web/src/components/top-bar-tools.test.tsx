@@ -21,15 +21,16 @@ const DIFF = [
   "",
 ].join("\n")
 
-function daemon(shells: { program: string | null }[]) {
+function daemon(shells: { program: string | null }[], diffSummary = false) {
   const request = vi.fn(async (path: string) => {
-    if (path === "/api/harnesses") return { harnesses: [], features: { taskAutopilot: true, taskWorkflows: true, subtasks: true, taskTerminals: true } }
+    if (path === "/api/harnesses") return { harnesses: [], features: { taskAutopilot: true, taskWorkflows: true, subtasks: true, taskTerminals: true, diffSummary } }
     if (path.endsWith("/diff")) return { diff: DIFF, untracked: ["notes.md"], base: null, worktreeReason: null }
+    if (path.endsWith("/diff/summary")) return { files: 7, worktreeReason: null }
     if (path.endsWith("/workflows")) return [{ id: "w1", state: "active" }, { id: "w2", state: "completed" }]
     if (path.endsWith("/terminals")) return shells.map((shell, id) => ({ id, number: id + 1, name: null, title: null, shell: "zsh", exitCode: null, createdAt: "", ...shell }))
     return []
   })
-  return fakeDaemonTransport("conn", { request: request as unknown as DaemonTransport["request"] })
+  return Object.assign(fakeDaemonTransport("conn", { request: request as unknown as DaemonTransport["request"] }), { requested: request })
 }
 
 function controls(over: Partial<ToolPanelControls> = {}): ToolPanelControls {
@@ -81,6 +82,20 @@ describe("the top bar's tools", () => {
     mount(controls())
     await waitFor(() => expect(screen.getByRole("button", { name: /^Changes/ })).toHaveTextContent("Changes2"))
     await waitFor(() => expect(screen.getByRole("button", { name: /^Workflows/ })).toHaveTextContent("Workflows1"))
+  })
+
+  it("counts changed files from the diff summary, never fetching the whole diff, when the daemon has one", async () => {
+    const transport = daemon([], true)
+    render(
+      <ToolPanelContext.Provider value={controls()}>
+        <TopBarTools task={task} dragRegion={false} />
+      </ToolPanelContext.Provider>,
+      { wrapper: runtimeWrapper(transport) },
+    )
+    await waitFor(() => expect(screen.getByRole("button", { name: /^Changes/ })).toHaveTextContent("Changes7"))
+    const paths = transport.requested.mock.calls.map(([path]) => path)
+    expect(paths).toContain(`/api/tasks/${task.id}/diff/summary`)
+    expect(paths).not.toContain(`/api/tasks/${task.id}/diff`)
   })
 
   it("dots the Terminal while a shell has a program in the foreground", async () => {

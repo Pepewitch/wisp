@@ -296,6 +296,13 @@ function logStreamOptions(url: URL): { format: LogFormat; requested: number | nu
  * append events as bytes land, turn-end when the turn settles, and task state
  * events. The stream stays open across turns; the client closes it when switching.
  *
+ * `turn=n` without `follow` asks for that one turn's history, so the stream
+ * stops following at its turn-end: the turns after it are not what the client
+ * asked for. Moving on to the newest turn sent that turn's whole backlog to a
+ * client that was already closing (a 3 MB turn, re-sent on every history
+ * load). The stream stays open, quiet but for state frames and heartbeats,
+ * until the client closes it.
+ *
  * `follow=live` is for a viewer that keeps only the turn in progress (the web
  * pane drops a turn's structured activity at its turn-end). A turn that has
  * already settled when the stream reaches it is reported by its turn-end
@@ -335,6 +342,8 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
   let renderer = new TurnStreamRenderer(format, adapters[task.harness], `task ${task.id}`);
   let releaseTranscript: (() => void) | null = null;
   let evicted = false;
+  /** A history load (`turn=n`, no follow) has had its turn: nothing more to follow. */
+  let finished = false;
 
   const cleanup = (): void => {
     if (closed) return;
@@ -483,7 +492,7 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
   };
 
   const tick = async (): Promise<void> => {
-    if (ticking || closed) return;
+    if (ticking || closed || finished) return;
     ticking = true;
     try {
       for (;;) {
@@ -504,6 +513,8 @@ export function logStream(task: Task, url: URL, adapters: Record<string, Adapter
         const row = turnForTask(task.id, currentN);
         if (row && row.status !== "running") {
           await endTurn(row.status);
+          finished = requested !== null && !liveOnly;
+          if (finished) return;
           continue; // a newer turn may already exist — switch to it in the same tick
         }
         return;
