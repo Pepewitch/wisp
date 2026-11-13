@@ -88,6 +88,8 @@ describe("search through the trigram index", () => {
       "café", "CAFÉ", "naïve", "résumé", "RESUME", "straße", "STRASSE", "🚀", "🚀🚀", "ship",
       "100%", "50% d", "a_b", "c\\d", "\"the gateway\"", "\"", "early", "kiwis", "later answer",
       "gone", "zzqxv-no-such-text", "\nupdate", "then\nupd",
+      // a NUL ends an FTS5 query string, so the index cannot be asked for it
+      "gate\u0000way", "\u0000gateway",
       // the longest query the route takes, nearly every trigram distinct, quotes included
       Array.from({ length: 200 }, (_, i) => String.fromCharCode(33 + ((i * 7) % 94))).join(""),
     ];

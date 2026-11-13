@@ -72,10 +72,13 @@ const WINDOW_AFTER = 96;
  * rows are read; each one is still held to the same LIKE, so the answer is
  * the scan's. Its matching folds case at least as widely as LIKE's ASCII
  * folding, so it never drops a row LIKE would keep.
+ *
+ * A NUL ends an FTS5 query string wherever it sits, quoted or not, so a
+ * query holding one is scanned: asked of the index, it failed the search.
  */
 function trigramQuery(query: string, db: Database): string | null {
   const characters = [...query];
-  if (characters.length < 3) return null;
+  if (characters.length < 3 || query.includes("\0")) return null;
   if (db.query("PRAGMA table_info(search_prose)").all().length === 0) return null;
   const trigrams = new Set(characters.slice(2).map((_, i) => characters.slice(i, i + 3).join("")));
   return [...trigrams].map((trigram) => `"${trigram.replaceAll('"', '""')}"`).join(" AND ");
