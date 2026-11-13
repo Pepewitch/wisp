@@ -1576,7 +1576,9 @@ no evidence is drawn, and without the flag none of this is. Words live in
   stay plain text otherwise; `View message` asks the conversation to scroll to
   the message an auto-fix round queued (`revealMessage`, `useRevealMessage`).
   The data is `GET /api/tasks/:id/autopilot/history` (`useAutopilotHistory`),
-  refreshed by the SSE `workflow` event; a daemon without
+  refreshed by the SSE `workflow` event and by the selected task's `task`
+  event (an archive or an agent change moves workflows in SQL, announcing
+  only the task); a daemon without
   `features.autopilotHistory` draws no History at all and is never asked.
 - **No red dot on the tab.** The rail and the PR icon already say it.
 - **Which daemon, which tab.** `taskAutopilot` brings the tab. The panel

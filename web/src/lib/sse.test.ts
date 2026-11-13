@@ -591,6 +591,22 @@ describe("what an event about the selected task refetches", () => {
     h.close();
   });
 
+  /**
+   * The daemon pauses a task's workflows in SQL when its context or agent
+   * changes (`/fresh`, another model) and completes them when it is archived.
+   * Those are task-row updates, announced as a `task` event and nothing else.
+   */
+  it("a task event refetches the workflow panels, since the task row can pause or complete them", () => {
+    const h = bridge("t1");
+    seed(h.client);
+    seedPanels(h, "t1");
+    h.sources[0]!.emit({ type: "task", taskId: "t1", state: "done", stateDetail: null, seq: 2 });
+    const keys = panels(h, "t1");
+    for (const key of [keys.workflows, keys.history, keys.review]) expect(invalidated(h.client, key)).toBe(true);
+    expect(invalidated(h.client, keys.activity)).toBe(false);
+    h.close();
+  });
+
   it("a message event refetches the detail exactly", () => {
     const h = bridge("t1");
     seed(h.client);
