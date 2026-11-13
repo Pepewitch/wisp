@@ -235,14 +235,17 @@ with new commits, and up to its 20-second deadline on a slow one, so the web
 composer starts it early: opening the composer, changing its project or mode,
 and typing (at most every 20 s) each send `POST /api/projects/base-refs` for
 a worktree task. The daemon answers 202 at once, and `wispd/src/base-refs.ts`
-keeps one fetch per repository at a time: a second request or a create joins
-the fetch in flight, and a prefetch that started within the last 15 s is not
-repeated. Only a person's create from the web or Desktop composer may skip
-its own fetch, and only when one that succeeded started within the last
-30 s. Every other create (`wisp new`, an agent's subtask, autopilot, a
-workflow, a bare API call) joins a fetch already running but otherwise
-fetches as it always did: an orchestrating task that merges a PR and starts
-the next subtask seconds later must fork from the merge. A merge Wisp makes
+keeps one fetch per repository at a time: a second request or a composer
+create joins the fetch in flight, and a prefetch that started within the
+last 15 s is not repeated. Only a person's create from the web or Desktop
+composer may skip its own fetch, and only when one that succeeded started
+within the last 30 s. Every other create (`wisp new`, an agent's subtask,
+autopilot, a workflow, a bare API call) fetches as it always did: an
+orchestrating task that merges a PR and starts the next subtask seconds
+later must fork from the merge. A fetch already running when such a create
+asks may predate that merge, so the create waits it out (two fetches never
+overlap) and then fetches again; it joins only a fetch that began after it
+asked. A merge Wisp makes
 itself (autopilot's `gh pr merge`) drops that repository's freshness, and a
 failed or timed-out fetch never counts as fresh. Only a registered project is
 fetched, never a path the client names.
