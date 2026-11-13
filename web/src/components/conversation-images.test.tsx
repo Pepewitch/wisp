@@ -118,6 +118,17 @@ describe("a turn's images", () => {
     expect(screen.getByRole("button", { name: /Show activity/ })).toHaveTextContent("looked at 1 image")
   })
 
+  it("are dropped from this client once an archive removes their bytes", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:shared-before")
+    const revoke = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {})
+    const detail = task({ outputs: [shared] })
+    const view = draw(detail)
+    await vi.waitFor(() => expect(screen.getByRole("img", { name: "before.png" })).toHaveAttribute("src", "blob:shared-before"))
+    view.rerender(<Conversation task={{ ...detail, archived: true, attachmentsRetained: false }} stream={initialStreamState} />)
+    expect(revoke).toHaveBeenCalledWith("blob:shared-before")
+    expect(screen.getByText(/before.png · removed when this task was archived/)).toBeInTheDocument()
+  })
+
   it("say one image in the singular, and nothing when the agent only shared", () => {
     const view = draw(task({ outputs: [looked, shared] }))
     expect(screen.getByRole("button", { name: /Show activity/ })).toHaveTextContent("looked at 1 image")

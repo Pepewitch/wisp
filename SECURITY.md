@@ -181,12 +181,16 @@ remote reference or anchor reaches the page. Diagram directives cannot re-enable
 inject CSS. The Desktop webview policy also sets `object-src`, `base-uri` and
 `form-action` to `'none'`.
 
-Attachment blob caches are scoped by connection and path. Task/message changes,
-reconnection, and browser credential changes invalidate affected entries and
-prevent old pending responses from repopulating them. Unmounted entries are
-evicted to targets of 32 images and 64 MiB; visible images remain pinned until
-released. This clears Wisp's display/cache, not screenshots, downloads, or copies
-made by older versions or other applications.
+Attachment blob caches are scoped by connection and path. An archive that
+removes a task's files, a retention change or permanent deletion of an archived
+task, and browser credential changes revoke affected entries at once, on screen
+included, and prevent old pending responses from repopulating them. A message
+change and reconnection ask the daemon again for affected entries, keeping an
+image on screen until it answers and dropping it when the bytes are gone;
+content-addressed output images are not refetched on reconnection. Entries far
+from the viewport are evicted to targets of 32 images and 64 MiB; images near
+it remain pinned until released. This clears Wisp's display/cache, not
+screenshots, downloads, or copies made by older versions or other applications.
 
 Attachment responses are `Cache-Control: private, no-store`. Permanent deletion and message cancellation
 remove bytes, and a long-lived cache entry meant a browser kept serving them

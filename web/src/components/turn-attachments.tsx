@@ -3,19 +3,21 @@ import { useState } from "react"
 import { AttachmentTablePreview, TextAttachmentRow } from "@/components/attachment-table"
 import { AttachmentTextViewer } from "@/components/attachment-text-viewer"
 import { AttachmentViewer } from "@/components/attachment-viewer"
-import { useAssetSrc } from "@/lib/asset-src"
+import { useAssetSrc, useAssetStatus } from "@/lib/asset-src"
 import { attachmentKind, attachmentUrl, formatBytes } from "@/lib/attachments"
 import { delimiterFor } from "@/lib/delimited"
 import type { TurnAttachment } from "@/lib/types"
 
 /**
  * One thumbnail. Its own component because resolving a protected asset is a
- * hook (`useAssetSrc`), and the gallery renders these in a list.
+ * hook (`useAssetStatus`), and the gallery renders these in a list. Its box is
+ * fixed, so it fetches lazily without moving anything.
  */
 function AttachmentThumb({ path, name }: { path: string; name: string }) {
-  const src = useAssetSrc(path)
+  const { src, ref } = useAssetStatus(path, { lazy: true })
   return (
     <img
+      ref={ref}
       src={src ?? undefined}
       alt={name}
       loading="lazy"
