@@ -13,16 +13,26 @@ import type { SubtaskKind, Task } from "./types";
 
 export type { SubtaskKind };
 
+/**
+ * Children are ordered by creation, and `created_at` only has millisecond
+ * resolution: two created in the same millisecond tie on it. Task ids are
+ * random, so they would break that tie in a random order; `rowid` grows with
+ * each insert, so it keeps the order they were created in. Queued siblings
+ * start in this order, so it must be stable.
+ */
+const OLDEST_FIRST = "created_at, rowid";
+const NEWEST_FIRST = "created_at DESC, rowid DESC";
+
 /** Every child of a task, newest first; archived ones only when asked. */
 export function childrenOf(parentId: string, options: { archived?: boolean } = {}): Task[] {
   const where = options.archived ? "" : "AND archived = 0";
-  return db.query(`SELECT * FROM tasks WHERE parent_task_id = ? ${where} ORDER BY created_at DESC, id`).all(parentId) as Task[];
+  return db.query(`SELECT * FROM tasks WHERE parent_task_id = ? ${where} ORDER BY ${NEWEST_FIRST}`).all(parentId) as Task[];
 }
 
-/** The unarchived children that count: everything but Wisp's reviewers. */
+/** The unarchived children that count, oldest first: everything but Wisp's reviewers. */
 export function liveNonReviewerChildren(parentId: string): Task[] {
   return db
-    .query(`SELECT * FROM tasks WHERE parent_task_id = ? AND archived = 0 AND verify_role IS NOT 'reviewer' ORDER BY created_at, id`)
+    .query(`SELECT * FROM tasks WHERE parent_task_id = ? AND archived = 0 AND verify_role IS NOT 'reviewer' ORDER BY ${OLDEST_FIRST}`)
     .all(parentId) as Task[];
 }
 
