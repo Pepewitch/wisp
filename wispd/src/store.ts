@@ -649,6 +649,15 @@ export function runningTurns(taskId?: string): Turn[] {
   return db.query(`SELECT ${TURN_COLUMNS} FROM turns WHERE status = 'running'`).all() as Turn[];
 }
 
+/** runningTurn() for every task at once, for a whole task list: one read of the (partially indexed) running turns. */
+export function runningTurnsByTask(): ReadonlyMap<string, Turn> {
+  const byTask = new Map<string, Turn>();
+  for (const turn of runningTurns()) {
+    if ((byTask.get(turn.task_id)?.n ?? -Infinity) < turn.n) byTask.set(turn.task_id, turn);
+  }
+  return byTask;
+}
+
 export function runningTurn(taskId: string): Turn | null {
   return (
     (db

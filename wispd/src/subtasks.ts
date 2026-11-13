@@ -44,6 +44,31 @@ export function queuePosition(task: Pick<Task, "id" | "parent_task_id">): number
 }
 
 /**
+ * queuePosition() for a whole task list. Asked per queued row, each answer
+ * read every live child of that row's parent, so a parent with Q queued
+ * children cost Q reads of all its children. This reads every queued child
+ * once, on the first ask, and numbers them per parent in the same order.
+ */
+export function queuePositions(): (task: Pick<Task, "id" | "parent_task_id">) => number {
+  let positions: Map<string, number> | null = null;
+  return (task) => {
+    if (!task.parent_task_id) return 1;
+    if (positions === null) {
+      const queued = db.query(`SELECT id, parent_task_id FROM tasks
+        WHERE state = 'queued' AND parent_task_id IS NOT NULL AND archived = 0 AND verify_role IS NOT 'reviewer'
+        ORDER BY ${OLDEST_FIRST}`).all() as { id: string; parent_task_id: string }[];
+      const counted = new Map<string, number>();
+      positions = new Map(queued.map((child) => {
+        const n = (counted.get(child.parent_task_id) ?? 0) + 1;
+        counted.set(child.parent_task_id, n);
+        return [child.id, n];
+      }));
+    }
+    return positions.get(task.id) ?? 1;
+  };
+}
+
+/**
  * A task and its descendants, at most two levels (a root, its children, and
  * the reviewers of a child's PR), parents before children.
  */
