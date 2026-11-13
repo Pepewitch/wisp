@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 /**
  * Who fetches a repo's base refs, and when the create path may skip it.
  *
@@ -12,8 +14,10 @@
  *     remote-tracking ref locks, so joining is about correctness as well as cost;
  *   - a prefetch that started recently is not repeated (PREFETCH_COOLDOWN_MS),
  *     so a composer opened and closed in a loop costs one fetch, not one each;
- *   - a create skips its own fetch only after a SUCCESSFUL one that started
- *     within BASE_REFS_FRESH_MS. A failed or timed-out attempt never counts.
+ *   - a create from the composer skips its own fetch after a SUCCESSFUL one
+ *     that started within BASE_REFS_FRESH_MS. A failed or timed-out attempt
+ *     never counts, and no other create skips at all (see `beforeCreate`);
+ *   - a merge Wisp makes drops the repo's freshness (`invalidate`).
  *
  * The fetch itself is injected rather than imported: it is worktree.ts's
  * `fetchBaseRefs`, and worktree.ts is also this module's only caller.
@@ -34,12 +38,12 @@
 export const PREFETCH_COOLDOWN_MS = 15_000;
 
 /**
- * How recent a successful fetch must be for a create to fork from it without
- * fetching again, measured from when that fetch STARTED, since that is the
- * moment its refs describe. Thirty seconds is conservative: only a commit that
- * lands on origin in the half minute before Start can be missed, and the task
- * still records the exact base it forked from. It is long enough to cover the
- * composer's 20 s between asks plus the fetch itself, which is what lets a
+ * How recent a successful fetch must be for a composer create to fork from it
+ * without fetching again, measured from when that fetch STARTED, since that is
+ * the moment its refs describe. Thirty seconds is conservative: only a commit
+ * that lands on origin in the half minute before Start can be missed, and the
+ * task still records the exact base it forked from. It is long enough to cover
+ * the composer's 20 s between asks plus the fetch itself, which is what lets a
  * Start pressed mid-sentence skip the wait.
  */
 export const BASE_REFS_FRESH_MS = 30_000;
@@ -50,11 +54,28 @@ export type FetchBaseRefs = (repo: string) => Promise<boolean>;
 /** What a prefetch request did: began a fetch, joined the one running, or found one started too recently to repeat. */
 export type PrefetchState = "started" | "joined" | "recent";
 
+export interface BeforeCreateOptions {
+  /**
+   * May this create fork from a fetch that already finished? Only the
+   * composer's: its person was just shown the project, and its prefetch is
+   * what made that fetch. Off for everything else (`wisp new`, an agent's
+   * subtask, autopilot, a workflow, a bare API call): an orchestrating task
+   * merges a PR and starts the next subtask seconds later, and that subtask
+   * must see the merge. Off by default, so a caller nobody thought about keeps
+   * the old fetch-every-time behaviour.
+   */
+  reuseRecent?: boolean;
+}
+
 interface RepoFetch {
   inFlight: Promise<boolean> | null;
+  /** the `epoch` the running attempt started in: a merge since makes it stale */
+  inFlightEpoch: number;
+  /** bumped by `invalidate`: what an attempt started before it fetched predates a merge */
+  epoch: number;
   /** when the latest attempt began, whatever came of it: the prefetch cooldown */
   attemptedAt: number;
-  /** when the latest SUCCESSFUL attempt began: the only thing the create path trusts */
+  /** when the latest SUCCESSFUL attempt of this epoch began: all a composer create trusts */
   freshAt: number | null;
 }
 
@@ -72,51 +93,77 @@ export class BaseRefFetches {
    * only tells a test when the work is done; the route does not wait for it.
    */
   prefetch(repo: string): { state: PrefetchState; settled: Promise<void> } {
-    const current = this.repos.get(repo);
+    const key = resolve(repo);
+    const current = this.repos.get(key);
     if (current?.inFlight) return { state: "joined", settled: current.inFlight.then(() => undefined) };
     if (current && this.now() - current.attemptedAt < PREFETCH_COOLDOWN_MS) {
       return { state: "recent", settled: Promise.resolve() };
     }
-    return { state: "started", settled: this.start(repo).then(() => undefined) };
+    return { state: "started", settled: this.start(key).then(() => undefined) };
   }
 
   /**
    * The create path's fetch. Awaits one already running rather than starting a
-   * second; skips when a fetch succeeded within BASE_REFS_FRESH_MS; otherwise
-   * fetches, exactly as every create did before prefetching existed.
+   * second; with `reuseRecent`, skips when a fetch succeeded within
+   * BASE_REFS_FRESH_MS; otherwise fetches, exactly as every create did before
+   * prefetching existed.
    *
    * Joining a running attempt is the whole fetch for this create, whatever it
    * answers: it is the attempt the create would otherwise have made a moment
-   * later, and a failure falls through to the refs on disk just the same.
+   * later, and a failure falls through to the refs on disk just the same. The
+   * one exception is an attempt that started before a merge Wisp made: it is
+   * waited out (two fetches must not overlap) and then fetched past.
    */
-  async beforeCreate(repo: string): Promise<void> {
-    const current = this.repos.get(repo);
-    if (current?.inFlight) {
-      await current.inFlight;
+  async beforeCreate(repo: string, options: BeforeCreateOptions = {}): Promise<void> {
+    const key = resolve(repo);
+    for (;;) {
+      const current = this.repos.get(key);
+      if (current?.inFlight) {
+        const epoch = current.inFlightEpoch;
+        await current.inFlight;
+        if (epoch === current.epoch) return;
+        continue;
+      }
+      if (options.reuseRecent === true && current?.freshAt != null && this.now() - current.freshAt < BASE_REFS_FRESH_MS) return;
+      await this.start(key);
       return;
     }
-    if (current?.freshAt != null && this.now() - current.freshAt < BASE_REFS_FRESH_MS) return;
-    await this.start(repo);
   }
 
-  private start(repo: string): Promise<boolean> {
+  /**
+   * Origin has just moved under Wisp's own hand (a merge): nothing fetched
+   * before now may stand in for a fetch, and the next prefetch must not be
+   * held back by the cooldown either.
+   */
+  invalidate(repo: string): void {
+    const current = this.repos.get(resolve(repo));
+    if (!current) return;
+    current.epoch += 1;
+    current.freshAt = null;
+    current.attemptedAt = Number.NEGATIVE_INFINITY;
+  }
+
+  private start(key: string): Promise<boolean> {
     const startedAt = this.now();
-    const state = this.repos.get(repo) ?? { inFlight: null, attemptedAt: startedAt, freshAt: null };
+    const state = this.repos.get(key) ?? { inFlight: null, inFlightEpoch: 0, epoch: 0, attemptedAt: startedAt, freshAt: null };
     state.attemptedAt = startedAt;
+    const epoch = state.epoch;
     // `fetchOnce` is best effort and should not throw; the catch is what keeps
     // a fire-and-forget prefetch from ever becoming an unhandled rejection
     // if it does, and a throw is a failure like any other: not fresh.
-    const attempt = this.fetchOnce(repo)
+    const attempt = this.fetchOnce(key)
       .catch(() => false)
       .then((ok) => {
         // An earlier success stays trusted after a later failure: its refs
         // still describe origin as it was then, and the window still bounds it.
-        if (ok) state.freshAt = startedAt;
+        // A success that began before a merge describes origin before it.
+        if (ok && epoch === state.epoch) state.freshAt = startedAt;
         state.inFlight = null;
         return ok;
       });
     state.inFlight = attempt;
-    this.repos.set(repo, state);
+    state.inFlightEpoch = epoch;
+    this.repos.set(key, state);
     return attempt;
   }
 }

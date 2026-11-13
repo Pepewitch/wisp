@@ -1,7 +1,7 @@
 import { closeSync, openSync } from "node:fs";
 import { copyFile, mkdir, open } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
-import { BaseRefFetches } from "./base-refs";
+import { BaseRefFetches, type BeforeCreateOptions } from "./base-refs";
 import { branchFor } from "./branch-name";
 import { wispCommand } from "./command";
 import { LOG_DIR, WORKTREE_ROOT, repoConfigFor, type WispConfig } from "./config";
@@ -294,6 +294,8 @@ export async function createWorktree(
   cfg: WispConfig,
   /** a ref to resolve, or a base already resolved and pinned (a subtask's), used exactly as given */
   base?: string | { ref: string; commit: string },
+  /** whether this create may fork from a recent prefetch (base-refs.ts): the composer's only */
+  fetch: BeforeCreateOptions = {},
 ): Promise<WorktreeInfo> {
   const repo = resolve(repoPath);
   must(await git(["rev-parse", "--git-dir"], repo), `not a git repository: ${repo}`);
@@ -305,8 +307,8 @@ export async function createWorktree(
     if ((await commitFor(repo, base.commit)) === null) throw new Error(`base commit ${base.commit.slice(0, 12)} is not in ${repo}`);
     chosen = { ref: base.ref, commit: base.commit, note: null };
   } else {
-    // usually free: the composer started this fetch while the prompt was typed
-    await baseRefFetches.beforeCreate(repo);
+    // a composer create usually finds this done: it started while the prompt was typed
+    await baseRefFetches.beforeCreate(repo, fetch);
     chosen = await resolveBase(repo, base, repoConfigFor(cfg, repo)?.baseBranch);
   }
   const base_commit = chosen.commit;

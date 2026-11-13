@@ -172,6 +172,8 @@ export function createTaskRoute(
       }
       mode = body.mode as TaskMode;
     }
+    const actor = requestActor(req);
+    const subtask = subtaskRequest(body);
     const created = await createAndLaunchTask(
       {
         repoPath: (body.repoPath as string | undefined) ?? "",
@@ -191,9 +193,14 @@ export function createTaskRoute(
             autoReview: body.autopilot.autoReview === true,
           }
           : undefined,
-        subtask: subtaskRequest(body),
-        actor: requestActor(req),
+        subtask,
+        actor,
         queue: body.queue === true,
+        // A person at the web or Desktop composer, which prefetched this
+        // project's base refs while they typed. Never a subtask or the CLI:
+        // an agent that merges a PR and starts the next task seconds later
+        // must fork from the merge, so those creates always fetch.
+        reuseRecentBaseRefs: (actor === "web" || actor === "desktop") && subtask === undefined,
       },
       cfg,
       adapters,

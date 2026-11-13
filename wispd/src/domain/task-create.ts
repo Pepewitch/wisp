@@ -70,6 +70,13 @@ export interface NewTaskInput {
   actor: TaskAuditActor;
   /** a subtask that waits for its parent's running cap instead of being refused (task-launch.ts) */
   queue?: boolean;
+  /**
+   * The worktree may fork from a fetch the composer's prefetch finished
+   * moments ago (base-refs.ts). Only POST /api/tasks sets it, and only for a
+   * person's create from the web or Desktop composer; every other create
+   * fetches, so an agent that just merged a PR forks from the merge.
+   */
+  reuseRecentBaseRefs?: boolean;
 }
 
 /**
@@ -284,7 +291,9 @@ export async function createAndLaunchTask(
     const created = task;
     void backgroundPass(
       `launch of task ${task.id}`,
-      () => launchTask(created, prompt, def, adapters, cfg, attachments, input.base, input.queue ? { actor: input.actor } : undefined).finally(() => {
+      () => launchTask(created, prompt, def, adapters, cfg, attachments, input.base, input.queue ? { actor: input.actor } : undefined, {
+        reuseRecent: input.reuseRecentBaseRefs === true,
+      }).finally(() => {
         release();
         // a creation slot freed, or setup failed: a sibling waiting on the parent's cap may start
         drainSubtaskQueues(created.parent_task_id, adapters, cfg);

@@ -8,6 +8,7 @@ import { controlFree } from "../control-free"
 import { ghReply, githubBudget, MERGE_POINTS, unlessPaused, type GitHubBudget, type GitHubResource } from "../github-budget"
 import { runBounded, type RunOptions, type RunResult } from "../subprocess"
 import { isRecord } from "../validate"
+import { baseRefFetches } from "../worktree"
 import type { PrCheck } from "./checks"
 
 export type MergeMethod = "SQUASH" | "MERGE" | "REBASE"
@@ -658,13 +659,21 @@ export function createGhAutopilot(options: { run?: GhRun; budget?: GitHubBudget 
       return ["admin", "maintain", "write"].includes(str(result.role_name)) || ["admin", "write"].includes(str(result.permission))
     },
     async merge({ repository, number, method, head }, cwd, signal) {
-      // GitHub refusing the merge for the rate is no merge failure: settling throws, and the look pauses instead
-      const { result } = await accounted("graphql", MERGE_POINTS, () => gh(
-        ["pr", "merge", String(number), "--repo", repository, `--${method.toLowerCase()}`, "--match-head-commit", head],
-        cwd, signal, 60_000,
-      ), false, MERGE_POINTS)
-      const detail = [result.out, result.err].join("\n").trim().split("\n").filter(Boolean).slice(-3).join(" · ").slice(0, 300)
-      return { ok: result.exitCode === 0 && !result.timedOut && !result.cancelled, detail }
+      // Wisp's only write to a base branch. However gh ends (a timeout, or a
+      // throw after the request went out, can still have merged), refs
+      // fetched before now may predate it, so a composer create right after
+      // must fetch rather than reuse them (base-refs.ts).
+      try {
+        // GitHub refusing the merge for the rate is no merge failure: settling throws, and the look pauses instead
+        const { result } = await accounted("graphql", MERGE_POINTS, () => gh(
+          ["pr", "merge", String(number), "--repo", repository, `--${method.toLowerCase()}`, "--match-head-commit", head],
+          cwd, signal, 60_000,
+        ), false, MERGE_POINTS)
+        const detail = [result.out, result.err].join("\n").trim().split("\n").filter(Boolean).slice(-3).join(" · ").slice(0, 300)
+        return { ok: result.exitCode === 0 && !result.timedOut && !result.cancelled, detail }
+      } finally {
+        baseRefFetches.invalidate(cwd)
+      }
     },
   }
 }
