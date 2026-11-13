@@ -558,76 +558,6 @@ describe("the task lists an event refetches", () => {
   });
 });
 
-describe("the bridge's pacing", () => {
-  it("a steady burst of events still refreshes the sidebar within two seconds", async () => {
-    vi.useFakeTimers();
-    try {
-      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-      client.setQueryData(qk.tasksList(false), []);
-      client.setQueryData(qk.status, { tasks: {} });
-      const source = new FakeSse("/api/events");
-      const close = connectEventsBridge({
-        client,
-        qk,
-        transport: { ensureReady: () => Promise.resolve(), openEventStream: () => source },
-        getSelectedId: () => null,
-      });
-      // archive progress: an event every 100 ms, never the 300 ms of quiet a trailing debounce waits for
-      for (let tick = 0; tick < 19; tick++) {
-        source.emit({ type: "task", taskId: "t9", state: "done", stateDetail: `step ${tick}`, seq: tick });
-        await vi.advanceTimersByTimeAsync(100);
-      }
-      expect(invalidated(client, qk.tasksList(false))).toBe(false);
-      source.emit({ type: "task", taskId: "t9", state: "done", stateDetail: "step 19", seq: 19 });
-      await vi.advanceTimersByTimeAsync(100);
-      expect(invalidated(client, qk.tasksList(false))).toBe(true);
-      expect(invalidated(client, qk.status)).toBe(true);
-      close();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("a stream refused again and again waits longer before each rebuild, and starts over once it opens", async () => {
-    vi.useFakeTimers();
-    // the top of the jitter range, so each wait is its whole ceiling
-    const random = vi.spyOn(Math, "random").mockReturnValue(0.999_999);
-    try {
-      const sources: FakeSse[] = [];
-      const close = connectEventsBridge({
-        client: new QueryClient(),
-        qk,
-        transport: {
-          ensureReady: () => Promise.resolve(),
-          openEventStream: (url) => {
-            const next = new FakeSse(url);
-            sources.push(next);
-            return next;
-          },
-        },
-        getSelectedId: () => null,
-        reconnectDelayMs: 1_000,
-      });
-      sources[0]!.hardError();
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(sources).toHaveLength(2);
-      sources[1]!.hardError();
-      await vi.advanceTimersByTimeAsync(1_999);
-      expect(sources).toHaveLength(2);
-      await vi.advanceTimersByTimeAsync(1);
-      expect(sources).toHaveLength(3);
-      sources[2]!.openUp();
-      sources[2]!.hardError();
-      await vi.advanceTimersByTimeAsync(1_000);
-      expect(sources).toHaveLength(4);
-      close();
-    } finally {
-      random.mockRestore();
-      vi.useRealTimers();
-    }
-  });
-});
-
 describe("what an event about the selected task refetches", () => {
   const panels = (h: Harness, id: string) => ({
     subtasks: [...h.qk.task(id), "subtasks"],
@@ -698,5 +628,75 @@ describe("what an event about the selected task refetches", () => {
     expect(invalidations).toHaveBeenCalledTimes(1);
     expect(invalidations).toHaveBeenCalledWith({ queryKey: qk.task("t1"), exact: true });
     close();
+  });
+});
+
+describe("the bridge's pacing", () => {
+  it("a steady burst of events still refreshes the sidebar within two seconds", async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      client.setQueryData(qk.tasksList(false), []);
+      client.setQueryData(qk.status, { tasks: {} });
+      const source = new FakeSse("/api/events");
+      const close = connectEventsBridge({
+        client,
+        qk,
+        transport: { ensureReady: () => Promise.resolve(), openEventStream: () => source },
+        getSelectedId: () => null,
+      });
+      // archive progress: an event every 100 ms, never the 300 ms of quiet a trailing debounce waits for
+      for (let tick = 0; tick < 19; tick++) {
+        source.emit({ type: "task", taskId: "t9", state: "done", stateDetail: `step ${tick}`, seq: tick });
+        await vi.advanceTimersByTimeAsync(100);
+      }
+      expect(invalidated(client, qk.tasksList(false))).toBe(false);
+      source.emit({ type: "task", taskId: "t9", state: "done", stateDetail: "step 19", seq: 19 });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(invalidated(client, qk.tasksList(false))).toBe(true);
+      expect(invalidated(client, qk.status)).toBe(true);
+      close();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a stream refused again and again waits longer before each rebuild, and starts over once it opens", async () => {
+    vi.useFakeTimers();
+    // the top of the jitter range, so each wait is its whole ceiling
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.999_999);
+    try {
+      const sources: FakeSse[] = [];
+      const close = connectEventsBridge({
+        client: new QueryClient(),
+        qk,
+        transport: {
+          ensureReady: () => Promise.resolve(),
+          openEventStream: (url) => {
+            const next = new FakeSse(url);
+            sources.push(next);
+            return next;
+          },
+        },
+        getSelectedId: () => null,
+        reconnectDelayMs: 1_000,
+      });
+      sources[0]!.hardError();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(sources).toHaveLength(2);
+      sources[1]!.hardError();
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(sources).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sources).toHaveLength(3);
+      sources[2]!.openUp();
+      sources[2]!.hardError();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(sources).toHaveLength(4);
+      close();
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

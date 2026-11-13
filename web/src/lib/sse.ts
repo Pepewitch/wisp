@@ -93,55 +93,6 @@ function debounce(fn: () => void, ms: number, maxWaitMs = DEBOUNCE_MAX_WAIT_MS):
   return run;
 }
 
-/**
- * The task detail, debounced. It is invalidated EXACTLY: its key prefixes the
- * task's panels (subtasks, workflows, autopilot history, auto-review, usage,
- * storage), and invalidating it as a prefix refetched every one of them on
- * every event about the selected task. Each panel is refreshed by the events
- * that concern it instead.
- */
-function detailInvalidations(opts: EventsBridgeOptions) {
-  const { client, qk } = opts;
-  const detail = (id: string) => void client.invalidateQueries({ queryKey: qk.task(id), exact: true });
-  const turn = debounce(() => {
-    const id = opts.getSelectedId();
-    if (!id) return;
-    detail(id);
-    // skills follow turn boundaries too: the init event that names them lands
-    // at finalize, and a session that refused while running answers now
-    void client.invalidateQueries({ queryKey: qk.skills(id) });
-    void client.invalidateQueries({ queryKey: qk.diff(id) });
-    // Token totals and stored size move with turns and state, and no event of
-    // their own announces them. Each is read only while its panel is open, so
-    // this refetches nothing otherwise.
-    void client.invalidateQueries({ queryKey: [...qk.task(id), "usage"] });
-    void client.invalidateQueries({ queryKey: [...qk.task(id), "storage"] });
-  }, opts.detailDebounceMs ?? 400);
-  const messages = debounce(() => {
-    const id = opts.getSelectedId();
-    if (id) detail(id);
-  }, opts.detailDebounceMs ?? 400);
-  // Several images in one turn arrive as several events: one refetch for them.
-  const outputTasks = new Set<string>();
-  const flushOutputs = debounce(() => {
-    for (const id of outputTasks) detail(id);
-    outputTasks.clear();
-  }, opts.detailDebounceMs ?? 400);
-  return {
-    turn,
-    messages,
-    outputs: (taskId: string) => {
-      outputTasks.add(taskId);
-      flushOutputs();
-    },
-    cancel: () => {
-      turn.cancel();
-      messages.cancel();
-      flushOutputs.cancel();
-    },
-  };
-}
-
 export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
   const factory: SseFactory = opts.factory ?? ((path) => opts.transport.openEventStream(path));
   const qk = opts.qk;
@@ -379,5 +330,54 @@ export function connectEventsBridge(opts: EventsBridgeOptions): () => void {
     invalidateRepos.cancel();
     details.cancel();
     source?.close();
+  };
+}
+
+/**
+ * The task detail, debounced. It is invalidated EXACTLY: its key prefixes the
+ * task's panels (subtasks, workflows, autopilot history, auto-review, usage,
+ * storage), and invalidating it as a prefix refetched every one of them on
+ * every event about the selected task. Each panel is refreshed by the events
+ * that concern it instead.
+ */
+function detailInvalidations(opts: EventsBridgeOptions) {
+  const { client, qk } = opts;
+  const detail = (id: string) => void client.invalidateQueries({ queryKey: qk.task(id), exact: true });
+  const turn = debounce(() => {
+    const id = opts.getSelectedId();
+    if (!id) return;
+    detail(id);
+    // skills follow turn boundaries too: the init event that names them lands
+    // at finalize, and a session that refused while running answers now
+    void client.invalidateQueries({ queryKey: qk.skills(id) });
+    void client.invalidateQueries({ queryKey: qk.diff(id) });
+    // Token totals and stored size move with turns and state, and no event of
+    // their own announces them. Each is read only while its panel is open, so
+    // this refetches nothing otherwise.
+    void client.invalidateQueries({ queryKey: [...qk.task(id), "usage"] });
+    void client.invalidateQueries({ queryKey: [...qk.task(id), "storage"] });
+  }, opts.detailDebounceMs ?? 400);
+  const messages = debounce(() => {
+    const id = opts.getSelectedId();
+    if (id) detail(id);
+  }, opts.detailDebounceMs ?? 400);
+  // Several images in one turn arrive as several events: one refetch for them.
+  const outputTasks = new Set<string>();
+  const flushOutputs = debounce(() => {
+    for (const id of outputTasks) detail(id);
+    outputTasks.clear();
+  }, opts.detailDebounceMs ?? 400);
+  return {
+    turn,
+    messages,
+    outputs: (taskId: string) => {
+      outputTasks.add(taskId);
+      flushOutputs();
+    },
+    cancel: () => {
+      turn.cancel();
+      messages.cancel();
+      flushOutputs.cancel();
+    },
   };
 }
