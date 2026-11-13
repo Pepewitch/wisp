@@ -2,10 +2,18 @@ import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { AdapterDef } from "../src/adapters";
+import { createGhAutopilot } from "../src/autopilot/github";
 import { BASE_REFS_FRESH_MS, BaseRefFetches, PREFETCH_COOLDOWN_MS } from "../src/base-refs";
+import { cliClientHeaders } from "../src/cli-api";
 import { CONFIG_PATH, type WispConfig } from "../src/config";
 import { serve } from "../src/daemon";
+import { GitHubBudget } from "../src/github-budget";
+import { route } from "../src/routes";
+import { getTask } from "../src/store";
+import type { Task } from "../src/types";
 import { baseRefFetches, createWorktree, fetchBaseRefs } from "../src/worktree";
+import { testRouteContext } from "./helpers/daemon-context";
 
 /**
  * The composer's base-ref prefetch, and the create path that reuses it.
@@ -21,6 +29,8 @@ import { baseRefFetches, createWorktree, fetchBaseRefs } from "../src/worktree";
  */
 
 const cfg = { envAllowlist: {}, setupTimeoutMinutes: 5 } as WispConfig;
+/** what POST /api/tasks passes for a person's create from the web or Desktop composer */
+const COMPOSER = { reuseRecent: true };
 const FIXTURE_DIRS: string[] = [];
 
 function fixtureDir(prefix: string): string {
@@ -155,17 +165,29 @@ describe("BaseRefFetches (the rules, with a fake fetch and clock)", () => {
     expect(f.calls()).toBe(1);
   });
 
-  test("a success started within the window lets a create skip; an older one does not", async () => {
+  test("a composer create skips within the window of a success; an older one does not", async () => {
     const f = fake();
     const pre = f.fetches.prefetch("/repo");
     f.advance(5_000); // the fetch itself took a while: the window runs from its START
     f.finish(true);
     await pre.settled;
     f.advance(BASE_REFS_FRESH_MS - 5_001);
-    await f.fetches.beforeCreate("/repo");
+    await f.fetches.beforeCreate("/repo", COMPOSER);
     expect(f.calls()).toBe(1);
 
     f.advance(1);
+    const create = f.fetches.beforeCreate("/repo", COMPOSER);
+    expect(f.calls()).toBe(2);
+    f.finish(true);
+    await create;
+  });
+
+  test("any other create fetches however fresh the last success is", async () => {
+    const f = fake();
+    const pre = f.fetches.prefetch("/repo");
+    f.finish(true);
+    await pre.settled;
+    // `wisp new`, an agent's subtask, autopilot: the default
     const create = f.fetches.beforeCreate("/repo");
     expect(f.calls()).toBe(2);
     f.finish(true);
@@ -178,11 +200,59 @@ describe("BaseRefFetches (the rules, with a fake fetch and clock)", () => {
       const pre = f.fetches.prefetch("/repo");
       f.finish(outcome);
       await pre.settled; // settles, never rejects: the route's caller is long gone
-      const create = f.fetches.beforeCreate("/repo");
-      expect(f.calls()).toBe(2); // the create fetched for itself
+      const create = f.fetches.beforeCreate("/repo", COMPOSER);
+      expect(f.calls()).toBe(2); // even a composer create fetched for itself
       f.finish(true);
       await create;
     }
+  });
+
+  test("a merge drops freshness and the cooldown", async () => {
+    const f = fake();
+    const pre = f.fetches.prefetch("/repo");
+    f.finish(true);
+    await pre.settled;
+    f.fetches.invalidate("/repo");
+    const again = f.fetches.prefetch("/repo");
+    expect(again.state).toBe("started"); // not "recent"
+    f.finish(true);
+    await again.settled;
+    f.fetches.invalidate("/repo");
+    const create = f.fetches.beforeCreate("/repo", COMPOSER);
+    expect(f.calls()).toBe(3);
+    f.finish(true);
+    await create;
+  });
+
+  test("a fetch that started before a merge is waited out, then fetched past", async () => {
+    const f = fake();
+    f.fetches.prefetch("/repo");
+    f.fetches.invalidate("/repo"); // the merge lands while that fetch runs
+    let created = false;
+    const create = f.fetches.beforeCreate("/repo", COMPOSER).then(() => {
+      created = true;
+    });
+    await Bun.sleep(0);
+    expect(f.calls()).toBe(1); // never two at once
+    f.finish(true, 0);
+    await Bun.sleep(0);
+    expect(f.calls()).toBe(2);
+    expect(created).toBe(false);
+    f.finish(true, 1);
+    await create;
+    // and that pre-merge success never became fresh
+    await f.fetches.beforeCreate("/repo", COMPOSER);
+    expect(f.calls()).toBe(2);
+  });
+
+  test("one repo however its path is spelled", async () => {
+    const f = fake();
+    const pre = f.fetches.prefetch("/work/repo/");
+    expect(f.fetches.prefetch("/work/./repo").state).toBe("joined");
+    f.finish(true);
+    await pre.settled;
+    await f.fetches.beforeCreate("/work/other/../repo", COMPOSER);
+    expect(f.calls()).toBe(1);
   });
 });
 
@@ -207,9 +277,11 @@ describe("prefetch against a real origin", () => {
     expect(wt.base_ref).toBe("origin/main");
     expect(wt.base_commit).toBe(head);
 
-    // and right after, a second create trusts that fetch rather than repeating it
-    await createWorktree(remote.repo, "tpre2", cfg);
+    // right after, a composer create trusts that fetch; any other fetches again
+    await createWorktree(remote.repo, "tpre2", cfg, undefined, COMPOSER);
     expect(remote.fetches()).toBe(1);
+    await createWorktree(remote.repo, "tpre5", cfg);
+    expect(remote.fetches()).toBe(2);
   });
 
   test("a failed prefetch is not fresh: the create fetches and sees the new commit", async () => {
@@ -220,8 +292,8 @@ describe("prefetch against a real origin", () => {
     sh(["git", "remote", "set-url", "origin", remote.origin], remote.repo);
     const head = remote.push("later.txt");
     const before = remote.fetches();
-    const wt = await createWorktree(remote.repo, "tpre3", cfg);
-    expect(remote.fetches()).toBe(before + 1); // the create fetched for itself
+    const wt = await createWorktree(remote.repo, "tpre3", cfg, undefined, COMPOSER);
+    expect(remote.fetches()).toBe(before + 1); // even a composer create fetched for itself
     expect(wt.base_commit).toBe(head);
   });
 
@@ -240,7 +312,7 @@ describe("prefetch against a real origin", () => {
     // own fetch arriving after it is not
     remote.delay(0);
     const before = remote.fetches();
-    await impatient.beforeCreate(remote.repo);
+    await impatient.beforeCreate(remote.repo, COMPOSER);
     expect(remote.fetches()).toBe(before + 1);
     expect(sh(["git", "rev-parse", "origin/main"], remote.repo)).toBe(head);
   });
@@ -255,6 +327,89 @@ describe("prefetch against a real origin", () => {
     const wt = await createWorktree(repo, "tpre4", cfg);
     expect(wt.base_ref).toBeNull();
     expect(wt.base_commit).toBe(head);
+  });
+});
+
+/**
+ * The bug this rule exists for: an orchestrating task creates subtask A, its
+ * agent merges a PR seconds later, and subtask B must fork from the merge.
+ * Only a person's create from the composer may reuse a recent fetch.
+ */
+describe("who may reuse a recent fetch (POST /api/tasks)", () => {
+  const quick: AdapterDef = { bin: "bash", exec: ["-c", "printf done"], parse: { format: "text" }, attach: null };
+  const adapters = { quick };
+  const routeCfg = {
+    ...cfg,
+    instanceId: "123e4567-e89b-42d3-a456-426614174000",
+    port: 0,
+    host: "127.0.0.1",
+    token: "test",
+    webhooks: [],
+    repos: [],
+    stuckMinutes: 10,
+    logMaxBytes: 5_000_000,
+    harnessDefaults: {},
+  } as WispConfig;
+
+  async function create(repo: string, headers: Record<string, string>): Promise<Task> {
+    const url = new URL("http://wisp.test/api/tasks");
+    const res = await route(
+      new Request(url, {
+        method: "POST",
+        headers: { ...headers, "content-type": "application/json" },
+        body: JSON.stringify({ repoPath: repo, prompt: "go", harness: "quick", mode: "worktree" }),
+      }),
+      url,
+      url.pathname,
+      testRouteContext(routeCfg, adapters),
+    );
+    expect(res.status).toBe(201);
+    const { id } = (await res.json()) as { id: string };
+    const deadline = Date.now() + 15_000;
+    while (getTask(id)?.base_commit == null) {
+      if (Date.now() > deadline || getTask(id)?.state === "failed") throw new Error(`task ${id} never got a worktree`);
+      await Bun.sleep(25);
+    }
+    return getTask(id)!;
+  }
+
+  test("after a prefetch, the CLI, an agent and a bare API call still fetch; web and Desktop reuse it", async () => {
+    const remote = repoWithCountingRemote();
+    await baseRefFetches.prefetch(remote.repo).settled;
+    expect(remote.fetches()).toBe(1);
+    // the orchestrator's agent merges a PR seconds after the prefetch
+    const merged = remote.push("merged.txt");
+    const agent = cliClientHeaders({ WISP_AGENT_TURN: "1", WISP_TASK_ID: "orch1" });
+    for (const headers of [agent, cliClientHeaders({}), {}]) {
+      const before = remote.fetches();
+      const task = await create(remote.repo, headers);
+      expect(remote.fetches()).toBe(before + 1);
+      expect(task.base_commit).toBe(merged);
+    }
+    // a person at the composer forks from that fetch without waiting, which
+    // is the window's tradeoff: a commit landing inside it is not seen
+    remote.push("later.txt");
+    for (const client of ["web", "desktop"]) {
+      const before = remote.fetches();
+      const task = await create(remote.repo, { "x-wisp-client": client });
+      expect(remote.fetches()).toBe(before);
+      expect(task.base_commit).toBe(merged);
+    }
+  });
+
+  test("a merge Wisp makes means even a composer create fetches again", async () => {
+    const remote = repoWithCountingRemote();
+    await baseRefFetches.prefetch(remote.repo).settled;
+    const merged = remote.push("merged.txt");
+    const github = createGhAutopilot({
+      run: async () => ({ exitCode: 0, out: "", err: "", truncated: false, timedOut: false, cancelled: false }),
+      budget: new GitHubBudget(),
+    });
+    const result = await github.merge({ repository: "owner/repo", number: 7, method: "SQUASH", head: "abc1234" }, remote.repo, new AbortController().signal);
+    expect(result.ok).toBe(true);
+    const wt = await createWorktree(remote.repo, "tpre6", cfg, undefined, COMPOSER);
+    expect(remote.fetches()).toBe(2);
+    expect(wt.base_commit).toBe(merged);
   });
 });
 

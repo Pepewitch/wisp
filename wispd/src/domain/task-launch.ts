@@ -7,6 +7,7 @@
  * itself rather than in a rejected promise.
  */
 import type { AdapterDef } from "../adapters";
+import type { BeforeCreateOptions } from "../base-refs";
 import {
   releaseDecodedAttachments,
   writeTurnAttachments,
@@ -41,6 +42,8 @@ export async function launchTask(
    * once. Marked to report back, as a first turn always does.
    */
   queued?: { actor: string | null },
+  /** whether the worktree may fork from a recent prefetch: the composer's create only (base-refs.ts) */
+  fetch: BeforeCreateOptions = {},
 ): Promise<void> {
   try {
     const mode = taskMode(task);
@@ -49,7 +52,7 @@ export async function launchTask(
     const wt =
       mode === "local"
         ? await localWorktree(task.repo_path)
-        : await createWorktree(task.repo_path, task.id, cfg, base);
+        : await createWorktree(task.repo_path, task.id, cfg, base, fetch);
     setTaskFields(task.id, {
       worktree_path: wt.path,
       branch: wt.branch,

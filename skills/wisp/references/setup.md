@@ -332,8 +332,10 @@ address's last new wrong token. The web UI is served at `/`.
   `PUT /api/repos/order` (`{paths}`: every configured project once, by
   absolute path, in the new order; 409 when the list changed meanwhile)
 - `POST /api/projects/base-refs` (`{path}`) — start `git fetch origin` for a
-  registered project now, so a worktree task created soon after need not
-  wait on it (the create composer sends it while a prompt is typed). Answers
+  registered project now, so a worktree task created soon after from the web
+  or Desktop composer need not wait on it (the composer sends it while a
+  prompt is typed; any other create still fetches, joining one already
+  running). Answers
   `202` with `{path, state}` without waiting: `state` is `started`, `joined`
   (a fetch was already running) or `recent` (one started in the last 15 s).
   A missing or relative `path` is `400`; a path that is not one of this
