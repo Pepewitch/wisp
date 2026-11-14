@@ -2,8 +2,9 @@
 
 This ledger separates release evidence from the version label. The 0.8 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.8.8 is the current release; earlier 0.8 records are retained
-below. The 0.7 records remain in
+coverage. 0.8.8 was the last 0.8 release; 0.9.0 supersedes it, and its record
+is in [the 0.9 ledger](../v0.9/QUALIFICATION.md). Earlier 0.8 records are
+retained below. The 0.7 records remain in
 [the 0.7 ledger](../v0.7/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
@@ -14,8 +15,8 @@ still apply to 0.8.8.
 ## 0.8.8 publication
 
 **Published and promoted on 2026-11-12.**
-[Wisp 0.8.8](https://github.com/Pepewitch/wisp/releases/tag/v0.8.8) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.8.8](https://github.com/Pepewitch/wisp/releases/tag/v0.8.8) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 12:06:55 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`c9fac28b8f9529078ed265707cde8accffbd05e9`](https://github.com/Pepewitch/wisp/commit/c9fac28b8f9529078ed265707cde8accffbd05e9),
@@ -43,8 +44,8 @@ completed every job successfully on its first run:
 
 Promotion completed at 12:13:59 UTC with Homebrew tap commit
 [`9ccbb5db064acec52eaf6970c687c4e30b895007`](https://github.com/Pepewitch/homebrew-tap/commit/9ccbb5db064acec52eaf6970c687c4e30b895007).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.8.8.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.8.8 until 0.9.0 was promoted.
 
 0.8.8 adds database migration 33, so a 0.8.7 daemon cannot reopen a profile that
 0.8.8 has opened. No PNG asset or brand-generator input changed since 0.8.7, so
