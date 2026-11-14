@@ -133,7 +133,9 @@ export function Sidebar({
   // the memoized rows below get one that never changes.
   const select = useStableCallback(onSelect)
   return (
-    <aside className="flex h-full min-h-0 flex-col bg-sidebar">
+    // the pointer shell's column is glass on Desktop; the touch drawer slides
+    // over the reading column, so it stays opaque
+    <aside className={cn("flex h-full min-h-0 flex-col bg-sidebar", !touch && "vibrancy:bg-sidebar-glass")}>
       <SidebarHeader
         search={search}
         onAddProject={onAddProject}

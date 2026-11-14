@@ -551,7 +551,8 @@ function AppShell({
   return (
     // the top bar's icons, the panel and the `/` palette all act on one task's tools
     <ToolPanelContext.Provider value={tools}>
-      <div className="flex h-dvh flex-col bg-background text-foreground">
+      {/* transparent on Desktop, so the sidebar's glass shows the window's material */}
+      <div className="flex h-dvh flex-col bg-background text-foreground vibrancy:bg-transparent">
         <TopBar
           barRef={barRef}
           desktop={desktop}

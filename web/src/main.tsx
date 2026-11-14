@@ -11,6 +11,7 @@ import { queryClient } from "@/lib/query"
 import { desktopBridge } from "@/lib/desktop-bridge"
 import { DesktopApplicationProvider } from "@/lib/desktop-connections"
 import { DesktopUpdaterProvider } from "@/lib/desktop-updater"
+import { initDesktopVibrancy } from "@/lib/desktop-vibrancy"
 import { DesktopZoomProvider } from "@/lib/desktop-zoom"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { initTheme } from "@/lib/theme"
@@ -24,7 +25,8 @@ initTitleTips()
 
 const reloadWebApp = () => window.location.reload()
 const desktopBootstrap = isTauri() ? desktopBridge.bootstrap() : null
-if (!desktopBootstrap) initPwa()
+if (desktopBootstrap) initDesktopVibrancy()
+else initPwa()
 
 createRoot(document.getElementById("root")!, {
   // AppErrorBoundary logs the one line this needs (error-boundary.tsx);
