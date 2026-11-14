@@ -40,7 +40,7 @@ export function TopBar({
     <header
       ref={barRef}
       data-tauri-drag-region={drag}
-      className="flex h-9 shrink-0 items-center border-b border-border bg-surface pr-3"
+      className="flex h-9 shrink-0 items-center border-b border-border bg-surface pr-3 vibrancy:top-bar-glass"
     >
       <TopBarLeft desktop={desktop}>
         {/* The mark is the browser's only left-end identity: no window chrome,

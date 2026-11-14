@@ -177,6 +177,8 @@ fn the_webview_has_no_direct_native_update_or_system_authority() {
 ///   events) invokes `plugin:event|listen`, and its unlisten function
 ///   `plugin:event|unlisten`.
 /// * `getCurrentWebview().setZoom` invokes `plugin:webview|set_webview_zoom`.
+/// * `getCurrentWindow().setTheme` invokes `plugin:window|set_theme`, so the
+///   sidebar's vibrancy material matches the app's theme, not the Mac's.
 /// * Tauri's drag-region script, for the `data-tauri-drag-region` header,
 ///   invokes `plugin:window|internal_toggle_maximize` on a double click.
 ///
@@ -187,10 +189,12 @@ const GRANTED_CORE_COMMANDS: &[&str] = &[
     "plugin:event|unlisten",
     "plugin:webview|set_webview_zoom",
     "plugin:window|internal_toggle_maximize",
+    "plugin:window|set_theme",
 ];
 
-/// Zoom changes presentation only. Keep it as the sole direct webview setter;
-/// every stateful or outward action still crosses a purpose-built Rust command.
+/// Zoom and the window's appearance change presentation only. Keep them the
+/// sole direct webview and window setters; every stateful or outward action
+/// still crosses a purpose-built Rust command.
 #[test]
 fn the_webview_only_gets_the_core_permissions_it_uses() {
     let capability: serde_json::Value =
@@ -202,7 +206,8 @@ fn the_webview_only_gets_the_core_permissions_it_uses() {
             "core:event:allow-listen",
             "core:event:allow-unlisten",
             "core:webview:allow-set-webview-zoom",
-            "core:window:allow-internal-toggle-maximize"
+            "core:window:allow-internal-toggle-maximize",
+            "core:window:allow-set-theme"
         ])
     );
 }
@@ -272,6 +277,7 @@ fn the_shared_ui_uses_only_the_tauri_apis_the_capability_grants() {
         ("@tauri-apps/api/core", ["invoke", "isTauri"].as_slice()),
         ("@tauri-apps/api/event", ["listen"].as_slice()),
         ("@tauri-apps/api/webview", ["getCurrentWebview"].as_slice()),
+        ("@tauri-apps/api/window", ["getCurrentWindow"].as_slice()),
     ];
     for file in files {
         let name = file.display().to_string();
@@ -315,6 +321,16 @@ fn the_shared_ui_uses_only_the_tauri_apis_the_capability_grants() {
                     calls.iter().all(|rest| rest.starts_with("setZoom("))
                 },
                 "{name} calls a webview method other than setZoom"
+            );
+        }
+        if text.contains("getCurrentWindow") {
+            let calls: Vec<&str> = text
+                .match_indices("getCurrentWindow().")
+                .map(|(at, _)| &text[at + "getCurrentWindow().".len()..])
+                .collect();
+            assert!(
+                calls.iter().all(|rest| rest.starts_with("setTheme(")),
+                "{name} calls a window method other than setTheme"
             );
         }
     }

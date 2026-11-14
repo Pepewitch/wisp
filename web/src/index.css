@@ -23,6 +23,12 @@
    the resting state is only hidden where a pointer can bring it back. */
 @custom-variant pointer (@media (hover: hover));
 
+/* Desktop's window is transparent over macOS's sidebar material (vibrancy).
+   main.tsx sets `data-vibrancy` on <html> there and nowhere else, so this
+   variant is how a surface opts into letting the material show through; in a
+   browser it never matches and every surface stays opaque. */
+@custom-variant vibrancy (&:is([data-vibrancy] *));
+
 /* The top inset a touch header pads itself by. An installed iOS app (26+,
    black-translucent + viewport-fit=cover) gets the system's Liquid Glass
    scroll-edge blur, drawn ABOVE the web view and reaching ~35pt past the
@@ -241,6 +247,7 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-sidebar: var(--sidebar);
+  --color-sidebar-glass: var(--sidebar-glass);
   --color-sidebar-foreground: var(--sidebar-foreground);
   --color-sidebar-accent: var(--sidebar-accent);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -415,6 +422,10 @@
 
   /* sidebar surface family */
   --sidebar: var(--surface);
+  /* the sidebar's own tint over the vibrancy material: mostly the surface, so
+     the column still reads as the sidebar, with just enough let through to
+     pick up the wallpaper behind the window */
+  --sidebar-glass: color-mix(in srgb, var(--sidebar) 78%, transparent);
   --sidebar-foreground: var(--foreground);
   --sidebar-accent: var(--accent);
   --sidebar-accent-foreground: var(--foreground);
@@ -506,6 +517,7 @@
 
   /* sidebar surface family */
   --sidebar: #f6f6f9;
+  --sidebar-glass: color-mix(in srgb, var(--sidebar) 72%, transparent);
   --sidebar-foreground: var(--foreground);
   --sidebar-accent: #e2e2ea;
   --sidebar-accent-foreground: var(--foreground);
@@ -911,6 +923,17 @@ body[data-project-drag] * {
   color: var(--faint);
 }
 
+/* The top bar's left end sits over the sidebar column, so on Desktop it
+   wears the sidebar's glass and the rest of the bar stays the opaque surface:
+   one column of material from the traffic lights down. */
+@utility top-bar-glass {
+  background: linear-gradient(
+    to right,
+    var(--sidebar-glass) calc(var(--sidebar-width, 268px) + 1px),
+    var(--surface) 0
+  );
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -920,7 +943,7 @@ body[data-project-drag] * {
     font-size: 16px;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground vibrancy:bg-transparent;
     font-size: 13px;
     line-height: 1.4;
     -webkit-font-smoothing: antialiased;
