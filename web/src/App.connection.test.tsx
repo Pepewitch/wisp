@@ -18,6 +18,7 @@ import { connectionStore } from "@/lib/conn"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
 import { useWispUpdateControl } from "@/lib/use-wisp-update-control"
 import type { ApiTask, UpdateStatus } from "@/lib/types"
+import type { DaemonUpdateOutcome } from "@/lib/update"
 import { fakeDaemonTransport } from "@/test/runtime"
 
 const mocks = vi.hoisted(() => ({
@@ -226,7 +227,8 @@ vi.mock("@/lib/sse", () => ({
   connectEventsBridge: mocks.connectEventsBridge,
 }))
 
-vi.mock("@/lib/update", () => ({
+vi.mock("@/lib/update", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/update")>()),
   waitForUpdatedDaemon: mocks.waitForUpdatedDaemon,
 }))
 
@@ -284,9 +286,9 @@ describe("connection-bound update recovery", () => {
 
   it("polls and recovers the initiating runtime after the active provider switches", async () => {
     let finishInstall!: (status: UpdateStatus) => void
-    let finishWait!: () => void
+    let finishWait!: (outcome: DaemonUpdateOutcome) => void
     mocks.install.mockReturnValueOnce(new Promise<UpdateStatus>((resolve) => (finishInstall = resolve)))
-    mocks.waitForUpdatedDaemon.mockReturnValueOnce(new Promise<void>((resolve) => (finishWait = resolve)))
+    mocks.waitForUpdatedDaemon.mockReturnValueOnce(new Promise<DaemonUpdateOutcome>((resolve) => (finishWait = resolve)))
 
     const first = fakeDaemonTransport("connection-one")
     const second = fakeDaemonTransport("connection-two")
@@ -316,7 +318,7 @@ describe("connection-bound update recovery", () => {
     await waitFor(() =>
       expect(mocks.waitForUpdatedDaemon).toHaveBeenCalledWith(UPDATE.latestVersion, { transport: first }),
     )
-    finishWait()
+    finishWait({ kind: "restarted" })
 
     await waitFor(() => expect(recoverFirst).toHaveBeenCalledOnce())
     expect(recoverSecond).not.toHaveBeenCalled()
@@ -324,12 +326,12 @@ describe("connection-bound update recovery", () => {
 
   it("keeps a Local daemon update visible and locked across Desktop tab changes", async () => {
     let finishInstall!: (status: UpdateStatus) => void
-    let finishWait!: () => void
+    let finishWait!: (outcome: DaemonUpdateOutcome) => void
     mocks.install.mockReturnValueOnce(
       new Promise<UpdateStatus>((resolve) => (finishInstall = resolve))
     )
     mocks.waitForUpdatedDaemon.mockReturnValueOnce(
-      new Promise<void>((resolve) => (finishWait = resolve))
+      new Promise<DaemonUpdateOutcome>((resolve) => (finishWait = resolve))
     )
     const nativeBridge = desktopBridge()
 
@@ -371,7 +373,7 @@ describe("connection-bound update recovery", () => {
     const initiatingTransport = mocks.waitForUpdatedDaemon.mock.calls.at(-1)?.[1]
       .transport
     expect(initiatingTransport.connectionId).toBe("local")
-    finishWait()
+    finishWait({ kind: "restarted" })
     await waitFor(() =>
       expect(screen.queryByText("Restarting Local daemon…")).toBeNull()
     )

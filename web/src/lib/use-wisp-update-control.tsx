@@ -15,8 +15,13 @@ import {
 } from "@/lib/desktop-updater"
 import { useDesktopUpdateCoordination } from "@/lib/desktop-update-coordination"
 import { queryClient } from "@/lib/query"
-import { createDaemonRuntime, useDaemonRuntime } from "@/lib/runtime"
 import {
+  createDaemonRuntime,
+  useDaemonRuntime,
+  type DaemonRuntime,
+} from "@/lib/runtime"
+import {
+  daemonRestartsAutomatically,
   waitForUpdatedDaemon,
   type DaemonUpdateOperation,
 } from "@/lib/update"
@@ -102,14 +107,17 @@ export function useWispUpdateControl() {
     setOperation(installing)
     clearUpdateError(initiatingRuntime.connectionId)
     try {
-      await installUpdate.mutateAsync(force ? { version, force } : { version })
-      const restarting = { ...installing, phase: "restarting" as const }
-      operationRef.current = restarting
-      setOperation(restarting)
-      await waitForUpdatedDaemon(version, {
-        transport: initiatingRuntime.transport,
-      })
-      await initiatingRuntime.recoverAfterUpdate()
+      const accepted = await installUpdate.mutateAsync(
+        force ? { version, force } : { version }
+      )
+      // nothing restarts an unsupervised daemon: it stays "installing" until
+      // the install is done, then says how to finish
+      if (daemonRestartsAutomatically(accepted)) {
+        const restarting = { ...installing, phase: "restarting" as const }
+        operationRef.current = restarting
+        setOperation(restarting)
+      }
+      await settleDaemonUpdate(version, initiatingRuntime)
     } catch (error) {
       const running = force ? null : tasksInterruptedByUpdate(error)
       if (running !== null) {
@@ -219,6 +227,22 @@ export function useWispUpdateControl() {
       />
     ),
   }
+}
+
+/**
+ * After the daemon accepted an update: wait out its restart and recover, or,
+ * for a daemon nothing restarts, wait for the install and show how to finish
+ * before the busy state clears.
+ */
+async function settleDaemonUpdate(
+  version: string,
+  runtime: DaemonRuntime
+): Promise<void> {
+  const outcome = await waitForUpdatedDaemon(version, {
+    transport: runtime.transport,
+  })
+  if (outcome.kind === "restarted") await runtime.recoverAfterUpdate()
+  else await queryClient.invalidateQueries({ queryKey: runtime.qk.update })
 }
 
 interface InterruptQuestion {

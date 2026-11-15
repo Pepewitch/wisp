@@ -187,8 +187,15 @@ export interface SendResponse
  */
 export type WorktreeReason = string | null;
 
-/** GET /api/update and the accepted POST /api/update response. */
-export type UpdateStatus = FromAnyDaemon<DaemonUpdateStatus, "lastAttempt">;
+/**
+ * GET /api/update and the accepted POST /api/update response. A daemon from
+ * before `canInstall` sends neither it nor `restartsAutomatically`: read both
+ * through `daemonCanInstall` / `daemonRestartsAutomatically` in `lib/update`.
+ */
+export type UpdateStatus = FromAnyDaemon<
+  DaemonUpdateStatus,
+  "lastAttempt" | "canInstall" | "restartsAutomatically"
+>;
 
 /**
  * GET /api/tasks/:id/conversation. `messages` and `pending_question_id` are

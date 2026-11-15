@@ -5,6 +5,25 @@ const RESTART_TIMEOUT_MS = 5 * 60 * 1000
 const RESTART_POLL_MS = 500
 const STATUS_POLL_MS = 2_000
 
+/**
+ * Whether this daemon can install its update. A daemon from before
+ * `canInstall` installs only what its supervisor also restarts.
+ */
+export function daemonCanInstall(status: UpdateStatus): boolean {
+  return status.canInstall ?? status.canAutoUpdate
+}
+
+/** Whether a supervisor restarts the daemon after it installs; an older daemon only installs when one does. */
+export function daemonRestartsAutomatically(status: UpdateStatus): boolean {
+  return status.restartsAutomatically ?? true
+}
+
+/** How a daemon update the client waited for ended. */
+export type DaemonUpdateOutcome =
+  | { readonly kind: "restarted" }
+  /** Installed, but nothing restarts the daemon: `message` says how to finish. */
+  | { readonly kind: "restart-required"; readonly message: string | null }
+
 export interface DaemonUpdateOperation {
   readonly connectionId: string
   readonly connectionName: string
@@ -35,12 +54,13 @@ async function requestBefore<T>(
 
 /**
  * The POST response comes from the old process. Wait across its shutdown until
- * the supervisor starts a daemon that proves the requested build is live.
+ * the supervisor starts a daemon that proves the requested build is live, or,
+ * for a daemon nothing restarts, until the old process says the install is done.
  */
 export async function waitForUpdatedDaemon(
   expectedVersion: string,
   options: WaitForUpdatedDaemonOptions,
-): Promise<void> {
+): Promise<DaemonUpdateOutcome> {
   const transport = options.transport
   const timeoutMs = options.timeoutMs ?? RESTART_TIMEOUT_MS
   const pollMs = options.pollMs ?? RESTART_POLL_MS
@@ -50,12 +70,15 @@ export async function waitForUpdatedDaemon(
   while (Date.now() <= deadline) {
     try {
       const health = await requestBefore<{ version?: unknown }>(transport, "/api/health", deadline)
-      if (health.version === expectedVersion) return
+      if (health.version === expectedVersion) return { kind: "restarted" }
 
       if (Date.now() >= nextStatusCheck) {
         nextStatusCheck = Date.now() + STATUS_POLL_MS
         const status = await requestBefore<UpdateStatus>(transport, "/api/update", deadline)
         if (status.state === "failed") throw new Error(status.message ?? "update failed")
+        if (status.state === "restart-required") {
+          return { kind: "restart-required", message: status.message }
+        }
       }
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("update failed")) throw error

@@ -93,6 +93,12 @@ For the managed daemon alone:
 wisp update
 ```
 
+Under `brew services`, the update restarts the daemon. A daemon you started
+another way, such as `wisp serve` in a terminal, still installs the update but
+keeps running the old version until you restart it; the command and the
+**Local daemon** row say so. Start it with `brew services start wisp` so later
+updates restart it on their own.
+
 Updates preserve data and repositories, but restarting the daemon closes
 terminal shells and can interrupt task setup. Running turns are reconciled
 after restart. Take a [backup](INSTALL.md#back-up-and-restore-a-wisp-home)

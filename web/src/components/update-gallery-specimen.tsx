@@ -3,7 +3,10 @@ import { TopBarLeft, TopBarTask } from "@/components/top-bar-task"
 import { UpdateCenter, WispUpdateControl } from "@/components/update-control"
 import { UsageRing } from "@/components/usage-limits-control"
 import { Button, Eyebrow, Rule } from "@/components/primitives"
-import { UPDATE_SPECIMEN } from "@/components/gallery-fixtures"
+import {
+  UPDATE_RESTART_REQUIRED_SPECIMEN,
+  UPDATE_SPECIMEN,
+} from "@/components/gallery-fixtures"
 import type { DesktopUpdaterContextValue } from "@/lib/desktop-updater"
 import { TASKS } from "@/lib/fixtures"
 import type { ApiTask, UpdateStatus } from "@/lib/types"
@@ -71,6 +74,25 @@ export function UpdateGallerySpecimen() {
         remotes stay outside this package-manager control, and the two owners'
         actions, progress, failures, and versions never collapse into one
         ambiguous update button.
+      </p>
+      <div className="mt-4 flex min-h-[270px] justify-end rounded-xl border border-border bg-surface p-5">
+        <UpdateCenter
+          desktop={DESKTOP_IDLE}
+          daemonStatus={UPDATE_RESTART_REQUIRED_SPECIMEN}
+          daemonError={null}
+          daemonOperation={null}
+          checkingDaemon={false}
+          supportedApiProtocols={[1]}
+          onUpdateDesktop={() => undefined}
+          onUpdateDaemon={() => undefined}
+          onCheck={() => undefined}
+          defaultOpen
+        />
+      </div>
+      <p className="mt-3 text-[11.5px] leading-relaxed text-muted-foreground">
+        A daemon that no service manager runs still installs its update, then
+        waits for you: the row says how to restart it, and the dot stays amber
+        until you do.
       </p>
     </section>
   )

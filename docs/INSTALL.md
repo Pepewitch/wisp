@@ -153,7 +153,7 @@ configure a restart-capable supervisor with:
 - umask `0077`, your user's `HOME`, and a `PATH` reaching Wisp and the harnesses;
 - stop signals directed to the daemon, **not its whole process group**.
 - `WISP_UPDATE_SUPERVISOR=supervisord` only when the program is named `wisp`
-  and keeps `autorestart=true`; this explicitly enables automatic updates.
+  and keeps `autorestart=true`; this explicitly lets an update restart Wisp.
 
 For example, under supervisord:
 
@@ -175,26 +175,29 @@ Adapt `PATH` for your harness locations. Provide credentials and any
 terminal. Killing the whole group can stop harness children behind Wisp.
 
 Doctor's local supervisor check recognizes systemd on Linux, so its supervisor
-warning is expected here. Before enabling automatic updates, Wisp requires the
-explicit opt-in above, Supervisor's injected process identity, and an exact PID
-match from `supervisorctl pid wisp`. Updates remain informational for foreground
-daemons and other supervisors because Wisp cannot guarantee restart.
+warning is expected here. Before an update restarts Wisp under Supervisor, Wisp
+requires the explicit opt-in above, Supervisor's injected process identity, and
+an exact PID match from `supervisorctl pid wisp`. A foreground daemon or one
+under another supervisor still installs an update, but does not restart: it
+tells you to restart it to finish.
 
 For a systemd service that should continue after logout, an administrator can
 deliberately enable user lingering with `loginctl enable-linger <user>`.
 
 ## Upgrade and reinstall
 
-For an installer-managed daemon running under `wisp.service` or an explicitly
-opted-in Supervisor program:
+For an installer-managed daemon:
 
 ```sh
 wisp update
 ```
 
 The command and browser update action use the promoted release channel,
-verify the candidate, activate it atomically, and let the service manager
-restart Wisp. Rerunning the installer for the same version is idempotent.
+verify the candidate, and activate it atomically. Under `wisp.service` or an
+explicitly opted-in Supervisor program, the service manager then restarts
+Wisp. Any other daemon, such as a foreground `wisp serve`, keeps running the
+old version until you restart it; `wisp update` and the update control say
+how. Rerunning the installer for the same version is idempotent.
 
 After an out-of-band installation, restart the service yourself:
 
@@ -206,7 +209,7 @@ wisp doctor --harness droid
 
 Restart closes terminal shells and may interrupt task setup. Running turns
 retain their logs and are reconciled by the new daemon. For foreground or
-custom-supervised operation, stop that instance, install, then restart it.
+custom-supervised operation, restart that instance after the update installs.
 Take a [backup](#back-up-and-restore-a-wisp-home) first. An older binary cannot
 undo a database migration.
 

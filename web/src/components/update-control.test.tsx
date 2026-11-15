@@ -400,3 +400,106 @@ describe("Desktop update center", () => {
     expect(screen.getByRole("button", { name: "Check now" })).toBeDisabled()
   })
 })
+
+describe("a daemon update nothing restarts", () => {
+  const REASON =
+    "Homebrew services does not run this daemon, so it will not restart on its own after an update"
+  const INSTRUCTION =
+    "Wisp 0.4.0-alpha.9 is installed. Restart the daemon to finish: stop the running daemon, then run `brew services start wisp` so future updates restart it on their own."
+  const UNSUPERVISED: UpdateStatus = {
+    ...DAEMON_STATUS,
+    canAutoUpdate: false,
+    canInstall: true,
+    restartsAutomatically: false,
+    message: REASON,
+  }
+  const RESTART_REQUIRED: UpdateStatus = {
+    ...UNSUPERVISED,
+    state: "restart-required",
+    message: INSTRUCTION,
+  }
+
+  it("is offered in the browser, saying why it will not restart", () => {
+    const onUpdate = vi.fn()
+    render(
+      <WispUpdateControl
+        status={UNSUPERVISED}
+        updating={false}
+        error={null}
+        onUpdate={onUpdate}
+      />
+    )
+    const action = screen.getByRole("button", {
+      name: "Update daemon 0.4.0-alpha.9",
+    })
+    expect(action).toHaveAttribute("title", REASON)
+    fireEvent.click(action)
+    expect(onUpdate).toHaveBeenCalledWith("0.4.0-alpha.9")
+  })
+
+  it("is not offered by a daemon that cannot install it", async () => {
+    render(
+      <WispUpdateControl
+        status={{ ...UNSUPERVISED, canInstall: false, message: null }}
+        updating={false}
+        error={null}
+        onUpdate={() => undefined}
+      />
+    )
+    expect(screen.queryByRole("button", { name: /Update daemon/ })).toBeNull()
+    fireEvent.click(
+      screen.getByRole("button", { name: "Updates, 1 available" })
+    )
+    expect(
+      await screen.findByRole("region", { name: "Daemon version" })
+    ).toHaveTextContent("this installation updates manually")
+  })
+
+  it("once installed, the browser dots it and says how to finish instead of offering it again", async () => {
+    render(
+      <WispUpdateControl
+        status={RESTART_REQUIRED}
+        updating={false}
+        error={null}
+        onUpdate={() => undefined}
+      />
+    )
+    expect(screen.queryByRole("button", { name: /Update daemon/ })).toBeNull()
+    const trigger = screen.getByRole("button", {
+      name: "Updates, 1 available",
+    })
+    expect(trigger.querySelector("span[aria-hidden]")).toHaveClass(
+      "bg-state-needs-input"
+    )
+    fireEvent.click(trigger)
+    expect(
+      await screen.findByRole("region", { name: "Daemon version" })
+    ).toHaveTextContent(INSTRUCTION)
+  })
+
+  it("is offered in the Local row, whose action says the restart is yours", () => {
+    renderCenter({ daemonStatus: UNSUPERVISED })
+    expect(
+      screen.getByRole("region", { name: "Local daemon update" })
+    ).toHaveTextContent(REASON)
+    expect(
+      screen.getByRole("button", { name: "Update Local daemon" })
+    ).toHaveAttribute(
+      "title",
+      "Install Wisp daemon 0.4.0-alpha.9; restart the daemon yourself to finish"
+    )
+  })
+
+  it("once installed, the Local row says how to finish and still counts it", () => {
+    renderCenter({ daemonStatus: RESTART_REQUIRED })
+    expect(
+      screen.getByRole("button", { name: "Updates, 2 available" })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole("region", { name: "Local daemon update" })
+    ).toHaveTextContent(INSTRUCTION)
+    expect(
+      screen.queryByRole("button", { name: "Update Local daemon" })
+    ).toBeNull()
+  })
+})

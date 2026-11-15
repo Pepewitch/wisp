@@ -38,11 +38,22 @@ export function readUpdateAttempt(path: string = UPDATE_RECORD_PATH): UpdateAtte
   };
 }
 
-/** Persist and log one step of an attempt; a record that cannot be written is logged, never fatal. */
-export function recordUpdateAttempt(path: string, attempt: UpdateAttempt, log: (line: string) => void): void {
+/**
+ * Persist and log one step of an attempt; a record that cannot be written is
+ * logged, never fatal. `restarting`: a supervisor restarts the daemon after
+ * this install, rather than it waiting for someone to restart it.
+ */
+export function recordUpdateAttempt(
+  path: string,
+  attempt: UpdateAttempt,
+  log: (line: string) => void,
+  restarting = true,
+): void {
   const route = `${attempt.fromVersion} → ${attempt.toVersion} (${attempt.method})`;
   if (attempt.outcome === "installing") log(`[wisp] self-update ${route}: installing`);
-  else if (attempt.outcome === "installed") log(`[wisp] self-update ${route}: installed; restarting`);
+  else if (attempt.outcome === "installed") {
+    log(`[wisp] self-update ${route}: installed; ${restarting ? "restarting" : "restart the daemon to finish"}`);
+  }
   else log(`[wisp] self-update ${route}: failed: ${attempt.error ?? "unknown error"}`);
   if (!writeStateFile(path, attempt)) log(`[wisp] self-update: could not record the attempt in ${path}`);
 }

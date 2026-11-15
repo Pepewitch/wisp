@@ -44,8 +44,20 @@ export const UPDATE_SPECIMEN: UpdateStatus = {
   state: "available",
   installMethod: "homebrew",
   canAutoUpdate: true,
+  canInstall: true,
+  restartsAutomatically: true,
   message: null,
   checkedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
+}
+
+/** A daemon no supervisor restarts: it installs, then says how to finish. */
+export const UPDATE_RESTART_REQUIRED_SPECIMEN: UpdateStatus = {
+  ...UPDATE_SPECIMEN,
+  state: "restart-required",
+  canAutoUpdate: false,
+  restartsAutomatically: false,
+  message:
+    "Wisp 0.4.0-alpha.8 is installed. Restart the daemon to finish: stop the running daemon, then run `brew services start wisp` so future updates restart it on their own.",
 }
 
 export const ROW_PR_SPECIMENS: Array<PullRequestOverviewEntry | undefined> = [

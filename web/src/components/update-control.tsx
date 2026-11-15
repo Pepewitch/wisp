@@ -3,15 +3,23 @@ import type { ReactNode } from "react"
 
 import { Download, Refresh } from "@/components/icons"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
-import { useMinuteTick } from "@/hooks/useTick"
+import {
+  CheckedAt,
+  DaemonRowMessage,
+  DesktopCheckedAt,
+  VersionLine,
+} from "@/components/update-row-text"
 import type { DesktopUpdateStatus } from "@/lib/desktop-bridge"
 import {
   desktopUpdateBlocksDaemon,
   type DesktopUpdaterContextValue,
 } from "@/lib/desktop-updater"
-import { fromNow, instantOf, utcIso } from "@/lib/time"
 import type { UpdateStatus } from "@/lib/types"
-import type { DaemonUpdateOperation } from "@/lib/update"
+import {
+  daemonCanInstall,
+  daemonRestartsAutomatically,
+  type DaemonUpdateOperation,
+} from "@/lib/update"
 import { daemonUpdateIsCompatible } from "@/lib/update-compatibility"
 import { cn } from "@/lib/utils"
 
@@ -43,7 +51,7 @@ export function WispUpdateControl({
 
   if (
     target &&
-    status.canAutoUpdate &&
+    daemonCanInstall(status) &&
     (status.state === "available" || status.state === "failed")
   ) {
     return (
@@ -51,9 +59,7 @@ export function WispUpdateControl({
         size="sm"
         tone="outline"
         onClick={() => onUpdate(target)}
-        title={
-          error ?? status.message ?? `Install Wisp daemon ${target} and restart`
-        }
+        title={error ?? status.message ?? daemonInstallTitle(status, target)}
       >
         {status.state === "failed" || error
           ? "Retry daemon update"
@@ -63,22 +69,30 @@ export function WispUpdateControl({
   }
 
   // Nothing to install from here: the version, and why (a manual update, a
-  // failure), wait one click away instead of sitting in the bar as a label.
+  // failure, an installed update waiting for its restart), wait one click away
+  // instead of sitting in the bar as a label.
   const manual = Boolean(target && status.state === "available")
+  const waiting = manual || status.state === "restart-required"
   const note =
     error ??
     status.message ??
-    (manual ? `Wisp daemon ${target} is available; this installation updates manually.` : null)
+    (manual
+      ? `Wisp daemon ${target} is available; this installation updates manually.`
+      : null)
   return (
     <Popover.Root>
       <Popover.Trigger
         render={<Button size="sm" icon />}
         className="relative"
-        aria-label={updateTriggerLabel(Number(manual), error !== null)}
-        title={error ? "Daemon update failed" : `Wisp daemon ${status.currentVersion}`}
+        aria-label={updateTriggerLabel(Number(waiting), error !== null)}
+        title={
+          error
+            ? "Daemon update failed"
+            : `Wisp daemon ${status.currentVersion}`
+        }
       >
         <Download />
-        {(manual || error) && (
+        {(waiting || error) && (
           <span
             aria-hidden
             className={cn(
@@ -89,16 +103,34 @@ export function WispUpdateControl({
         )}
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner side="bottom" align="end" sideOffset={6} collisionPadding={12} className="z-(--z-menu)">
-          <Popover.Popup className={cn(POPOVER_SURFACE, "w-[300px] max-w-[calc(100vw-24px)] rounded-xl p-3 outline-none")}>
+        <Popover.Positioner
+          side="bottom"
+          align="end"
+          sideOffset={6}
+          collisionPadding={12}
+          className="z-(--z-menu)"
+        >
+          <Popover.Popup
+            className={cn(
+              POPOVER_SURFACE,
+              "w-[300px] max-w-[calc(100vw-24px)] rounded-xl p-3 outline-none"
+            )}
+          >
             <section aria-label="Daemon version">
               <div className="flex items-baseline justify-between gap-3">
-                <Popover.Title className="text-[12.5px] font-medium">Wisp daemon</Popover.Title>
+                <Popover.Title className="text-[12.5px] font-medium">
+                  Wisp daemon
+                </Popover.Title>
                 <VersionLine current={status.currentVersion} latest={target} />
               </div>
               <CheckedAt at={status.checkedAt} />
               {note && (
-                <p className={cn("mt-1 text-[11px] leading-normal", error ? "text-destructive" : "text-muted-foreground")}>
+                <p
+                  className={cn(
+                    "mt-1 text-[11px] leading-normal",
+                    error ? "text-destructive" : "text-muted-foreground"
+                  )}
+                >
                   {note}
                 </p>
               )}
@@ -147,10 +179,13 @@ export function UpdateCenter({
   const daemonAvailable =
     daemonStatus?.latestVersion !== null &&
     daemonStatus?.latestVersion !== undefined &&
-    daemonStatus.canAutoUpdate &&
+    daemonCanInstall(daemonStatus) &&
     compatible &&
     (daemonStatus.state === "available" || daemonStatus.state === "failed")
-  const availableCount = Number(desktopAvailable) + Number(daemonAvailable)
+  // an installed daemon update waits on its restart: still something for you to do
+  const daemonWaiting =
+    daemonAvailable || daemonStatus?.state === "restart-required"
+  const availableCount = Number(desktopAvailable) + Number(daemonWaiting)
   const hasFailure =
     desktop.error !== null ||
     desktop.status?.phase === "failed" ||
@@ -456,7 +491,8 @@ function DaemonUpdateRow({
   const available = Boolean(
     target !== null &&
     target !== undefined &&
-    status?.canAutoUpdate &&
+    status &&
+    daemonCanInstall(status) &&
     compatible &&
     (status.state === "available" || status.state === "failed")
   )
@@ -471,23 +507,21 @@ function DaemonUpdateRow({
         <VersionLine current={status?.currentVersion} latest={target} />
       </div>
       <CheckedAt at={checking ? null : status?.checkedAt} />
-      {(error ?? blockedMessage ?? status?.message) && (
-        <p
-          className={cn(
-            "mt-1 text-[11px] leading-normal",
-            error || blockedMessage || status?.state === "failed"
-              ? "text-destructive"
-              : "text-muted-foreground"
-          )}
-        >
-          {error ?? blockedMessage ?? status?.message}
-        </p>
-      )}
+      <DaemonRowMessage
+        problem={error ?? blockedMessage}
+        message={status?.message ?? null}
+        failed={status?.state === "failed"}
+      />
       <DaemonUpdateAction
         checking={checking}
         operation={operation}
         available={available}
-        actionBlock={actionBlock}
+        actionBlock={{
+          ...actionBlock,
+          title:
+            actionBlock.title ??
+            (status && target ? daemonInstallTitle(status, target) : undefined),
+        }}
         target={target}
         failed={status?.state === "failed" || error !== null}
         onUpdate={onUpdate}
@@ -560,6 +594,13 @@ function updateTriggerLabel(
   return parts.join(", ")
 }
 
+/** What the daemon's install action does, including whether it ends in a restart you do yourself. */
+function daemonInstallTitle(status: UpdateStatus, target: string): string {
+  return daemonRestartsAutomatically(status)
+    ? `Install Wisp daemon ${target} and restart`
+    : `Install Wisp daemon ${target}; restart the daemon yourself to finish`
+}
+
 function daemonUpdateActionBlock(
   daemonBusy: boolean,
   desktopBusy: boolean
@@ -571,42 +612,4 @@ function daemonUpdateActionBlock(
     }
   }
   return { disabled: daemonBusy, title: undefined }
-}
-
-/**
- * When this row last reached its release channel, so "nothing to install"
- * carries its age. Nothing before the first check, or while one runs.
- */
-function CheckedAt({ at }: { at: string | null | undefined }) {
-  const now = useMinuteTick(Boolean(at))
-  if (!at) return null
-  // A clock shared since before the check can trail it; never say "in 1 min".
-  const ago = fromNow(at, Math.max(now, instantOf(at)))
-  if (!ago) return null
-  return (
-    <p className="mt-0.5 text-[10.5px] text-faint" title={utcIso(at)}>
-      Checked {ago}
-    </p>
-  )
-}
-
-function DesktopCheckedAt({ status }: { status: DesktopUpdateStatus | null }) {
-  return (
-    <CheckedAt at={status?.phase === "checking" ? null : status?.checkedAt} />
-  )
-}
-
-function VersionLine({
-  current,
-  latest,
-}: {
-  current: string | undefined
-  latest: string | null | undefined
-}) {
-  return (
-    <span className="shrink-0 font-mono text-[10.5px] text-faint">
-      {current ?? "Checking…"}
-      {latest && latest !== current ? ` → ${latest}` : ""}
-    </span>
-  )
 }

@@ -2,14 +2,23 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { describe, expect, it, vi } from "vitest"
 
 import { UpdateInterruptDialog } from "@/components/update-interrupt-dialog"
+import { queryClient } from "@/lib/query"
 import { ApiError, type DaemonRequestOptions } from "@/lib/transport"
 import type { UpdateStatus } from "@/lib/types"
+import type { DaemonUpdateOutcome } from "@/lib/update"
 import { useWispUpdateControl } from "@/lib/use-wisp-update-control"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
 
-// the restart itself is out of scope: the update stays "restarting"
-vi.mock("@/lib/update", () => ({
-  waitForUpdatedDaemon: vi.fn(() => new Promise(() => undefined)),
+const mocks = vi.hoisted(() => ({
+  // the restart itself is out of scope: by default the update stays "restarting"
+  waitForUpdatedDaemon: vi.fn(
+    (): Promise<DaemonUpdateOutcome> => new Promise(() => undefined)
+  ),
+}))
+
+vi.mock("@/lib/update", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/update")>()),
+  waitForUpdatedDaemon: mocks.waitForUpdatedDaemon,
 }))
 
 const STATUS: UpdateStatus = {
@@ -94,5 +103,64 @@ describe("updating the daemon while tasks are running", () => {
     expect(screen.getByRole("dialog")).toHaveTextContent(
       "1 task is running. Updating restarts the Wisp daemon, which interrupts its turn."
     )
+  })
+})
+
+describe("updating a daemon nothing restarts", () => {
+  const INSTRUCTION =
+    "Wisp 0.5.1 is installed. Restart the daemon to finish: stop the running daemon, then run `brew services start wisp` so future updates restart it on their own."
+  const UNSUPERVISED: UpdateStatus = {
+    ...STATUS,
+    canAutoUpdate: false,
+    canInstall: true,
+    restartsAutomatically: false,
+    message:
+      "Homebrew services does not run this daemon, so it will not restart on its own after an update",
+  }
+
+  it("installs without asking about tasks, never waits for a restart, and says how to finish", async () => {
+    let installed = false
+    let finishInstall!: () => void
+    mocks.waitForUpdatedDaemon.mockReturnValueOnce(
+      new Promise<DaemonUpdateOutcome>((resolve) => {
+        finishInstall = () => {
+          installed = true
+          resolve({ kind: "restart-required", message: INSTRUCTION })
+        }
+      })
+    )
+    const posts: unknown[] = []
+    const transport = fakeDaemonTransport("local", {
+      request: async <T,>(_path: string, options?: DaemonRequestOptions) => {
+        if (options?.method === "POST") {
+          posts.push(options.body)
+          return { ...UNSUPERVISED, state: "installing" } as T
+        }
+        return (
+          installed
+            ? { ...UNSUPERVISED, state: "restart-required", message: INSTRUCTION }
+            : UNSUPERVISED
+        ) as T
+      },
+    })
+    // the app's own client, which the hook refreshes once the install is done
+    queryClient.clear()
+    render(<Harness />, { wrapper: runtimeWrapper(transport, queryClient) })
+
+    const install = await screen.findByRole("button", { name: "Update daemon 0.5.1" })
+    expect(install).toHaveAttribute("title", UNSUPERVISED.message)
+    fireEvent.click(install)
+    await waitFor(() => expect(posts).toEqual([{ version: "0.5.1" }]))
+    expect(screen.queryByRole("dialog")).toBeNull()
+    expect(await screen.findByRole("button", { name: "Updating daemon…" })).toBeDisabled()
+
+    finishInstall()
+    const trigger = await screen.findByRole("button", { name: "Updates, 1 available" })
+    expect(trigger.querySelector("span[aria-hidden]")).toHaveClass("bg-state-needs-input")
+    fireEvent.click(trigger)
+    expect(
+      await screen.findByRole("region", { name: "Daemon version" })
+    ).toHaveTextContent(INSTRUCTION)
+    expect(screen.queryByRole("button", { name: /Update daemon/ })).toBeNull()
   })
 })
