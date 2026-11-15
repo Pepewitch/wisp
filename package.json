@@ -56,6 +56,7 @@
     "release:promote": "bun run scripts/promote-release.ts",
     "test:install": "bash wispd/scripts/test-install.sh",
     "test:activation": "bash wispd/scripts/test-activation.sh",
+    "test:update-from-previous": "bash wispd/scripts/update-from-previous/run.sh",
     "test:evaluator": "python3 -m unittest discover -s wispd/scripts/evaluator/tests -p 'test_*.py'",
     "evaluator:preflight": "bash wispd/scripts/evaluator/run.sh --preflight",
     "docs:check": "bun run scripts/check-doc-links.ts && bun run scripts/check-release-docs.ts && bun run scripts/changelog.ts --check",
