@@ -13,6 +13,8 @@ function status(overrides: Partial<UpdateStatus> = {}): UpdateStatus {
     state: "available",
     installMethod: "homebrew",
     canAutoUpdate: true,
+    canInstall: true,
+    restartsAutomatically: true,
     message: null,
     checkedAt: "2026-09-09T12:00:00.000Z",
     lastAttempt: null,
@@ -86,6 +88,8 @@ describe("wisp update", () => {
         async () =>
           status({
             canAutoUpdate: false,
+            canInstall: false,
+            restartsAutomatically: false,
             installMethod: "unsupported",
             message: "source and development builds update manually",
           }),
@@ -94,13 +98,18 @@ describe("wisp update", () => {
     ).rejects.toThrow("source and development builds update manually");
   });
 
-  test("explains how to recover when a managed Linux daemon is not supervised", async () => {
+  /** A daemon from before canInstall: it sends neither field and refuses what it would not restart. */
+  function olderDaemon(overrides: Partial<UpdateStatus>): Omit<UpdateStatus, "canInstall" | "restartsAutomatically"> {
+    const { canInstall: _canInstall, restartsAutomatically: _restarts, ...older } = status({ canAutoUpdate: false, ...overrides });
+    return older;
+  }
+
+  test("tells an older managed Linux daemon's user both ways to install the release", async () => {
     await expect(
       updateCommand(
         [],
         async () =>
-          status({
-            canAutoUpdate: false,
+          olderDaemon({
             installMethod: "managed-linux",
             message: "automatic updates require the running daemon to be managed by wisp.service",
           }),
@@ -110,48 +119,59 @@ describe("wisp update", () => {
       [
         "automatic updates require the running daemon to be managed by wisp.service",
         "",
-        "To enable automatic updates with systemd (if available):",
-        "1. Open a separate terminal, because stopping Wisp may disconnect this one.",
-        "2. Stop the current daemon using the terminal or supervisor that started it.",
-        "3. Start the systemd service:",
-        "   systemctl --user enable --now wisp.service",
-        "4. Retry:",
-        "   wisp update",
-        "",
-        "If another supervisor intentionally manages Wisp, install the release manually and restart it with that supervisor.",
+        "Either install the release yourself:",
+        "  Rerun the installer, then restart the daemon however you started it.",
+        "Or let systemd run the daemon, so `wisp update` restarts it after updating:",
+        "  1. Open a separate terminal, because stopping Wisp may disconnect this one.",
+        "  2. Stop the current daemon using the terminal or supervisor that started it.",
+        "  3. systemctl --user enable --now wisp.service",
+        "  4. wisp update",
         "Guide: https://github.com/Pepewitch/wisp/blob/main/docs/INSTALL.md#upgrade-and-reinstall",
       ].join("\n"),
     );
   });
 
-  test("uses Homebrew recovery instructions for an unsupervised macOS daemon", async () => {
+  test("tells an older Homebrew daemon's user both ways to install the release", async () => {
     await expect(
       updateCommand(
         [],
         async () =>
-          status({
-            canAutoUpdate: false,
+          olderDaemon({
             installMethod: "homebrew",
-            message: "automatic updates require the running daemon to be managed by Homebrew services",
+            message: "this Homebrew installation is not running under its launchd service",
           }),
         () => {},
       ),
     ).rejects.toThrow(
       [
-        "automatic updates require the running daemon to be managed by Homebrew services",
+        "this Homebrew installation is not running under its launchd service",
         "",
-        "To enable automatic updates with Homebrew services:",
-        "1. Open a separate terminal, because stopping Wisp may disconnect this one.",
-        "2. Stop the current daemon using the terminal or supervisor that started it.",
-        "3. Start the Homebrew service:",
-        "   brew services start wisp",
-        "4. Retry:",
-        "   wisp update",
-        "",
-        "If another supervisor intentionally manages Wisp, update it manually and restart it with that supervisor.",
+        "Either install the release yourself:",
+        "  brew update && brew upgrade Pepewitch/tap/wisp",
+        "  Then restart the daemon however you started it.",
+        "Or let Homebrew services run the daemon, so `wisp update` restarts it after updating:",
+        "  1. Open a separate terminal, because stopping Wisp may disconnect this one.",
+        "  2. Stop the current daemon using the terminal or supervisor that started it.",
+        "  3. brew services start wisp",
+        "  4. wisp update",
         "Guide: https://github.com/Pepewitch/wisp/blob/main/docs/INSTALL-MACOS.md",
       ].join("\n"),
     );
+  });
+
+  test("an older daemon that can auto-update still updates", async () => {
+    const posts: unknown[] = [];
+    const lines: string[] = [];
+    await updateCommand(
+      [],
+      async (_path, method, body) => {
+        if (method === "POST") posts.push(body);
+        return olderDaemon({ canAutoUpdate: true, state: method === "POST" ? "installing" : "available" });
+      },
+      (line) => lines.push(line),
+    );
+    expect(posts).toEqual([{ version: "0.5.1" }]);
+    expect(lines).toEqual(["Updating Wisp 0.5.0 to 0.5.1. The daemon will restart automatically."]);
   });
 
   test("does not start a second update or accept positional arguments", async () => {
@@ -166,6 +186,80 @@ describe("wisp update", () => {
     await expect(
       updateCommand(["0.5.1"], async () => status(), () => {}),
     ).rejects.toThrow("usage: wisp update");
+  });
+});
+
+describe("wisp update when nothing restarts the daemon", () => {
+  const INSTRUCTION =
+    "Wisp 0.5.1 is installed. Restart the daemon to finish: stop the running daemon, then run `brew services start wisp` so future updates restart it on their own.";
+  const unsupervised = (overrides: Partial<UpdateStatus> = {}) =>
+    status({
+      canAutoUpdate: false,
+      restartsAutomatically: false,
+      message: "Homebrew services does not run this daemon, so it will not restart on its own after an update",
+      ...overrides,
+    });
+
+  test("installs, waits for the install, and prints how to finish", async () => {
+    const calls: Array<[string, string | undefined]> = [];
+    const lines: string[] = [];
+    const states = ["installing", "installing", "restart-required"] as const;
+    let reads = 0;
+    await updateCommand(
+      [],
+      async (path, method) => {
+        calls.push([path, method]);
+        if (path.includes("refresh=1")) return unsupervised();
+        if (method === "POST") return unsupervised({ state: "installing" });
+        const state = states[Math.min(reads++, states.length - 1)]!;
+        return unsupervised({ state, message: state === "restart-required" ? INSTRUCTION : null });
+      },
+      (line) => lines.push(line),
+      {},
+      { sleep: async () => undefined },
+    );
+    expect(calls).toEqual([
+      ["/api/update?refresh=1", undefined],
+      ["/api/update", "POST"],
+      ["/api/update", undefined],
+      ["/api/update", undefined],
+      ["/api/update", undefined],
+    ]);
+    expect(lines).toEqual([
+      "Installing Wisp 0.5.1. Nothing restarts this daemon automatically, so you will restart it to finish.",
+      INSTRUCTION,
+    ]);
+  });
+
+  test("reports a failed install", async () => {
+    await expect(
+      updateCommand(
+        [],
+        async (path, method) => {
+          if (path.includes("refresh=1")) return unsupervised();
+          if (method === "POST") return unsupervised({ state: "installing" });
+          return unsupervised({ state: "failed", message: "update failed: brew update exited 1: offline" });
+        },
+        () => {},
+        {},
+        { sleep: async () => undefined },
+      ),
+    ).rejects.toThrow("update failed: brew update exited 1: offline");
+  });
+
+  test("an installed update waiting for its restart is reported, not installed again", async () => {
+    const calls: string[] = [];
+    const lines: string[] = [];
+    await updateCommand(
+      [],
+      async (path, method) => {
+        calls.push(`${method ?? "GET"} ${path}`);
+        return unsupervised({ state: "restart-required", message: INSTRUCTION });
+      },
+      (line) => lines.push(line),
+    );
+    expect(calls).toEqual(["GET /api/update?refresh=1"]);
+    expect(lines).toEqual([INSTRUCTION]);
   });
 });
 

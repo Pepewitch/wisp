@@ -11,7 +11,11 @@ import {
 } from "@/lib/desktop-updater"
 import { fromNow, instantOf, utcIso } from "@/lib/time"
 import type { UpdateStatus } from "@/lib/types"
-import type { DaemonUpdateOperation } from "@/lib/update"
+import {
+  daemonCanInstall,
+  daemonRestartsAutomatically,
+  type DaemonUpdateOperation,
+} from "@/lib/update"
 import { daemonUpdateIsCompatible } from "@/lib/update-compatibility"
 import { cn } from "@/lib/utils"
 
@@ -43,7 +47,7 @@ export function WispUpdateControl({
 
   if (
     target &&
-    status.canAutoUpdate &&
+    daemonCanInstall(status) &&
     (status.state === "available" || status.state === "failed")
   ) {
     return (
@@ -51,9 +55,7 @@ export function WispUpdateControl({
         size="sm"
         tone="outline"
         onClick={() => onUpdate(target)}
-        title={
-          error ?? status.message ?? `Install Wisp daemon ${target} and restart`
-        }
+        title={error ?? status.message ?? daemonInstallTitle(status, target)}
       >
         {status.state === "failed" || error
           ? "Retry daemon update"
@@ -63,8 +65,10 @@ export function WispUpdateControl({
   }
 
   // Nothing to install from here: the version, and why (a manual update, a
-  // failure), wait one click away instead of sitting in the bar as a label.
+  // failure, an installed update waiting for its restart), wait one click away
+  // instead of sitting in the bar as a label.
   const manual = Boolean(target && status.state === "available")
+  const waiting = manual || status.state === "restart-required"
   const note =
     error ??
     status.message ??
@@ -74,11 +78,11 @@ export function WispUpdateControl({
       <Popover.Trigger
         render={<Button size="sm" icon />}
         className="relative"
-        aria-label={updateTriggerLabel(Number(manual), error !== null)}
+        aria-label={updateTriggerLabel(Number(waiting), error !== null)}
         title={error ? "Daemon update failed" : `Wisp daemon ${status.currentVersion}`}
       >
         <Download />
-        {(manual || error) && (
+        {(waiting || error) && (
           <span
             aria-hidden
             className={cn(
@@ -147,10 +151,13 @@ export function UpdateCenter({
   const daemonAvailable =
     daemonStatus?.latestVersion !== null &&
     daemonStatus?.latestVersion !== undefined &&
-    daemonStatus.canAutoUpdate &&
+    daemonCanInstall(daemonStatus) &&
     compatible &&
     (daemonStatus.state === "available" || daemonStatus.state === "failed")
-  const availableCount = Number(desktopAvailable) + Number(daemonAvailable)
+  // an installed daemon update waits on its restart: still something for you to do
+  const daemonWaiting =
+    daemonAvailable || daemonStatus?.state === "restart-required"
+  const availableCount = Number(desktopAvailable) + Number(daemonWaiting)
   const hasFailure =
     desktop.error !== null ||
     desktop.status?.phase === "failed" ||
@@ -456,7 +463,8 @@ function DaemonUpdateRow({
   const available = Boolean(
     target !== null &&
     target !== undefined &&
-    status?.canAutoUpdate &&
+    status &&
+    daemonCanInstall(status) &&
     compatible &&
     (status.state === "available" || status.state === "failed")
   )
@@ -487,7 +495,12 @@ function DaemonUpdateRow({
         checking={checking}
         operation={operation}
         available={available}
-        actionBlock={actionBlock}
+        actionBlock={{
+          ...actionBlock,
+          title:
+            actionBlock.title ??
+            (status && target ? daemonInstallTitle(status, target) : undefined),
+        }}
         target={target}
         failed={status?.state === "failed" || error !== null}
         onUpdate={onUpdate}
@@ -558,6 +571,13 @@ function updateTriggerLabel(
   if (availableCount > 0) parts.push(`${availableCount} available`)
   if (hasFailure) parts.push("needs attention")
   return parts.join(", ")
+}
+
+/** What the daemon's install action does, including whether it ends in a restart you do yourself. */
+function daemonInstallTitle(status: UpdateStatus, target: string): string {
+  return daemonRestartsAutomatically(status)
+    ? `Install Wisp daemon ${target} and restart`
+    : `Install Wisp daemon ${target}; restart the daemon yourself to finish`
 }
 
 function daemonUpdateActionBlock(

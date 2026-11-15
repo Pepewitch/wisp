@@ -19,11 +19,15 @@ Desktop; update them on their host or through that daemon's browser UI.
 Switching connections has no effect on the Local row or an operation in
 progress.
 
-A daemon update restarts that daemon, which interrupts every running turn.
-When any task has one, the daemon refuses the update and says how many, and
-the shared UI asks before interrupting them (Cancel / Update anyway), in
-Desktop and the browser alike. The question is asked once, before the install;
-a turn that starts while the update installs is still interrupted.
+A daemon update restarts that daemon when its service manager runs it
+(`brew services`, `wisp.service`, or opted-in Supervisor), which interrupts
+every running turn. When any task has one, the daemon refuses the update and
+says how many, and the shared UI asks before interrupting them (Cancel /
+Update anyway), in Desktop and the browser alike. The question is asked once,
+before the install; a turn that starts while the update installs is still
+interrupted. A daemon that no service manager runs installs the update without
+restarting, interrupts nothing, and the row then says how to restart it to
+finish.
 
 ## Discovery and installation
 
@@ -105,8 +109,12 @@ show the promoted version -> explicit update -> verified Homebrew upgrade
 Daemon discovery does not depend on this Mac's cached Homebrew metadata and
 does not expose a GitHub release before its Formula is installable. Promotion
 advances `Formula/wisp.rb` and `updates/wisp-daemon.json` in the same tap
-commit. An explicit check cache-busts the fixed channel URL; routine polling
-retains conditional requests and the daemon's six-hour in-memory cache.
+commit. GitHub's raw-file CDN caches the fixed branch URL for minutes and
+ignores query strings, so an explicit check first asks the GitHub API for the
+tap's current commit and reads the channel at that immutable commit path. If
+that lookup fails (for example, the unauthenticated rate limit), it falls back
+to the fixed URL. Routine polling retains conditional requests and the
+daemon's six-hour in-memory cache.
 Homebrew refresh happens only after an update is accepted, immediately before
 the Formula upgrade.
 

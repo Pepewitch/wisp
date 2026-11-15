@@ -558,12 +558,17 @@ wisp limits [--refresh] [--json]
                     plan usage per harness, the same answer as the web top
                     bar's usage popover; --refresh skips the five-minute cache
 wisp version        print the Wisp version
-wisp update [--yes] check for a newer release and install it when this
-                    installation can auto-update, else print how to enable that
+wisp update [--yes] check for a newer release and install it; a daemon its
+                    service manager runs restarts on its own, any other prints
+                    how to restart it to finish
 ```
 
-An update restarts the daemon, and the restart interrupts every running turn.
-When any task has one, `wisp update` names how many and asks `Update anyway?
+An update restarts a daemon its service manager runs (`brew services`,
+`wisp.service`, or opted-in supervisord), and the restart interrupts every
+running turn. Any other daemon installs the update without restarting, so it
+interrupts nothing and asks nothing; `wisp update` waits for the install and
+prints how to restart the daemon to finish.
+When a restarting update would interrupt a running turn, `wisp update` names how many and asks `Update anyway?
 [y/N]` on a terminal. Without a terminal it refuses unless `--yes` (`-y`) is
 given. The web update control asks the same question, with Cancel and Update
 anyway. Both follow the daemon: `POST /api/update` answers `409` with

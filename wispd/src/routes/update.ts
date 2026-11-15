@@ -1,5 +1,5 @@
 import { runningTurns } from "../store";
-import { UpdateInterruptsTasksError, UpdateManager } from "../update";
+import { UpdateInterruptsTasksError, UpdateManager, UpdateRestartRequiredError } from "../update";
 import { err, json, jsonObjectBody } from "./http";
 
 /** Tasks with a running turn: what a restart would interrupt. */
@@ -29,7 +29,8 @@ export function updateRoute(
       // 409 with the count: the client confirms with the person, then retries with force
       if (error instanceof UpdateInterruptsTasksError) return json({ error: error.message, running: error.running }, 409);
       const message = error instanceof Error ? error.message : String(error);
-      return err(message, message === "an update is already in progress" ? 409 : 400);
+      const conflict = error instanceof UpdateRestartRequiredError || message === "an update is already in progress";
+      return err(message, conflict ? 409 : 400);
     }
   })();
 }

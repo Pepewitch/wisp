@@ -5,17 +5,12 @@ import {
   realpathSync,
 } from "node:fs";
 import { chmod, mkdir, rename, rm, symlink } from "node:fs/promises";
-import { homedir, platform } from "node:os";
 import { join, resolve } from "node:path";
 import {
   compareVersions,
   isReleaseVersion,
 } from "../../shared/release-version";
 import type { SpawnResult } from "./doctor";
-import {
-  isHomebrewServiceProcess,
-  isSupervisordServiceProcess,
-} from "./update-supervisor";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_ERROR_BYTES, runBoundedCommand } from "./subprocess";
 import {
   assertReleaseDownloadUrl,
@@ -24,8 +19,9 @@ import {
   readBoundedText,
 } from "./update-download";
 import { API_PROTOCOL_VERSION, BUILD_DIRTY, VERSION } from "./version";
+import { detectInstallation, type Installation, MANAGED_INSTALL_MARKER } from "./update-installation";
 import { errorTail, readUpdateAttempt, recordUpdateAttempt, UPDATE_RECORD_PATH } from "./update-record";
-import type { InstallMethod, UpdateAttempt, UpdateState, UpdateStatus } from "../../shared/api/update";
+import type { UpdateAttempt, UpdateState, UpdateStatus } from "../../shared/api/update";
 
 export { compareVersions } from "../../shared/release-version";
 export type { UpdateAttempt } from "./update-record";
@@ -34,11 +30,21 @@ export {
   isHomebrewServiceProcess,
   isSupervisordServiceProcess,
 } from "./update-supervisor";
+export {
+  detectInstallation,
+  detectManagedLinuxInstallation,
+  type Installation,
+  type ManagedLinuxProbe,
+} from "./update-installation";
 
-const DAEMON_CHANNEL_URL =
-  "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-daemon.json";
+const TAP_REPOSITORY = "Pepewitch/homebrew-tap";
+const DAEMON_CHANNEL_PATH = "updates/wisp-daemon.json";
+const DAEMON_CHANNEL_URL = `https://raw.githubusercontent.com/${TAP_REPOSITORY}/main/${DAEMON_CHANNEL_PATH}`;
+/** With `Accept: application/vnd.github.sha` the body is just the commit's 40-hex SHA. */
+const TAP_HEAD_URL = `https://api.github.com/repos/${TAP_REPOSITORY}/commits/main`;
+const MAX_COMMIT_SHA_BYTES = 128;
+const COMMIT_SHA = /^[0-9a-f]{40}$/;
 const RELEASE_URL = "https://github.com/Pepewitch/wisp/releases/download";
-const MANAGED_INSTALL_MARKER = "wisp-managed-install-v1";
 const RELEASE_CACHE_MS = 6 * 60 * 60 * 1000;
 const RESTART_DELAY_MS = 500;
 const MAX_CHANNEL_BYTES = 16 * 1024;
@@ -82,13 +88,6 @@ interface LinuxManifest {
   };
 }
 
-interface Installation {
-  method: InstallMethod;
-  supervised: boolean;
-  reason: string | null;
-  installRoot?: string;
-}
-
 export type CommandResult = SpawnResult;
 
 /**
@@ -103,6 +102,29 @@ export class UpdateInterruptsTasksError extends Error {
     );
     this.name = "UpdateInterruptsTasksError";
   }
+}
+
+/**
+ * An update installed without a supervisor to restart the daemon: until
+ * someone restarts it, another install would only repeat the same one.
+ */
+export class UpdateRestartRequiredError extends Error {
+  constructor(readonly version: string) {
+    super(`Wisp ${version} is installed; restart the daemon to finish`);
+    this.name = "UpdateRestartRequiredError";
+  }
+}
+
+/** How to finish an update that nothing will restart the daemon for. */
+function restartInstruction(installation: Installation, version: string): string {
+  const installed = `Wisp ${version} is installed.`;
+  if (installation.method === "homebrew") {
+    return `${installed} Restart the daemon to finish: stop the running daemon, then run \`brew services start wisp\` so future updates restart it on their own.`;
+  }
+  if (installation.method === "managed-linux" && installation.serviceUnit) {
+    return `${installed} Restart the daemon to finish: stop the running daemon, then run \`systemctl --user restart wisp.service\` so future updates restart it on their own.`;
+  }
+  return `${installed} Restart \`wisp serve\` however you started it to finish the update.`;
 }
 
 export interface UpdateStartOptions {
@@ -131,10 +153,6 @@ export interface UpdateManagerOptions {
   log?: (line: string) => void;
 }
 
-function output(bytes: Uint8Array): string {
-  return Buffer.from(bytes).toString("utf8").trim();
-}
-
 export async function runUpdateCommand(cmd: string[]): Promise<CommandResult> {
   return runBoundedCommand({
     cmd,
@@ -149,85 +167,6 @@ function commandFailure(cmd: string[], result: CommandResult): Error {
   // the tail: a package manager prints its error last, after its progress
   const tail = detail.length > 300 ? `…${detail.slice(-300)}` : detail;
   return new Error(`${cmd.join(" ")} exited ${result.exitCode}${tail ? `: ${tail}` : ""}`);
-}
-
-function runSync(cmd: string[]): CommandResult {
-  const result = Bun.spawnSync({ cmd, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
-  return {
-    exitCode: result.exitCode,
-    stdout: output(result.stdout),
-    stderr: output(result.stderr),
-  };
-}
-
-function homebrewInstallation(): Installation | null {
-  if (platform() !== "darwin" || !Bun.which("brew") || !Bun.which("launchctl")) return null;
-  const prefix = runSync(["brew", "--prefix", "wisp"]);
-  if (prefix.exitCode !== 0 || !prefix.stdout) return null;
-  const installed = realpathSync(resolve(prefix.stdout, "bin/wisp"));
-  if (installed !== realpathSync(process.execPath)) return null;
-  if (typeof process.getuid !== "function") {
-    return { method: "homebrew", supervised: false, reason: "cannot identify the launchd user" };
-  }
-  const supervised = isHomebrewServiceProcess(process.getuid(), process.pid);
-  return {
-    method: "homebrew",
-    supervised,
-    reason: supervised ? null : "this Homebrew installation is not running under its launchd service",
-  };
-}
-
-function managedLinuxInstallation(): Installation | null {
-  if (platform() !== "linux") return null;
-  const installRoot = resolve(process.env.WISP_INSTALL_ROOT ?? join(homedir(), ".local/share/wisp"));
-  const marker = join(installRoot, ".managed-by-wisp");
-  const current = join(installRoot, "current");
-  if (!existsSync(marker) || readFileSync(marker, "utf8").trim() !== MANAGED_INSTALL_MARKER) return null;
-  if (!existsSync(current) || !lstatSync(current).isSymbolicLink()) return null;
-  if (realpathSync(current) !== realpathSync(process.execPath)) return null;
-  if (isSupervisordServiceProcess(process.pid)) {
-    return { method: "managed-linux", supervised: true, reason: null, installRoot };
-  }
-  if (!Bun.which("systemctl")) {
-    return {
-      method: "managed-linux",
-      supervised: false,
-      reason: "automatic updates require systemd, but systemctl is not available",
-      installRoot,
-    };
-  }
-  const service = runSync(["systemctl", "--user", "show", "wisp.service", "--property=MainPID", "--value"]);
-  const supervised = service.exitCode === 0 && Number(service.stdout) === process.pid;
-  return {
-    method: "managed-linux",
-    supervised,
-    reason: supervised
-      ? null
-      : "automatic updates require the running daemon to be managed by wisp.service",
-    installRoot,
-  };
-}
-
-export function detectInstallation(): Installation {
-  if (BUILD_DIRTY || process.env.WISP_COMMAND_NAME === "wisp-dev") {
-    return { method: "unsupported", supervised: false, reason: "source and development builds update manually" };
-  }
-  try {
-    return (
-      homebrewInstallation() ??
-      managedLinuxInstallation() ?? {
-        method: "unsupported",
-        supervised: false,
-        reason: "Wisp does not recognize this installation",
-      }
-    );
-  } catch (error) {
-    return {
-      method: "unsupported",
-      supervised: false,
-      reason: `could not inspect this installation: ${error instanceof Error ? error.message : String(error)}`,
-    };
-  }
 }
 
 function parseDaemonUpdateChannel(value: unknown): ReleaseInfo {
@@ -337,7 +276,10 @@ export class UpdateManager {
   private status(installation: Installation): UpdateStatus {
     const release = this.target ?? this.release;
     const available = release !== null && compareVersions(release.version, this.currentVersion) > 0;
-    const canAutoUpdate = !this.dirty && installation.supervised && installation.method !== "unsupported";
+    const canInstall = !this.dirty && installation.method !== "unsupported";
+    const restartsAutomatically = installation.supervised;
+    // what a client from before canInstall acts on: it never offers an install that will not restart
+    const canAutoUpdate = canInstall && restartsAutomatically;
     const state =
       this.state ??
       (this.checkedAt === null
@@ -358,6 +300,8 @@ export class UpdateManager {
       state,
       installMethod: installation.method,
       canAutoUpdate,
+      canInstall,
+      restartsAutomatically,
       message,
       checkedAt: this.checkedAt?.toISOString() ?? null,
       lastAttempt: readUpdateAttempt(this.recordPath),
@@ -381,9 +325,7 @@ export class UpdateManager {
     } else if (this.etag) {
       headers["if-none-match"] = this.etag;
     }
-    const url = force
-      ? `${DAEMON_CHANNEL_URL}?refresh=${now.getTime()}`
-      : DAEMON_CHANNEL_URL;
+    const url = force ? await this.pinnedChannelUrl() : DAEMON_CHANNEL_URL;
     const response = await this.fetcher(url, {
       cache: force ? "no-store" : "default",
       headers,
@@ -406,6 +348,38 @@ export class UpdateManager {
       compareVersions(release.version, this.currentVersion) >= 0 ? release : null;
     this.checkedAt = now;
     this.etag = response.headers.get("etag");
+  }
+
+  /**
+   * The channel at the tap's current commit, for an explicit refresh.
+   *
+   * raw.githubusercontent.com caches a branch path for five minutes and ignores
+   * the query string, so neither no-cache headers nor a cache-busting parameter
+   * reach a channel promoted in that window. A commit path is immutable, so it
+   * is never stale. Any failure to learn the commit (the unauthenticated API
+   * allows 60 requests an hour) falls back to the branch path.
+   */
+  private async pinnedChannelUrl(): Promise<string> {
+    try {
+      const response = await this.fetcher(TAP_HEAD_URL, {
+        cache: "no-store",
+        headers: {
+          accept: "application/vnd.github.sha",
+          "user-agent": `wisp/${this.currentVersion}`,
+        },
+        redirect: "manual",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) {
+        await response.body?.cancel().catch(() => {});
+        return DAEMON_CHANNEL_URL;
+      }
+      const sha = (await readBoundedText(response, MAX_COMMIT_SHA_BYTES, "tap commit")).trim();
+      if (!COMMIT_SHA.test(sha)) return DAEMON_CHANNEL_URL;
+      return `https://raw.githubusercontent.com/${TAP_REPOSITORY}/${sha}/${DAEMON_CHANNEL_PATH}`;
+    } catch {
+      return DAEMON_CHANNEL_URL;
+    }
   }
 
   private async fetchLatest(force: boolean): Promise<void> {
@@ -435,7 +409,8 @@ export class UpdateManager {
   }
 
   private async readStatus(force: boolean): Promise<UpdateStatus> {
-    if (this.operation) return this.status(this.detectedInstallation());
+    // installed and waiting for a restart: nothing a newer check says changes that
+    if (this.operation || this.state === "restart-required") return this.status(this.detectedInstallation());
     try {
       await this.fetchLatest(force);
       if (this.state === "unavailable") {
@@ -462,6 +437,9 @@ export class UpdateManager {
     if (this.operation || this.starting || this.state === "restarting") {
       throw new Error("an update is already in progress");
     }
+    if (this.state === "restart-required" && this.target) {
+      throw new UpdateRestartRequiredError(this.target.version);
+    }
     if (typeof expectedVersion !== "string" || !isReleaseVersion(expectedVersion)) {
       throw new Error("version must name a complete Wisp release");
     }
@@ -482,11 +460,13 @@ export class UpdateManager {
       }
       const installation = this.detectedInstallation();
       if (this.dirty) throw new Error("dirty builds cannot update themselves");
-      if (installation.method === "unsupported" || !installation.supervised) {
-        throw new Error(installation.reason ?? "this installation cannot update automatically");
+      if (installation.method === "unsupported") {
+        throw new Error(installation.reason ?? "this installation cannot update itself");
       }
-      // Last, so the question is only asked about an update that would run.
-      const running = options.force ? 0 : (options.runningTasks?.() ?? 0);
+      // Last, so the question is only asked about an update that would run, and
+      // only one that restarts: an install nothing restarts interrupts nothing.
+      const running =
+        options.force || !installation.supervised ? 0 : (options.runningTasks?.() ?? 0);
       if (running > 0) throw new UpdateInterruptsTasksError(running);
       this.target = this.release;
       this.state = "installing";
@@ -512,14 +492,20 @@ export class UpdateManager {
 
   private async installAndRestart(installation: Installation, release: ReleaseInfo, attempt: UpdateAttempt): Promise<void> {
     try {
-      if (installation.method === "homebrew") await this.installHomebrew(release);
+      if (installation.method === "homebrew") await this.installHomebrew(release, !installation.supervised);
       else if (installation.method === "managed-linux" && installation.installRoot) {
         await this.installLinux(release, installation.installRoot);
       } else {
         throw new Error("the installation changed before the update started");
       }
       const finishedAt = this.now().toISOString();
-      recordUpdateAttempt(this.recordPath, { ...attempt, outcome: "installed", finishedAt }, this.log);
+      const restarts = installation.supervised;
+      recordUpdateAttempt(this.recordPath, { ...attempt, outcome: "installed", finishedAt }, this.log, restarts);
+      if (!restarts) {
+        this.state = "restart-required";
+        this.message = restartInstruction(installation, release.version);
+        return;
+      }
       this.state = "restarting";
       this.message = null;
       await Bun.sleep(this.restartDelayMs);
@@ -533,10 +519,20 @@ export class UpdateManager {
     }
   }
 
-  private async installHomebrew(release: ReleaseInfo): Promise<void> {
+  /**
+   * `keepRunningKeg`: the daemon keeps running from its Cellar keg until someone
+   * restarts it, and re-executes that binary for terminals, so Homebrew must not
+   * clean the old keg up as part of the upgrade. A later cleanup removes it.
+   */
+  private async installHomebrew(release: ReleaseInfo, keepRunningKeg = false): Promise<void> {
     const update = await this.run(["brew", "update"]);
     if (update.exitCode !== 0) throw commandFailure(["brew", "update"], update);
-    const upgradeCommand = ["brew", "upgrade", "Pepewitch/tap/wisp"];
+    const upgradeCommand = [
+      ...(keepRunningKeg ? ["env", "HOMEBREW_NO_INSTALL_CLEANUP=1"] : []),
+      "brew",
+      "upgrade",
+      "Pepewitch/tap/wisp",
+    ];
     const upgrade = await this.run(upgradeCommand);
     if (upgrade.exitCode !== 0) throw commandFailure(upgradeCommand, upgrade);
     const installed = await this.run(["brew", "--prefix", "wisp"]);

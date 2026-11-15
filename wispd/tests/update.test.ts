@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -15,12 +16,14 @@ import { serve } from "../src/daemon";
 import type { CommandResult, UpdateStatus } from "../src/update";
 import {
   compareVersions,
+  detectManagedLinuxInstallation,
   isHomebrewServiceProcess,
   isSupervisordServiceProcess,
   runUpdateCommand,
   UPDATE_COMMAND_MAX_BYTES,
   UpdateInterruptsTasksError,
   UpdateManager,
+  UpdateRestartRequiredError,
 } from "../src/update";
 import { createTask, createTurn, db, freeSlot, newTaskId, transition } from "../src/store";
 import { updateRoute } from "../src/routes/update";
@@ -61,6 +64,9 @@ function jsonResponse(value: unknown, status = 200, headers: Record<string, stri
     headers: { "content-type": "application/json", ...headers },
   });
 }
+
+const CHANNEL = "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-daemon.json";
+const TAP_HEAD = "https://api.github.com/repos/Pepewitch/homebrew-tap/commits/main";
 
 /** GitHub redirects release downloads here; a real fetch reports it as `response.url`. */
 const ASSET_HOST = "https://release-assets.githubusercontent.com";
@@ -246,6 +252,8 @@ describe("UpdateManager", () => {
       state: "available",
       installMethod: "unsupported",
       canAutoUpdate: false,
+      canInstall: false,
+      restartsAutomatically: false,
       message: "run the platform installer manually",
       checkedAt: expect.any(String),
       lastAttempt: null,
@@ -254,9 +262,10 @@ describe("UpdateManager", () => {
     expect(requests).toBe(1);
   });
 
-  test("an explicit refresh bypasses caches and conditional channel requests", async () => {
+  test("an explicit refresh reads the channel at the tap's current commit, past the CDN", async () => {
     let latest = "0.4.0-alpha.8";
     let now = new Date("2026-09-05T12:00:00Z");
+    const sha = "a1".repeat(20);
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     const manager = new UpdateManager({
       currentVersion: "0.4.0-alpha.6",
@@ -264,6 +273,7 @@ describe("UpdateManager", () => {
       now: () => now,
       fetch: async (input, init) => {
         requests.push({ url: String(input), init });
+        if (String(input) === TAP_HEAD) return new Response(sha);
         return jsonResponse(daemonChannel(latest), 200, {
           etag: `"${latest}"`,
         });
@@ -274,18 +284,50 @@ describe("UpdateManager", () => {
     expect((await manager.getStatus()).latestVersion).toBe("0.4.0-alpha.8");
     latest = "0.4.0-alpha.9";
     expect((await manager.getStatus()).latestVersion).toBe("0.4.0-alpha.8");
-    expect(requests).toHaveLength(1);
+    // routine reads: the branch path only, never the API
+    expect(requests.map((request) => request.url)).toEqual([CHANNEL]);
 
     now = new Date("2026-09-05T12:00:01Z");
     expect((await manager.refreshStatus()).latestVersion).toBe("0.4.0-alpha.9");
-    expect(requests).toHaveLength(2);
-    expect(requests[1]!.url).toEndWith(`?refresh=${now.getTime()}`);
-    expect(requests[1]!.init?.cache).toBe("no-store");
-    expect(requests[1]!.init?.headers).toMatchObject({
+    expect(requests.map((request) => request.url)).toEqual([
+      CHANNEL,
+      TAP_HEAD,
+      `https://raw.githubusercontent.com/Pepewitch/homebrew-tap/${sha}/updates/wisp-daemon.json`,
+    ]);
+    expect(requests[1]!.init?.headers).toMatchObject({ accept: "application/vnd.github.sha" });
+    expect(requests[1]!.init?.redirect).toBe("manual");
+    expect(requests[2]!.init?.cache).toBe("no-store");
+    expect(requests[2]!.init?.headers).toMatchObject({
       "cache-control": "no-cache",
       pragma: "no-cache",
     });
-    expect(requests[1]!.init?.headers).not.toHaveProperty("if-none-match");
+    expect(requests[2]!.init?.headers).not.toHaveProperty("if-none-match");
+  });
+
+  test("an explicit refresh falls back to the branch path when the commit cannot be learned", async () => {
+    const answers: Array<[string, () => Response | Promise<Response>]> = [
+      ["rate limited", () => jsonResponse({ message: "API rate limit exceeded" }, 403)],
+      ["redirected", () => new Response(null, { status: 302, headers: { location: "https://example.invalid/" } })],
+      ["not a SHA", () => new Response("main")],
+      ["uppercase SHA", () => new Response("A".repeat(40))],
+      ["oversized", () => new Response("a".repeat(40) + " ".repeat(4096))],
+      ["network failure", () => Promise.reject(new TypeError("fetch failed"))],
+    ];
+    for (const [label, answer] of answers) {
+      const urls: string[] = [];
+      const manager = new UpdateManager({
+        currentVersion: "0.4.0-alpha.6",
+        dirty: false,
+        fetch: async (input) => {
+          urls.push(String(input));
+          return String(input) === TAP_HEAD ? answer() : jsonResponse(daemonChannel("0.4.0-alpha.9"));
+        },
+        detectInstallation: () => ({ method: "homebrew", supervised: true, reason: null }),
+      });
+      const status = await manager.refreshStatus();
+      expect(status.latestVersion, label).toBe("0.4.0-alpha.9");
+      expect(urls, label).toEqual([TAP_HEAD, CHANNEL]);
+    }
   });
 
   test("rejects malformed daemon channel metadata instead of guessing", async () => {
@@ -590,6 +632,272 @@ describe("UpdateManager", () => {
         ).toContain("release manifest is too large");
       }
     });
+  });
+});
+
+describe("managed Linux detection", () => {
+  /** An installer-shaped root: marker, versions/<version>/wisp, and `current` pointing at it. */
+  function managedRoot(marker = "wisp-managed-install-v1\n") {
+    const parent = mkdtempSync(join(tmpdir(), "wisp-detect-"));
+    homes.push(parent);
+    const root = join(parent, "custom-root");
+    const binary = join(root, "versions/0.4.0-alpha.6/wisp");
+    mkdirSync(join(root, "versions/0.4.0-alpha.6"), { recursive: true });
+    writeFileSync(join(root, ".managed-by-wisp"), marker);
+    writeFileSync(binary, "wisp");
+    symlinkSync(binary, join(root, "current"));
+    return { parent, root, binary };
+  }
+  const systemd = (stdout: string) => () => ({ exitCode: 0, stdout, stderr: "" });
+  const linux = { platform: "linux", pid: 42, isSupervisordService: () => false };
+
+  test("finds a custom root from the executable when the service sets no WISP_INSTALL_ROOT", () => {
+    const { root, binary } = managedRoot();
+    // the unit the installer writes carries no Environment=, so the daemon sees no WISP_INSTALL_ROOT
+    expect(detectManagedLinuxInstallation({
+      ...linux,
+      env: {},
+      executablePath: binary,
+      systemctl: systemd("MainPID=42\nLoadState=loaded\n"),
+    })).toEqual({
+      method: "managed-linux",
+      supervised: true,
+      reason: null,
+      installRoot: realpathSync(root),
+      serviceUnit: true,
+    });
+  });
+
+  test("uses WISP_INSTALL_ROOT when it names this installation, and the executable's root when it does not", () => {
+    const { root, binary } = managedRoot();
+    const other = managedRoot();
+    const detect = (installRoot: string) => detectManagedLinuxInstallation({
+      ...linux,
+      env: { WISP_INSTALL_ROOT: installRoot },
+      executablePath: binary,
+      systemctl: systemd("MainPID=42\nLoadState=loaded\n"),
+    })?.installRoot;
+    expect(detect(root)).toBe(root);
+    // another managed root, whose current is not this executable
+    expect(detect(other.root)).toBe(realpathSync(root));
+    expect(detect(join(other.parent, "missing"))).toBe(realpathSync(root));
+  });
+
+  test("still refuses an unmarked root, a current that is not this executable, and another layout", () => {
+    expect(detectManagedLinuxInstallation({
+      ...linux,
+      env: {},
+      executablePath: managedRoot("something-else\n").binary,
+      systemctl: systemd("MainPID=42\n"),
+    })).toBeNull();
+
+    const { root, binary } = managedRoot();
+    const newer = join(root, "versions/0.4.0-alpha.8/wisp");
+    mkdirSync(join(root, "versions/0.4.0-alpha.8"));
+    writeFileSync(newer, "wisp");
+    expect(detectManagedLinuxInstallation({ ...linux, env: {}, executablePath: newer, systemctl: null })).toBeNull();
+
+    const loose = join(root, "wisp");
+    writeFileSync(loose, "wisp");
+    expect(detectManagedLinuxInstallation({ ...linux, env: {}, executablePath: loose, systemctl: null })).toBeNull();
+    expect(detectManagedLinuxInstallation({ ...linux, platform: "darwin", env: {}, executablePath: binary })).toBeNull();
+  });
+
+  test("reports who would restart the daemon, and whether wisp.service exists", () => {
+    const { binary } = managedRoot();
+    const detect = (probe: Parameters<typeof detectManagedLinuxInstallation>[0]) =>
+      detectManagedLinuxInstallation({ ...linux, env: {}, executablePath: binary, ...probe });
+
+    expect(detect({ isSupervisordService: (pid) => pid === 42, systemctl: null })).toMatchObject({
+      supervised: true,
+      reason: null,
+    });
+    expect(detect({ systemctl: null })).toMatchObject({
+      supervised: false,
+      reason: expect.stringContaining("systemctl is not available"),
+    });
+    expect(detect({ systemctl: systemd("MainPID=0\nLoadState=loaded\n") })).toMatchObject({
+      supervised: false,
+      reason: expect.stringContaining("wisp.service does not run this daemon"),
+      serviceUnit: true,
+    });
+    expect(detect({ systemctl: systemd("MainPID=0\nLoadState=not-found\n") })).toMatchObject({
+      supervised: false,
+      serviceUnit: false,
+    });
+    expect(detect({ systemctl: () => ({ exitCode: 1, stdout: "", stderr: "Failed to connect to bus" }) })).toMatchObject({
+      supervised: false,
+      serviceUnit: false,
+    });
+  });
+});
+
+describe("installing an update nothing will restart", () => {
+  const brewRun = (commands: string[][]) => async (cmd: string[]): Promise<CommandResult> => {
+    commands.push(cmd);
+    if (cmd.join(" ") === "brew --prefix wisp") return { exitCode: 0, stdout: "/opt/homebrew/opt/wisp", stderr: "" };
+    if (cmd.at(-2) === "version") {
+      return { exitCode: 0, stdout: JSON.stringify({ version: "0.4.0-alpha.8", commit: "b".repeat(40), dirty: false }), stderr: "" };
+    }
+    return { exitCode: 0, stdout: "", stderr: "" };
+  };
+
+  test("offers the install, ignores running turns, installs, and says how to finish", async () => {
+    const commands: string[][] = [];
+    const record = recordPath();
+    const lines: string[] = [];
+    let channelReads = 0;
+    let restarted = 0;
+    const manager = new UpdateManager({
+      currentVersion: "0.4.0-alpha.6",
+      dirty: false,
+      fetch: async (input) => {
+        if (String(input).includes("wisp-daemon.json")) channelReads++;
+        return jsonResponse(daemonChannel("0.4.0-alpha.8"));
+      },
+      run: brewRun(commands),
+      detectInstallation: () => ({
+        method: "homebrew",
+        supervised: false,
+        reason: "Homebrew services does not run this daemon, so it will not restart on its own after an update",
+      }),
+      restart: () => { restarted++; },
+      restartDelayMs: 0,
+      recordPath: record,
+      log: (line) => lines.push(line),
+    });
+
+    expect(await manager.getStatus()).toMatchObject({
+      state: "available",
+      canAutoUpdate: false,
+      canInstall: true,
+      restartsAutomatically: false,
+      message: "Homebrew services does not run this daemon, so it will not restart on its own after an update",
+    });
+    // no restart, so nothing is interrupted and nothing is asked
+    expect(await manager.start("0.4.0-alpha.8", {
+      runningTasks: () => { throw new Error("must not count running tasks"); },
+    })).toMatchObject({ state: "installing" });
+    const finished = await waitFor(manager, "restart-required");
+    expect(finished.message).toBe(
+      "Wisp 0.4.0-alpha.8 is installed. Restart the daemon to finish: stop the running daemon, then run `brew services start wisp` so future updates restart it on their own.",
+    );
+    expect(finished.lastAttempt).toMatchObject({ outcome: "installed", toVersion: "0.4.0-alpha.8" });
+    expect(restarted).toBe(0);
+    expect(commands).toEqual([
+      ["brew", "update"],
+      // the running daemon's keg must survive the upgrade until it restarts
+      ["env", "HOMEBREW_NO_INSTALL_CLEANUP=1", "brew", "upgrade", "Pepewitch/tap/wisp"],
+      ["brew", "--prefix", "wisp"],
+      ["/opt/homebrew/opt/wisp/bin/wisp", "version", "--json"],
+    ]);
+    expect(lines.at(-1)).toBe(
+      "[wisp] self-update 0.4.0-alpha.6 → 0.4.0-alpha.8 (homebrew): installed; restart the daemon to finish",
+    );
+
+    // a refresh changes nothing until the restart, and a second install is refused clearly
+    const reads = channelReads;
+    expect((await manager.refreshStatus()).state).toBe("restart-required");
+    expect(channelReads).toBe(reads);
+    const again = await manager.start("0.4.0-alpha.8").catch((error: unknown) => error);
+    expect(again).toBeInstanceOf(UpdateRestartRequiredError);
+    expect((again as Error).message).toBe("Wisp 0.4.0-alpha.8 is installed; restart the daemon to finish");
+
+    const post = await updateRoute(
+      new Request("http://wisp.test/api/update", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ version: "0.4.0-alpha.8" }),
+      }),
+      "/api/update",
+      "POST",
+      manager,
+    )!;
+    expect(post.status).toBe(409);
+    expect(await post.json()).toEqual({ error: "Wisp 0.4.0-alpha.8 is installed; restart the daemon to finish" });
+  });
+
+  for (const [label, serviceUnit, instruction] of [
+    [
+      "with wisp.service installed",
+      true,
+      "Wisp 0.4.0-alpha.8 is installed. Restart the daemon to finish: stop the running daemon, then run `systemctl --user restart wisp.service` so future updates restart it on their own.",
+    ],
+    [
+      "without wisp.service",
+      false,
+      "Wisp 0.4.0-alpha.8 is installed. Restart `wisp serve` however you started it to finish the update.",
+    ],
+  ] as const) {
+    test(`activates a managed Linux release and leaves the restart to the person, ${label}`, async () => {
+      const root = mkdtempSync(join(tmpdir(), "wisp-update-"));
+      homes.push(root);
+      const oldBinary = join(root, "versions/0.4.0-alpha.6/wisp");
+      mkdirSync(join(root, "versions/0.4.0-alpha.6"), { recursive: true });
+      writeFileSync(join(root, ".managed-by-wisp"), "wisp-managed-install-v1\n");
+      writeFileSync(oldBinary, "old");
+      symlinkSync(oldBinary, join(root, "current"));
+      const artifact = new TextEncoder().encode("verified executable");
+      const checksum = new Bun.CryptoHasher("sha256").update(artifact).digest("hex");
+      const commit = "c".repeat(40);
+      let restarted = 0;
+      const manager = new UpdateManager({
+        currentVersion: "0.4.0-alpha.6",
+        executablePath: oldBinary,
+        dirty: false,
+        fetch: async (input) => {
+          const url = String(input);
+          if (url.includes("wisp-daemon.json")) return jsonResponse(daemonChannel("0.4.0-alpha.8"));
+          if (url.endsWith("/release-manifest.json")) {
+            return servedFrom(url, jsonResponse(linuxManifest(commit, checksum, artifact.byteLength)));
+          }
+          return servedFrom(`${ASSET_HOST}/artifact`, new Response(artifact));
+        },
+        run: async () => ({
+          exitCode: 0,
+          stdout: JSON.stringify({ version: "0.4.0-alpha.8", commit, dirty: false }),
+          stderr: "",
+        }),
+        detectInstallation: () => ({
+          method: "managed-linux",
+          supervised: false,
+          reason: "wisp.service does not run this daemon, so it will not restart on its own after an update",
+          installRoot: root,
+          serviceUnit,
+        }),
+        restart: () => { restarted++; },
+        restartDelayMs: 0,
+        recordPath: recordPath(),
+      });
+
+      await manager.start("0.4.0-alpha.8", { runningTasks: () => 3 });
+      const finished = await waitFor(manager, "restart-required");
+      expect(finished.message).toBe(instruction);
+      expect(readlinkSync(join(root, "current"))).toBe(join(root, "versions/0.4.0-alpha.8/wisp"));
+      // the running daemon's own binary stays where it is
+      expect(readFileSync(oldBinary, "utf8")).toBe("old");
+      expect(restarted).toBe(0);
+    });
+  }
+
+  test("still refuses a dirty build and an unrecognized installation", async () => {
+    const dirty = new UpdateManager({
+      currentVersion: "0.4.0-alpha.6",
+      dirty: true,
+      fetch: async () => jsonResponse(daemonChannel("0.4.0-alpha.8")),
+      detectInstallation: () => ({ method: "homebrew", supervised: false, reason: "not supervised" }),
+    });
+    expect(await dirty.getStatus()).toMatchObject({ canInstall: false, canAutoUpdate: false });
+    await expect(dirty.start("0.4.0-alpha.8")).rejects.toThrow("dirty builds cannot update themselves");
+
+    const unknown = new UpdateManager({
+      currentVersion: "0.4.0-alpha.6",
+      dirty: false,
+      fetch: async () => jsonResponse(daemonChannel("0.4.0-alpha.8")),
+      detectInstallation: () => ({ method: "unsupported", supervised: false, reason: "Wisp does not recognize this installation" }),
+    });
+    expect(await unknown.getStatus()).toMatchObject({ canInstall: false, restartsAutomatically: false });
+    await expect(unknown.start("0.4.0-alpha.8")).rejects.toThrow("Wisp does not recognize this installation");
   });
 });
 
