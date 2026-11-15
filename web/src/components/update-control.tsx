@@ -3,13 +3,17 @@ import type { ReactNode } from "react"
 
 import { Download, Refresh } from "@/components/icons"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
-import { useMinuteTick } from "@/hooks/useTick"
+import {
+  CheckedAt,
+  DaemonRowMessage,
+  DesktopCheckedAt,
+  VersionLine,
+} from "@/components/update-row-text"
 import type { DesktopUpdateStatus } from "@/lib/desktop-bridge"
 import {
   desktopUpdateBlocksDaemon,
   type DesktopUpdaterContextValue,
 } from "@/lib/desktop-updater"
-import { fromNow, instantOf, utcIso } from "@/lib/time"
 import type { UpdateStatus } from "@/lib/types"
 import {
   daemonCanInstall,
@@ -72,14 +76,20 @@ export function WispUpdateControl({
   const note =
     error ??
     status.message ??
-    (manual ? `Wisp daemon ${target} is available; this installation updates manually.` : null)
+    (manual
+      ? `Wisp daemon ${target} is available; this installation updates manually.`
+      : null)
   return (
     <Popover.Root>
       <Popover.Trigger
         render={<Button size="sm" icon />}
         className="relative"
         aria-label={updateTriggerLabel(Number(waiting), error !== null)}
-        title={error ? "Daemon update failed" : `Wisp daemon ${status.currentVersion}`}
+        title={
+          error
+            ? "Daemon update failed"
+            : `Wisp daemon ${status.currentVersion}`
+        }
       >
         <Download />
         {(waiting || error) && (
@@ -93,16 +103,34 @@ export function WispUpdateControl({
         )}
       </Popover.Trigger>
       <Popover.Portal>
-        <Popover.Positioner side="bottom" align="end" sideOffset={6} collisionPadding={12} className="z-(--z-menu)">
-          <Popover.Popup className={cn(POPOVER_SURFACE, "w-[300px] max-w-[calc(100vw-24px)] rounded-xl p-3 outline-none")}>
+        <Popover.Positioner
+          side="bottom"
+          align="end"
+          sideOffset={6}
+          collisionPadding={12}
+          className="z-(--z-menu)"
+        >
+          <Popover.Popup
+            className={cn(
+              POPOVER_SURFACE,
+              "w-[300px] max-w-[calc(100vw-24px)] rounded-xl p-3 outline-none"
+            )}
+          >
             <section aria-label="Daemon version">
               <div className="flex items-baseline justify-between gap-3">
-                <Popover.Title className="text-[12.5px] font-medium">Wisp daemon</Popover.Title>
+                <Popover.Title className="text-[12.5px] font-medium">
+                  Wisp daemon
+                </Popover.Title>
                 <VersionLine current={status.currentVersion} latest={target} />
               </div>
               <CheckedAt at={status.checkedAt} />
               {note && (
-                <p className={cn("mt-1 text-[11px] leading-normal", error ? "text-destructive" : "text-muted-foreground")}>
+                <p
+                  className={cn(
+                    "mt-1 text-[11px] leading-normal",
+                    error ? "text-destructive" : "text-muted-foreground"
+                  )}
+                >
                   {note}
                 </p>
               )}
@@ -479,18 +507,11 @@ function DaemonUpdateRow({
         <VersionLine current={status?.currentVersion} latest={target} />
       </div>
       <CheckedAt at={checking ? null : status?.checkedAt} />
-      {(error ?? blockedMessage ?? status?.message) && (
-        <p
-          className={cn(
-            "mt-1 text-[11px] leading-normal",
-            error || blockedMessage || status?.state === "failed"
-              ? "text-destructive"
-              : "text-muted-foreground"
-          )}
-        >
-          {error ?? blockedMessage ?? status?.message}
-        </p>
-      )}
+      <DaemonRowMessage
+        problem={error ?? blockedMessage}
+        message={status?.message ?? null}
+        failed={status?.state === "failed"}
+      />
       <DaemonUpdateAction
         checking={checking}
         operation={operation}
@@ -591,42 +612,4 @@ function daemonUpdateActionBlock(
     }
   }
   return { disabled: daemonBusy, title: undefined }
-}
-
-/**
- * When this row last reached its release channel, so "nothing to install"
- * carries its age. Nothing before the first check, or while one runs.
- */
-function CheckedAt({ at }: { at: string | null | undefined }) {
-  const now = useMinuteTick(Boolean(at))
-  if (!at) return null
-  // A clock shared since before the check can trail it; never say "in 1 min".
-  const ago = fromNow(at, Math.max(now, instantOf(at)))
-  if (!ago) return null
-  return (
-    <p className="mt-0.5 text-[10.5px] text-faint" title={utcIso(at)}>
-      Checked {ago}
-    </p>
-  )
-}
-
-function DesktopCheckedAt({ status }: { status: DesktopUpdateStatus | null }) {
-  return (
-    <CheckedAt at={status?.phase === "checking" ? null : status?.checkedAt} />
-  )
-}
-
-function VersionLine({
-  current,
-  latest,
-}: {
-  current: string | undefined
-  latest: string | null | undefined
-}) {
-  return (
-    <span className="shrink-0 font-mono text-[10.5px] text-faint">
-      {current ?? "Checking…"}
-      {latest && latest !== current ? ` → ${latest}` : ""}
-    </span>
-  )
 }
