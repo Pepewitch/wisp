@@ -45,7 +45,7 @@ export const UPDATE_SPECIMEN: UpdateStatus = {
   installMethod: "homebrew",
   canAutoUpdate: true,
   message: null,
-  checkedAt: "2026-09-05T12:00:00.000Z",
+  checkedAt: new Date(Date.now() - 2 * 3_600_000).toISOString(),
 }
 
 export const ROW_PR_SPECIMENS: Array<PullRequestOverviewEntry | undefined> = [

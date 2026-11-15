@@ -3,11 +3,13 @@ import type { ReactNode } from "react"
 
 import { Download, Refresh } from "@/components/icons"
 import { Button, POPOVER_SURFACE } from "@/components/primitives"
+import { useMinuteTick } from "@/hooks/useTick"
 import type { DesktopUpdateStatus } from "@/lib/desktop-bridge"
 import {
   desktopUpdateBlocksDaemon,
   type DesktopUpdaterContextValue,
 } from "@/lib/desktop-updater"
+import { fromNow, instantOf, utcIso } from "@/lib/time"
 import type { UpdateStatus } from "@/lib/types"
 import type { DaemonUpdateOperation } from "@/lib/update"
 import { daemonUpdateIsCompatible } from "@/lib/update-compatibility"
@@ -94,6 +96,7 @@ export function WispUpdateControl({
                 <Popover.Title className="text-[12.5px] font-medium">Wisp daemon</Popover.Title>
                 <VersionLine current={status.currentVersion} latest={target} />
               </div>
+              <CheckedAt at={status.checkedAt} />
               {note && (
                 <p className={cn("mt-1 text-[11px] leading-normal", error ? "text-destructive" : "text-muted-foreground")}>
                   {note}
@@ -228,7 +231,10 @@ export function UpdateCenter({
               />
             </div>
             <div className="mt-2 flex items-center justify-between gap-3 border-t border-border pt-2">
-              <label className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <label
+                className="flex items-center gap-2 text-[11px] text-muted-foreground"
+                title="After launch, then about every six hours while Wisp Desktop is open. Never installs on its own."
+              >
                 <input
                   type="checkbox"
                   checked={desktop.checkAfterLaunch}
@@ -237,7 +243,7 @@ export function UpdateCenter({
                   }
                   className="accent-primary"
                 />
-                Check Desktop after launch
+                Check Desktop automatically
               </label>
               <Button
                 size="sm"
@@ -296,6 +302,7 @@ function DesktopUpdateRow({
         <h3 className="text-[12.5px] font-medium">Wisp Desktop</h3>
         <VersionLine current={status?.currentVersion} latest={target} />
       </div>
+      <DesktopCheckedAt status={status} />
       {(error ?? status?.message) && (
         <p
           className={cn(
@@ -463,6 +470,7 @@ function DaemonUpdateRow({
         <h3 className="truncate text-[12.5px] font-medium">Local daemon</h3>
         <VersionLine current={status?.currentVersion} latest={target} />
       </div>
+      <CheckedAt at={checking ? null : status?.checkedAt} />
       {(error ?? blockedMessage ?? status?.message) && (
         <p
           className={cn(
@@ -563,6 +571,29 @@ function daemonUpdateActionBlock(
     }
   }
   return { disabled: daemonBusy, title: undefined }
+}
+
+/**
+ * When this row last reached its release channel, so "nothing to install"
+ * carries its age. Nothing before the first check, or while one runs.
+ */
+function CheckedAt({ at }: { at: string | null | undefined }) {
+  const now = useMinuteTick(Boolean(at))
+  if (!at) return null
+  // A clock shared since before the check can trail it; never say "in 1 min".
+  const ago = fromNow(at, Math.max(now, instantOf(at)))
+  if (!ago) return null
+  return (
+    <p className="mt-0.5 text-[10.5px] text-faint" title={utcIso(at)}>
+      Checked {ago}
+    </p>
+  )
+}
+
+function DesktopCheckedAt({ status }: { status: DesktopUpdateStatus | null }) {
+  return (
+    <CheckedAt at={status?.phase === "checking" ? null : status?.checkedAt} />
+  )
 }
 
 function VersionLine({

@@ -19,7 +19,7 @@ const DESKTOP: DesktopUpdaterContextValue = {
     releaseNotes:
       "Signed, notarized application update with updater verification.",
     publishedAt: "2026-09-06T12:00:00Z",
-    checkedAt: "2026-09-06T12:01:00Z",
+    checkedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
     downloadedBytes: 0,
     totalBytes: 42_000_000,
     message: null,

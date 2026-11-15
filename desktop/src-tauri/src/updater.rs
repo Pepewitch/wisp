@@ -1,11 +1,20 @@
 //! Signed application updates for the native Desktop shell.
 //!
 //! The webview receives status and can confirm a version. It cannot choose an
-//! endpoint, artifact, signature, public key, or installation path. Discovery
-//! is fetched once through this module's bounded client, then fetched by the
-//! official Tauri updater and required to match before its signed installer is
+//! endpoint, artifact, signature, public key, or installation path; at most it
+//! says whether the person explicitly asked for a check. Discovery is fetched
+//! once through this module's bounded client, then fetched by the official
+//! Tauri updater and required to match before its signed installer is
 //! retained. This keeps Tauri's audited signature/install path while applying
 //! Wisp's stricter channel policy ahead of it.
+//!
+//! The fixed channel URL is a branch path that GitHub's raw CDN caches for
+//! minutes regardless of query strings or request headers. An explicit check
+//! therefore first resolves the tap's current commit through one fixed GitHub
+//! API URL and reads the channel at that immutable commit path, so both
+//! fetches see the same fresh bytes. Any failure of that lookup falls back to
+//! the fixed URL. Automatic checks always use the fixed URL, which spares the
+//! small unauthenticated API allowance for the person's own checks.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -24,6 +33,16 @@ use url::Url;
 const CHANNEL: &str = "alpha";
 const CHANNEL_ENDPOINT: &str =
     "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/main/updates/wisp-desktop-alpha.json";
+/// The same channel file at one tap commit: `<prefix><40 lowercase hex><suffix>`.
+const PINNED_CHANNEL_PREFIX: &str = "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/";
+const PINNED_CHANNEL_SUFFIX: &str = "/updates/wisp-desktop-alpha.json";
+/// Answers with the bare commit SHA of the tap's `main` branch when asked for
+/// `application/vnd.github.sha`.
+const TAP_COMMIT_ENDPOINT: &str =
+    "https://api.github.com/repos/Pepewitch/homebrew-tap/commits/main";
+const TAP_COMMIT_TIMEOUT: Duration = Duration::from_secs(5);
+const COMMIT_SHA_LENGTH: usize = 40;
+const MAX_COMMIT_RESPONSE_BYTES: usize = 128;
 const PUBLIC_KEY: &str = include_str!("../updater-public.key");
 const PLATFORM: &str = "darwin-aarch64-app";
 const CHECK_TIMEOUT: Duration = Duration::from_secs(10);
@@ -196,9 +215,12 @@ impl DesktopUpdater {
             .clone()
     }
 
+    /// `explicit` marks a check the person asked for (Check now). Only such a
+    /// check spends a GitHub API request to read the channel fresh.
     pub async fn check(
         &self,
         app: &AppHandle<Wry>,
+        explicit: bool,
     ) -> Result<DesktopUpdateStatus, DesktopUpdateError> {
         let _operation = self
             .operation
@@ -220,7 +242,7 @@ impl DesktopUpdater {
             inner.status.message = None;
         });
 
-        let result = self.check_inner(app, key).await;
+        let result = self.check_inner(app, key, explicit).await;
         match result {
             Ok((None, checked_at)) => Ok(self.change(app, |inner| {
                 inner.status.phase = DesktopUpdatePhase::UpToDate;
@@ -248,10 +270,21 @@ impl DesktopUpdater {
         &self,
         app: &AppHandle<Wry>,
         key: &str,
+        explicit: bool,
     ) -> Result<(Option<(Update, Candidate)>, String), DesktopUpdateError> {
-        let endpoint = Url::parse(CHANNEL_ENDPOINT).map_err(|_| {
-            DesktopUpdateError::InvalidChannel("the embedded endpoint is not a URL")
-        })?;
+        let pinned = if explicit {
+            resolve_pinned_channel().await
+        } else {
+            None
+        };
+        let endpoint = match pinned {
+            Some(endpoint) => endpoint,
+            None => Url::parse(CHANNEL_ENDPOINT).map_err(|_| {
+                DesktopUpdateError::InvalidChannel("the embedded endpoint is not a URL")
+            })?,
+        };
+        // Tauri's updater reads this same endpoint below. A commit path is
+        // immutable, so both requests see identical bytes.
         let raw = fetch_channel(&endpoint).await?;
         let candidate = validate_manifest(&raw, OffsetDateTime::now_utc())?;
         let current = Version::parse(&self.status().current_version)
@@ -431,8 +464,82 @@ fn now_text() -> Result<String, DesktopUpdateError> {
         .map_err(|_| DesktopUpdateError::Discovery("could not record the check time"))
 }
 
+/// Whether `sha` is exactly one full lowercase hexadecimal commit name.
+fn is_commit_sha(sha: &str) -> bool {
+    sha.len() == COMMIT_SHA_LENGTH
+        && sha
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Parse the API's bare `application/vnd.github.sha` body. Nothing else is
+/// accepted: no whitespace, no JSON, no abbreviated or uppercase names.
+fn parse_commit_sha(body: &[u8]) -> Option<&str> {
+    std::str::from_utf8(body)
+        .ok()
+        .filter(|sha| is_commit_sha(sha))
+}
+
+fn pinned_channel_endpoint(sha: &str) -> Option<Url> {
+    if !is_commit_sha(sha) {
+        return None;
+    }
+    let url = Url::parse(&format!(
+        "{PINNED_CHANNEL_PREFIX}{sha}{PINNED_CHANNEL_SUFFIX}"
+    ))
+    .ok()?;
+    approved_channel_endpoint(&url).then_some(url)
+}
+
+/// The only two shapes either discovery fetch may read: the fixed branch URL,
+/// or that file at one validated tap commit.
+fn approved_channel_endpoint(endpoint: &Url) -> bool {
+    let text = endpoint.as_str();
+    if text == CHANNEL_ENDPOINT {
+        return true;
+    }
+    text.strip_prefix(PINNED_CHANNEL_PREFIX)
+        .and_then(|rest| rest.strip_suffix(PINNED_CHANNEL_SUFFIX))
+        .is_some_and(is_commit_sha)
+}
+
+/// Resolve the tap's current commit and return the channel URL pinned to it.
+/// Every failure (network, rate limit, unexpected body) returns `None` so the
+/// caller falls back to the fixed channel URL.
+async fn resolve_pinned_channel() -> Option<Url> {
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(TAP_COMMIT_TIMEOUT)
+        .user_agent(concat!("wisp-desktop/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .ok()?;
+    let response = client
+        .get(TAP_COMMIT_ENDPOINT)
+        .header(reqwest::header::ACCEPT, "application/vnd.github.sha")
+        .send()
+        .await
+        .ok()?;
+    if !response.status().is_success()
+        || response
+            .content_length()
+            .is_some_and(|length| length > MAX_COMMIT_RESPONSE_BYTES as u64)
+    {
+        return None;
+    }
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.ok()?;
+        if body.len().saturating_add(chunk.len()) > MAX_COMMIT_RESPONSE_BYTES {
+            return None;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    pinned_channel_endpoint(parse_commit_sha(&body)?)
+}
+
 async fn fetch_channel(endpoint: &Url) -> Result<serde_json::Value, DesktopUpdateError> {
-    if endpoint.as_str() != CHANNEL_ENDPOINT {
+    if !approved_channel_endpoint(endpoint) {
         return Err(DesktopUpdateError::InvalidChannel(
             "the endpoint is not approved",
         ));
@@ -689,6 +796,75 @@ mod tests {
         ));
         assert!(!allowed_network_url(
             &Url::parse("http://github.com/Pepewitch/wisp/releases/download/v1/x").unwrap()
+        ));
+    }
+
+    const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn pinned_text(sha: &str) -> String {
+        format!(
+            "https://raw.githubusercontent.com/Pepewitch/homebrew-tap/{sha}/updates/wisp-desktop-alpha.json"
+        )
+    }
+
+    #[test]
+    fn commit_lookup_accepts_only_one_bare_full_lowercase_sha() {
+        assert_eq!(parse_commit_sha(SHA.as_bytes()), Some(SHA));
+        for body in [
+            "",
+            "main",
+            "0123456789abcdef",
+            "0123456789ABCDEF0123456789abcdef01234567",
+            "0123456789abcdef0123456789abcdef0123456g",
+            "0123456789abcdef0123456789abcdef012345678",
+            "0123456789abcdef0123456789abcdef01234567\n",
+            " 0123456789abcdef0123456789abcdef01234567",
+            "{\"sha\":\"0123456789abcdef0123456789abcdef01234567\"}",
+            "../../../evil/0123456789abcdef0123456789",
+        ] {
+            assert_eq!(parse_commit_sha(body.as_bytes()), None, "{body:?}");
+        }
+        assert_eq!(parse_commit_sha(&[0xff; 40]), None);
+    }
+
+    #[test]
+    fn a_pinned_channel_is_the_fixed_file_at_one_tap_commit() {
+        let pinned = pinned_channel_endpoint(SHA).unwrap();
+        assert_eq!(pinned.as_str(), pinned_text(SHA));
+        assert!(approved_channel_endpoint(&pinned));
+        assert!(pinned_channel_endpoint("main").is_none());
+        assert!(pinned_channel_endpoint("../main").is_none());
+        assert!(pinned_channel_endpoint(&SHA.to_uppercase()).is_none());
+    }
+
+    #[test]
+    fn discovery_reads_only_the_fixed_or_a_pinned_channel_url() {
+        let approved = |text: &str| approved_channel_endpoint(&Url::parse(text).unwrap());
+        assert!(approved(CHANNEL_ENDPOINT));
+        assert!(approved(&pinned_text(SHA)));
+        for rejected in [
+            format!("{CHANNEL_ENDPOINT}?t=1"),
+            format!("{CHANNEL_ENDPOINT}#fresh"),
+            pinned_text("dev"),
+            pinned_text("0123456"),
+            pinned_text(&SHA.to_uppercase()),
+            format!("{}?t=1", pinned_text(SHA)),
+            format!("https://raw.githubusercontent.com/Pepewitch/homebrew-tap/{SHA}/updates/wisp-daemon.json"),
+            format!("https://raw.githubusercontent.com/Other/homebrew-tap/{SHA}/updates/wisp-desktop-alpha.json"),
+            format!("https://raw.githubusercontent.com:8443/Pepewitch/homebrew-tap/{SHA}/updates/wisp-desktop-alpha.json"),
+            format!("https://user@raw.githubusercontent.com/Pepewitch/homebrew-tap/{SHA}/updates/wisp-desktop-alpha.json"),
+            format!("http://raw.githubusercontent.com/Pepewitch/homebrew-tap/{SHA}/updates/wisp-desktop-alpha.json"),
+            format!("https://raw.githubusercontent.com/Pepewitch/homebrew-tap/{SHA}%2F..%2Fmain/updates/wisp-desktop-alpha.json"),
+            TAP_COMMIT_ENDPOINT.to_string(),
+        ] {
+            assert!(!approved(&rejected), "{rejected}");
+        }
+    }
+
+    #[test]
+    fn the_commit_lookup_is_not_on_the_updater_redirect_allowlist() {
+        assert!(!allowed_network_url(
+            &Url::parse(TAP_COMMIT_ENDPOINT).unwrap()
         ));
     }
 

@@ -133,6 +133,7 @@ describe("desktop native bridge", () => {
     await bridge.openExternalUrl("https://example.test/pull/1")
     await bridge.desktopUpdateStatus()
     await bridge.checkDesktopUpdate()
+    await bridge.checkDesktopUpdate(true)
     await bridge.installDesktopUpdate("0.4.0-alpha.9")
     await bridge.relaunchDesktop()
     let eventStatus: DesktopUpdateStatus | null = null
@@ -200,7 +201,8 @@ describe("desktop native bridge", () => {
         args: { url: "https://example.test/pull/1" },
       },
       { command: "desktop_update_status", args: undefined },
-      { command: "check_desktop_update", args: undefined },
+      { command: "check_desktop_update", args: { explicit: false } },
+      { command: "check_desktop_update", args: { explicit: true } },
       {
         command: "install_desktop_update",
         args: { confirmedVersion: "0.4.0-alpha.9" },

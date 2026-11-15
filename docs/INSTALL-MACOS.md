@@ -80,7 +80,10 @@ Open **Updates** in Desktop:
 - **Local daemon** updates this Mac's managed daemon, regardless of the
   selected connection.
 
-**Check now** installs nothing. Saved remote daemons must be updated on their
+Wisp Desktop also checks for itself after launch and about every six hours
+while open, unless **Check Desktop automatically** is off. **Check now** reads
+the release channel fresh and, like the automatic checks, installs nothing.
+Saved remote daemons must be updated on their
 own host or through their browser UI. The two local update operations cannot
 run together.
 

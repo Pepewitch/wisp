@@ -184,7 +184,12 @@ export interface DesktopBridge {
   /** Resolves to the unsubscribe function; malformed native payloads are dropped. */
   onFocusTask(handler: (request: TaskFocusRequest) => void): Promise<() => void>
   desktopUpdateStatus(): Promise<DesktopUpdateStatus>
-  checkDesktopUpdate(): Promise<DesktopUpdateStatus>
+  /**
+   * `explicit` marks a check the person asked for (Check now), which native
+   * code reads fresh at the release channel's current commit. Automatic checks
+   * omit it. It selects a mode, never an endpoint.
+   */
+  checkDesktopUpdate(explicit?: boolean): Promise<DesktopUpdateStatus>
   installDesktopUpdate(confirmedVersion: string): Promise<DesktopUpdateStatus>
   relaunchDesktop(): Promise<void>
   onDesktopUpdateStatus(
@@ -621,9 +626,11 @@ export function createDesktopBridge(
       normalizeDesktopUpdateStatus(
         await nativeInvoke<DesktopUpdateStatus>("desktop_update_status")
       ),
-    checkDesktopUpdate: async () =>
+    checkDesktopUpdate: async (explicit = false) =>
       normalizeDesktopUpdateStatus(
-        await nativeInvoke<DesktopUpdateStatus>("check_desktop_update")
+        await nativeInvoke<DesktopUpdateStatus>("check_desktop_update", {
+          explicit: explicit === true,
+        })
       ),
     installDesktopUpdate: async (confirmedVersion) =>
       normalizeDesktopUpdateStatus(
