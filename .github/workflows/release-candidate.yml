@@ -12,6 +12,9 @@ on:
       - "web/**"
       - "wispd/**"
       - "scripts/install.sh"
+      - "scripts/render-daemon-update-channel.ts"
+      - "scripts/release-versions.ts"
+      - "scripts/version-set.ts"
       - "scripts/promote-release.ts"
       - "scripts/release-desktop.ts"
       - "scripts/update-verifier/**"
@@ -54,7 +57,8 @@ jobs:
 
   linux-contract:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The update-from-previous step can build a second, synthetic candidate.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -76,3 +80,12 @@ jobs:
           artifact="dist/release/v$version/wisp-v$version-linux-x86_64"
           WISP_ARTIFACT_PATH="$PWD/$artifact" bun run test:install
           WISP_ARTIFACT_PATH="$PWD/$artifact" bun run test:activation
+      - name: update the previous release to the candidate
+        # The release the tap promotes runs its own `wisp update` against a
+        # local mirror of GitHub serving this candidate. A candidate that is
+        # not newer than it is retested as a synthetic patch bump of the same
+        # commit. Network: the tap channel and the previous release's assets.
+        run: |
+          version="$(bun -e 'import { VERSION } from "./wispd/src/version"; process.stdout.write(VERSION)')"
+          artifact="dist/release/v$version/wisp-v$version-linux-x86_64"
+          WISP_ARTIFACT_PATH="$PWD/$artifact" bun run test:update-from-previous

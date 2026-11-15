@@ -116,6 +116,27 @@ When a change touches the release contract, keep failure-path diagnostics (the
 daemon's wait status and cgroup memory/pid counters) in the same PR as the
 change.
 
+The same job runs the update-from-previous gate (`test:update-from-previous`).
+`wisp update` always runs the *old* release's code, so a candidate that breaks
+the update contract — artifact name, manifest shape, size bounds, channel
+schema, or a migration on start — strands every installed user. The gate
+installs the release the tap promotes from its GitHub assets with the
+installer from its own tag, supervises it with Supervisor as
+[Install](../../../docs/INSTALL.md#run-without-systemd) documents, registers a
+project, and runs that release's unmodified `wisp update --yes`. On an internal
+Docker network a mirror answers as `raw.githubusercontent.com`, `github.com`,
+and `api.github.com` with a throwaway test CA (trusted through Bun's
+`NODE_EXTRA_CA_CERTS`, not through anything in Wisp) and serves only the
+channel `render-daemon-update-channel.ts` renders for the candidate, its
+manifest, and its artifact; any other request fails the gate. It passes when
+the restarted daemon reports the candidate's version and commit, `current`
+points at it, the project and token survived, and the daemon log has no
+errors. A candidate that is not newer than the promoted release (any pull
+request that does not bump the version) is retested as a synthetic patch bump
+of the same commit, built clean in a throwaway worktree and never published,
+so contract breaks surface on the pull request that causes them. Set
+`WISP_PREVIOUS_VERSION` to qualify an update from an older release by hand.
+
 A gate that fails in code this release did not change is a flake: run
 `release:check` once more. If the same gate fails twice, stop and report it —
 rerunning until it passes is how a real regression ships.
@@ -677,6 +698,7 @@ fake-model evaluator before spending model quota:
 ```sh
 bun run test:install
 bun run test:activation
+bun run test:update-from-previous
 wispd/scripts/evaluator/run.sh --preflight --rebuild-image
 ```
 
