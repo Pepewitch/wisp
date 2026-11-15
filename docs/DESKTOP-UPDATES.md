@@ -28,14 +28,21 @@ a turn that starts while the update installs is still interrupted.
 ## Discovery and installation
 
 ```text
-launch (one jittered Desktop check) or Check now
-                  |
-                  v
-native fixed alpha-channel URL -----> signed release metadata in homebrew-tap
-                  |                    version, notes, exact asset URL,
-                  |                    size, publication time, signature
-                  v
-Tauri updater fetches the same document again
+automatic check                          Check now
+(after launch, then every ~6 hours)          |
+          |                                  v
+          |                     fixed GitHub API URL -> tap's current commit
+          |                                  |   (any failure: fixed URL)
+          v                                  v
+native fixed alpha-channel URL     the same file at that commit
+          |                                  |
+          +----------------+-----------------+
+                           v
+        signed release metadata in homebrew-tap: version, notes,
+        exact asset URL, size, publication time, signature
+                           |
+                           v
+Tauri updater fetches the same endpoint again
                   |
        exact-document and allowlist checks
                   |
@@ -57,9 +64,23 @@ remain unchanged for compatibility with installed 0.4 clients. They also carry
 regular releases such as 0.5.0; the legacy channel name does not make that
 version a GitHub prerelease. Both clients compare semantic versions, so 0.5.0
 is newer than every 0.4 alpha. Desktop and Local daemon still update separately.
-The webview may request a check, confirm the exact displayed version, and ask
-for relaunch. It cannot supply an endpoint, URL, signature, key, download path,
-or installation path. It receives only status and bounded release notes.
+The webview may request a check, say whether the person explicitly asked for
+it, confirm the exact displayed version, and ask for relaunch. It cannot supply
+an endpoint, URL, commit, signature, key, download path, or installation path.
+It receives only status and bounded release notes.
+
+GitHub's raw-file CDN caches the fixed channel URL for several minutes and
+ignores query strings and request cache headers, so a release promoted moments
+ago can still read as "up to date" there. **Check now** therefore asks the
+GitHub API, at one URL compiled into the app, for the tap's current `main`
+commit and reads the channel file at that immutable commit path instead. The
+lookup has a short timeout, follows no redirect, and accepts only a bare
+40-character lowercase hexadecimal commit name of bounded size; the native
+discovery fetch accepts only the fixed URL or that exact pinned shape. Both
+discovery requests then read the same endpoint, so their documents agree. Any
+lookup failure, including GitHub's unauthenticated limit of 60 API requests an
+hour per address, falls back silently to the fixed URL. Automatic checks always
+use the fixed URL so they never spend that allowance.
 
 The native layer rejects unknown channel fields, unexpected platforms, build
 metadata, future publication times, redirects outside the fixed GitHub
@@ -89,15 +110,22 @@ retains conditional requests and the daemon's six-hour in-memory cache.
 Homebrew refresh happens only after an update is accepted, immediately before
 the Formula upgrade.
 
-The opt-out launch check covers Wisp Desktop and occurs once, two to six
-seconds after launch. There is no periodic background polling. **Check now**
-checks both rows in parallel: native code refreshes the fixed Desktop channel,
-and the built-in Local transport asks its daemon to bypass the normal six-hour
-release cache. An older daemon safely treats that refresh query as an ordinary
-cached status read; forced refresh takes effect after Local contains this API
-contract. The button is unavailable while an update operation is active or an
-installed Desktop update is waiting for relaunch. Neither download nor
-installation begins from a check; each requires its row's explicit action.
+Automatic checks cover Wisp Desktop and are turned off together with
+**Check Desktop automatically**. The first runs two to six seconds after
+launch; while the app stays open, another runs every six hours plus up to 30
+minutes of jitter. They only discover: an automatic check is skipped while
+another check or an install is running, once an update has been found, after a
+failed install that can be retried, and while an installed update waits for
+relaunch. **Check now** checks both rows in parallel: native code reads the
+Desktop channel fresh as described above, and the built-in Local transport
+asks its daemon to bypass the normal six-hour release cache. An older daemon
+safely treats that refresh query as an ordinary cached status read; forced
+refresh takes effect after Local contains this API contract. The button is
+unavailable while an update operation is active or an installed Desktop update
+is waiting for relaunch. Neither download nor installation begins from a check;
+each requires its row's explicit action. Each row, and the browser's daemon
+update popover, says how long ago it last reached its release channel
+("Checked 5 min ago"), so "up to date" always carries its age.
 
 ## Signing and release channel
 

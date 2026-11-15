@@ -305,7 +305,7 @@ setup_local_wisp         diagnose the local install without changing it
 apply_local_wisp_setup   apply exactly the separately confirmed diagnosis
 open_external_url        hand an http(s) link to the machine's browser
 desktop_update_status    read global application-update state; no network
-check_desktop_update     check the one native-owned release channel
+check_desktop_update     check the one native-owned release channel; a flag marks Check now
 install_desktop_update   install only the exact pending confirmed version
 relaunch_desktop         relaunch only after native installation completes
 reveal_worktree_file     select one Local worktree file in Finder, never open it
@@ -332,7 +332,8 @@ ignores a connection it does not have — and never as a credential or a target.
 
 The native application updater is global by design; it never selects or mutates
 a daemon. Its endpoint, public key, candidate, URL, signature, installation
-path, and relaunch gate are native-owned rather than webview arguments. The
+path, and relaunch gate are native-owned rather than webview arguments; the
+webview passes at most a boolean saying the person asked for the check. The
 shared Updates surface separately binds daemon status and installation to the
 built-in Local transport; native proxy policy refuses the same install request
 for saved remotes. See

@@ -35,8 +35,8 @@ shows one global application row and one built-in **Local daemon** row with
 explicit labels, regardless of the selected connection. Saved remote
 daemons cannot be updated through the Desktop proxy. Native code owns the app
 channel endpoint, updater key, candidate, download, installation path, and
-relaunch. The webview can only request a check and confirm the exact version it
-was shown. See
+relaunch. The webview can only request a check (optionally marked as the
+person's explicit request) and confirm the exact version it was shown. See
 [`docs/DESKTOP-UPDATES.md`](../docs/DESKTOP-UPDATES.md).
 
 ## Why there is a native core at all
@@ -236,7 +236,7 @@ The other commands:
 | `open_external_url` | `url` | `void` |
 | `notify_task_transition` | `notification: { connectionId, taskId, title, body }` | `void` |
 | `desktop_update_status` | — | `DesktopUpdateStatus` |
-| `check_desktop_update` | — | `DesktopUpdateStatus` |
+| `check_desktop_update` | `explicit?` (boolean; `true` only for **Check now**) | `DesktopUpdateStatus` |
 | `install_desktop_update` | `confirmedVersion` | `DesktopUpdateStatus` |
 | `relaunch_desktop` | — | `void` |
 | `reveal_worktree_file` | `connectionId`, `worktreePath`, `path` | `void` |

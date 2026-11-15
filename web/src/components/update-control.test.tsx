@@ -33,6 +33,9 @@ const DESKTOP_STATUS: DesktopUpdateStatus = {
   message: null,
 }
 
+const HOUR = 3_600_000
+const DAY = 24 * HOUR
+
 function desktopUpdater(
   overrides: Partial<DesktopUpdaterContextValue> = {}
 ): DesktopUpdaterContextValue {
@@ -143,6 +146,21 @@ describe("the browser control with nothing to install", () => {
     expect(popover).toHaveTextContent("Wisp daemon0.4.0-alpha.8")
   })
 
+  it("says when the daemon last checked its release channel", async () => {
+    const checkedAt = new Date(Date.now() - 3 * HOUR).toISOString()
+    render(
+      <WispUpdateControl
+        status={{ ...current, checkedAt }}
+        updating={false}
+        error={null}
+        onUpdate={() => undefined}
+      />
+    )
+    fireEvent.click(screen.getByRole("button", { name: "Updates" }))
+    const popover = await screen.findByRole("region", { name: "Daemon version" })
+    expect(popover).toHaveTextContent("Checked 3h ago")
+  })
+
   it("dots a manual update and says why it cannot install it", async () => {
     render(
       <WispUpdateControl
@@ -214,6 +232,41 @@ describe("Desktop update center", () => {
     expect(
       screen.getByRole("button", { name: "Update Local daemon" })
     ).toBeInTheDocument()
+  })
+
+  it("says when each row last checked, and nothing while it checks", () => {
+    const desktop = desktopUpdater({
+      status: {
+        ...DESKTOP_STATUS,
+        latestVersion: null,
+        phase: "up-to-date",
+        checkedAt: new Date(Date.now() - 2 * HOUR).toISOString(),
+      },
+    })
+    renderCenter({
+      desktop,
+      daemonStatus: {
+        ...DAEMON_STATUS,
+        checkedAt: new Date(Date.now() - 2 * DAY).toISOString(),
+      },
+    })
+    expect(
+      screen.getByRole("region", { name: "Wisp Desktop update" })
+    ).toHaveTextContent("Checked 2h ago")
+    expect(
+      screen.getByRole("region", { name: "Local daemon update" })
+    ).toHaveTextContent("Checked 2d ago")
+    expect(screen.getByText("Check Desktop automatically")).toBeInTheDocument()
+  })
+
+  it("hides a stale check time while that row is checking", () => {
+    renderCenter({
+      desktop: desktopUpdater({
+        status: { ...DESKTOP_STATUS, latestVersion: null, phase: "checking" },
+      }),
+      checkingDaemon: true,
+    })
+    expect(screen.queryByText(/^Checked /)).toBeNull()
   })
 
   it("does not count or offer an incompatible daemon update", () => {

@@ -188,13 +188,16 @@ pub fn desktop_update_status(updater: State<'_, DesktopUpdater>) -> DesktopUpdat
 }
 
 /// Resolve the one embedded release channel. No caller-controlled endpoint is
-/// accepted at this boundary.
+/// accepted at this boundary. `explicit` only says the person asked for this
+/// check, which lets native code read the channel fresh at the tap's current
+/// commit; omitted, it is an automatic check of the fixed channel URL.
 #[tauri::command]
 pub async fn check_desktop_update(
     app: tauri::AppHandle,
     updater: State<'_, DesktopUpdater>,
+    explicit: Option<bool>,
 ) -> Result<DesktopUpdateStatus, DesktopUpdateError> {
-    updater.check(&app).await
+    updater.check(&app, explicit.unwrap_or(false)).await
 }
 
 /// Install only the version returned by the most recent native check. The
