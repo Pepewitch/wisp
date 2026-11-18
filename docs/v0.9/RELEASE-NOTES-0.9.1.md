@@ -154,7 +154,12 @@ sidebar is macOS Desktop only. Wisp's `gpt-6.2-sol` default applies only once
 the daemon's model probe shows the installed Codex offers it; until then the
 Codex default runs.
 Native dependency advisories still include upstream maintenance notices and a
-locked Linux-only glib warning. Full clean-machine provider journeys, a
+locked Linux-only glib warning. The npm advisory audit reports a ReDoS in
+picomatch 4.0.7
+([GHSA-fc5q-39xc-vjpf](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)),
+which only the web build and test tools (Vite, Vitest, typescript-eslint)
+load. No fixed picomatch is published yet, and nothing Wisp ships contains
+it. Full clean-machine provider journeys, a
 human-observed Desktop upgrade across this version, broad OS coverage, and
 cross-machine restore remain incomplete. Task export excludes repositories and
 provider sessions; it is not a complete backup or an import format. Permanent
