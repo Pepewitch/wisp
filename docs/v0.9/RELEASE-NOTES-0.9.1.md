@@ -3,13 +3,14 @@
 Wisp 0.9.1 makes updates easier to find and to install, and moves new Codex
 tasks to GPT-6.2 Sol. You would notice four things:
 
-- **Check now sees a release the moment it is out.** Desktop's **Check now**,
-  the daemon's update check and `wisp update` no longer report "up to date"
-  for the first few minutes after a release, and a Desktop left open checks
-  again every six hours instead of only at launch.
+- **Check now sees a release the moment it is out.** Desktop's **Check now**
+  (for Desktop and the Local daemon) and `wisp update` no longer report "up to
+  date" for the first few minutes after a release, and a Desktop left open
+  checks again every six hours instead of only at launch.
 - **A daemon nothing supervises can still update.** A foreground
-  `wisp serve`, a Homebrew daemon outside `brew services`, or a Linux daemon
-  outside `wisp.service` installs the update and tells you how to restart,
+  `wisp serve`, a Homebrew daemon outside `brew services`, or an
+  installer-managed Linux daemon that neither `wisp.service` nor Supervisor
+  runs installs the update and tells you how to restart,
   instead of refusing.
 - **New Codex tasks start on `gpt-6.2-sol`.** Codex's catalog added GPT-6.2
   Sol and GPT-6.2 Astra, and Wisp's Codex default follows Codex's own.
@@ -23,25 +24,29 @@ tasks to GPT-6.2 Sol. You would notice four things:
 - **Check now reads the tap at its current commit** (#583, #585). GitHub's
   CDN caches the update channel for about five minutes and ignores query
   strings, so an explicit check could miss a release that had just been
-  promoted. Desktop's Check now, the daemon's forced refresh and
+  promoted. Desktop's Check now, for both Desktop and the Local daemon, and
   `wisp update` now ask the GitHub API for the tap's current commit and read
   the channel at that commit. Any failure of that lookup, including GitHub's
   limit of 60 unauthenticated requests an hour, falls back silently to the
-  old URL. Routine checks are unchanged.
+  old URL. Routine checks are unchanged. Desktop's two reads of the channel
+  now see the same bytes, so Check now no longer fails with "discovery changed
+  between the bounded check and signed updater" while the CDN catches up.
 - **Desktop checks again while it stays open** (#583). With automatic checks
   on, Desktop checks every six hours plus up to 30 minutes of jitter, not
   only once after launch. It skips a check while another check or an install
   runs, once an update was found, or while an installed update waits for
-  relaunch. The setting now reads **Check Desktop automatically**; an
-  existing opt-out carries over.
+  relaunch. The setting, formerly **Check Desktop after launch**, now
+  reads **Check Desktop automatically**; an existing opt-out carries over.
 - **"Up to date" says when it was checked** (#583). The Wisp Desktop row, the
   Local daemon row and the browser's daemon update popover show "Checked 5
   min ago", with the exact time on hover.
 - **Updates install without a supervisor** (#585). A daemon nothing will
   restart now installs the release, does not restart, and says how to finish:
-  `brew services start wisp` for Homebrew, `systemctl --user restart
-  wisp.service` for a managed Linux install with the unit, or restarting
-  `wisp serve` however you started it. Such an install interrupts nothing, so
+  for Homebrew, stop the running daemon and run `brew services start wisp`;
+  for an installer-managed Linux daemon whose `wisp.service` unit is
+  installed, stop it and run `systemctl --user restart wisp.service`;
+  otherwise restart `wisp serve` however you started it. Either service route
+  makes later updates restart on their own. Such an install interrupts nothing, so
   it does not ask about running tasks. A second install before the restart is
   refused until you restart. `GET/POST /api/update` adds `canInstall`,
   `restartsAutomatically` and the state `restart-required`; `canAutoUpdate`
@@ -135,7 +140,16 @@ records the final outcome separately from these immutable release notes.
 Check now's commit lookup is unauthenticated, so past GitHub's limit of 60
 requests an hour from one address it falls back to the cached channel and can
 again miss a release for a few minutes. An update installed without a
-supervisor runs only after you restart the daemon yourself. The glassy
+supervisor runs only after you restart the daemon yourself, and on Homebrew
+the previous keg stays until `brew cleanup`. These fixes run in 0.9.1, so they
+do not help the upgrade to 0.9.1 itself: a 0.9.0 Check now can still miss
+0.9.1 for a few minutes after it is promoted, and a 0.9.0 daemon that nothing
+supervises, or a custom-root Linux install run by `wisp.service`, still
+refuses to update itself. Upgrade those once with
+`brew upgrade Pepewitch/tap/wisp` or the installer above. A real unsupervised
+`brew upgrade` or Linux install on a host, and a packaged Desktop's Check now
+against a freshly promoted release, are covered by tests only, and the glassy
+sidebar's tint was not reviewed by eye in both themes. The glassy
 sidebar is macOS Desktop only. Wisp's `gpt-6.2-sol` default applies only once
 the daemon's model probe shows the installed Codex offers it; until then the
 Codex default runs.
