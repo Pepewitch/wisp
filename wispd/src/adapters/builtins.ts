@@ -244,7 +244,7 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     compactPrompt: "/compact",
   },
   codex: {
-    // Zero-token argv/help reverified against codex-cli 0.159.2. `codex exec`
+    // Zero-token argv/help reverified against codex-cli 0.170.0. `codex exec`
     // is one headless turn;
     // resume is a SUBCOMMAND, not a flag (`codex exec resume <id> "<prompt>"`),
     // and codex applies the parent `exec` options to it — so appending
@@ -260,6 +260,12 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // per-turn-consistent policy has to be this one. Codex 0.154.0 also added
     // `--worktree`; Wisp deliberately omits it because the task already runs
     // in the exact Wisp-owned worktree its lifecycle and diff views track.
+    // Codex 0.170.0's `exec --trust` is not adopted: Wisp's codex turns run on
+    // `codex app-server` (liveInput below), which has no such flag and which
+    // live/command.ts refuses to forward. A thread started with
+    // danger-full-access already trusts its project, persisted under the repo
+    // root rather than the task worktree (observed live on 0.170.0), so project
+    // config and MCP load without it.
     exec: ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox"],
     resume: ["resume", "{session}"],
     model: ["-m", "{model}"],
