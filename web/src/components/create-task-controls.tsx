@@ -332,7 +332,17 @@ function EffortRow({
   )
 }
 
-export function ModePicker({ mode, onChange }: { mode: TaskMode; onChange: (mode: TaskMode) => void }) {
+export function ModePicker({
+  mode,
+  onChange,
+  plainFolder,
+}: {
+  mode: TaskMode
+  onChange: (mode: TaskMode) => void
+  /** the project has no Git commit: only "this folder" can run, and Git can be initialized from here */
+  plainFolder?: { onInitGit: () => void; pending: boolean; error: string | null }
+}) {
+  if (plainFolder) return <PlainFolderModePicker {...plainFolder} />
   return (
     <Menu icon={mode === "local" ? <Local /> : <Worktree />} label={mode === "local" ? "This repo" : "Worktree"}>
       <MenuRadioGroup value={mode} onValueChange={(value) => onChange(value as TaskMode)}>
@@ -345,6 +355,36 @@ export function ModePicker({ mode, onChange }: { mode: TaskMode; onChange: (mode
         {mode === "local"
           ? "Runs in the project directory on its current branch. Setup and archive scripts are skipped, and archiving never removes anything — it is your working copy."
           : "An isolated worktree on its own branch, removed when you archive the task. One project can run any number of these at once."}
+      </MenuNote>
+    </Menu>
+  )
+}
+
+/**
+ * A project folder with no Git commit: the task runs in the folder itself,
+ * and Worktree stays visible but unavailable, with the one action that makes
+ * it available. Nothing here is offered and then refused.
+ */
+function PlainFolderModePicker({ onInitGit, pending, error }: { onInitGit: () => void; pending: boolean; error: string | null }) {
+  return (
+    <Menu icon={<Local />} label="This folder">
+      <MenuRadioGroup
+        value="local"
+        onValueChange={(value) => {
+          if (value === MENU_ACTION.initGit) onInitGit()
+        }}
+      >
+        <MenuRadioItem value="worktree" hint="needs Git" disabled>
+          Worktree
+        </MenuRadioItem>
+        <MenuRadioItem value="local">This folder</MenuRadioItem>
+        <MenuAction value={MENU_ACTION.initGit} disabled={pending}>
+          {pending ? "Initializing Git…" : "Initialize Git"}
+        </MenuAction>
+      </MenuRadioGroup>
+      <MenuNote>
+        {error ??
+          "Not a Git repository: tasks run in this folder, with no branch or diff. Initialize Git commits its files once."}
       </MenuNote>
     </Menu>
   )

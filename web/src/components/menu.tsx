@@ -240,14 +240,16 @@ export function MenuRadioItem({
   children,
   hint,
   className,
+  disabled = false,
 }: {
   value: string
   children: ReactNode
   hint?: ReactNode
   className?: string
+  disabled?: boolean
 }) {
   return (
-    <Base.RadioItem value={value} className={cn(ROW, "data-[checked]:text-foreground", className)}>
+    <Base.RadioItem value={value} disabled={disabled} className={cn(ROW, "data-[checked]:text-foreground", className)}>
       <Base.RadioItemIndicator className="flex size-3 shrink-0 items-center justify-center" keepMounted>
         <Check className="size-3 opacity-0 data-[checked]:opacity-100 [[data-checked]_&]:opacity-100" />
       </Base.RadioItemIndicator>

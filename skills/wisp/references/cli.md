@@ -173,7 +173,12 @@ directory given.
 then to Wisp's default model for that harness (when the installed CLI offers
 it), then to the harness's own default. `--fast` runs the same model in the
 harness's faster lane; a harness without one refuses it. `--local` runs in
-the repo checkout itself instead of a worktree. `--base` forks this task's
+the repo checkout itself instead of a worktree. A project folder that is not
+a Git repository, or has no commit yet, has nothing to fork a worktree from:
+`wisp new` there runs the task in the folder itself without being asked, and
+prints `, local — the folder has no Git commit`. Such a task has no branch and
+no diff; `--base`, `--auto-merge`, `--auto-fix`, `--auto-review` and
+subtasks are refused there, since each needs Git. `--base` forks this task's
 worktree from `<ref>` instead of the project's base branch — any commit-ish
 (`origin/release-2.1`, a local branch to stack on, a tag, a SHA), taken
 literally, and the create fails if it does not resolve. It is rejected for

@@ -423,6 +423,21 @@ export function useAddProject() {
   });
 }
 
+/**
+ * "Initialize Git" for a plain project folder: `git init` and its current
+ * files as a first commit, so its tasks can run in their own worktrees.
+ */
+export function useInitProjectGit() {
+  const client = useQueryClient();
+  const { transport, qk } = useDaemonRuntime();
+  return useMutation({
+    mutationFn: (path: string) => transport.request<{ path: string; git: string }>("/api/projects/git", { method: "POST", body: { path } }),
+    onSuccess: () => {
+      void client.invalidateQueries({ queryKey: qk.repos });
+    },
+  });
+}
+
 export interface SaveProjectBody {
   path: string;
   setupScript: string;

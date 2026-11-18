@@ -76,7 +76,9 @@ export async function createCommand(positional: string[], flags: Flags): Promise
 
 /** What the daemon armed, not what was asked: an older daemon ignores the fields it does not know. */
 function reportCreated(task: ApiTask, flags: Flags, asked: string): void {
-  const where = task.mode === "local" ? ", local" : "";
+  // Wisp picks local only for a project folder with no Git commit, so a local
+  // task nobody asked for is exactly that case, and worth saying out loud.
+  const where = task.mode === "local" ? (flags.local ? ", local" : ", local — the folder has no Git commit") : "";
   const autopilot = (task as ApiTask & { autopilot?: { autoMerge?: boolean; autoFix?: boolean; autoReview?: boolean } }).autopilot;
   const merge = [autopilot?.autoMerge && ", auto-merge", autopilot?.autoFix && ", auto-fix", autopilot?.autoReview && ", auto-review"].filter(Boolean).join("");
   const family = task.parent_task_id ? `, ${task.subtask_kind} subtask of ${task.parent_task_id}` : "";

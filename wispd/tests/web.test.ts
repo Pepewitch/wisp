@@ -446,9 +446,15 @@ describe("every daemon response", () => {
   });
 });
 
+/** A builtin whose binary does not exist: a launched turn fails at once instead of running a real CLI. */
+const inert = (def: AdapterDef): AdapterDef => ({ ...def, bin: "/nonexistent/wisp-test-harness" });
+
 describe("S1 create-modal and project APIs", () => {
   test("task effort is explicit-over-config, persisted, and unsupported effort is rejected", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "wisp-web-effort-"));
+    // A folder with no Git commit runs each task in place (task-create.ts), so
+    // every create gets its own folder, and no harness here is a real binary:
+    // these tests are about what the create stores, never about a turn.
+    const repo = () => mkdtempSync(join(tmpdir(), "wisp-web-effort-"));
     const cfg: WispConfig = {
       instanceId: "123e4567-e89b-42d3-a456-426614174000",
       port: 18710,
@@ -467,8 +473,8 @@ describe("S1 create-modal and project APIs", () => {
     };
     // claude-code 2.1.246 gained --effort, so every builtin now supports
     // effort — the rejection path needs a synthetic adapter to stay covered.
-    const plain: AdapterDef = { ...BUILTIN_ADAPTERS.claude!, effort: undefined, effortLevels: undefined };
-    const adapters = { droid: BUILTIN_ADAPTERS.droid, claude: BUILTIN_ADAPTERS.claude, plain };
+    const plain: AdapterDef = { ...inert(BUILTIN_ADAPTERS.claude!), effort: undefined, effortLevels: undefined };
+    const adapters = { droid: inert(BUILTIN_ADAPTERS.droid!), claude: inert(BUILTIN_ADAPTERS.claude!), plain };
     const call = async (body: unknown): Promise<Response> => {
       const url = new URL("http://wisp.test/api/tasks");
       return await route(
@@ -479,12 +485,12 @@ describe("S1 create-modal and project APIs", () => {
       );
     };
 
-    const explicit = await call({ repoPath: repo, prompt: "explicit", harness: "droid", effort: "high" });
+    const explicit = await call({ repoPath: repo(), prompt: "explicit", harness: "droid", effort: "high" });
     expect(explicit.status).toBe(201);
     const explicitTask = (await explicit.json()) as { id: string; effort: string | null };
     expect(explicitTask.effort).toBe("high");
 
-    const configured = await call({ repoPath: repo, prompt: "configured", harness: "droid" });
+    const configured = await call({ repoPath: repo(), prompt: "configured", harness: "droid" });
     expect(configured.status).toBe(201);
     // both halves of the configured default land on the task (P5b)
     expect((await configured.json()) as { effort: string | null; model: string | null })
@@ -492,22 +498,22 @@ describe("S1 create-modal and project APIs", () => {
 
     // claude accepts an effort now rather than 400-ing on it; with no model
     // asked for and none configured, it gets Wisp's default from the curated list
-    const claudeEffort = await call({ repoPath: repo, prompt: "claude effort", harness: "claude", effort: "xhigh" });
+    const claudeEffort = await call({ repoPath: repo(), prompt: "claude effort", harness: "claude", effort: "xhigh" });
     expect(claudeEffort.status).toBe(201);
     expect((await claudeEffort.json()) as { effort: string | null; model: string | null })
       .toMatchObject({ effort: "xhigh", model: "claude-opus-5-5" });
 
-    const unsupported = await call({ repoPath: repo, prompt: "unsupported", harness: "plain", effort: "high" });
+    const unsupported = await call({ repoPath: repo(), prompt: "unsupported", harness: "plain", effort: "high" });
     expect(unsupported.status).toBe(400);
     expect(((await unsupported.json()) as { error: string }).error).toBe("harness 'plain' has no effort support");
 
-    const unsupportedDefault = await call({ repoPath: repo, prompt: "unsupported default", harness: "plain" });
+    const unsupportedDefault = await call({ repoPath: repo(), prompt: "unsupported default", harness: "plain" });
     expect(unsupportedDefault.status).toBe(400);
     expect(((await unsupportedDefault.json()) as { error: string }).error).toBe("harness 'plain' has no effort support");
   });
 
   test("a task with no model gets Wisp's default only where the installed CLI offers it", async () => {
-    const repo = mkdtempSync(join(tmpdir(), "wisp-web-default-model-"));
+    const repo = () => mkdtempSync(join(tmpdir(), "wisp-web-default-model-"));
     const cfg: WispConfig = {
       instanceId: "123e4567-e89b-42d3-a456-426614174000",
       port: 18710,
@@ -521,7 +527,7 @@ describe("S1 create-modal and project APIs", () => {
       envAllowlist: {},
       harnessDefaults: {},
     };
-    const adapters = { droid: BUILTIN_ADAPTERS.droid! };
+    const adapters = { droid: inert(BUILTIN_ADAPTERS.droid!) };
     const created = async (catalog: string): Promise<string | null> => {
       const models = new ModelProbeCache(adapters, {
         spawn: async (cmd) =>
@@ -534,7 +540,7 @@ describe("S1 create-modal and project APIs", () => {
       const response = await route(
         new Request(url, {
           method: "POST",
-          body: JSON.stringify({ repoPath: repo, prompt: "default model", harness: "droid" }),
+          body: JSON.stringify({ repoPath: repo(), prompt: "default model", harness: "droid" }),
           headers: { "content-type": "application/json" },
         }),
         url,
@@ -606,6 +612,7 @@ describe("S1 create-modal and project APIs", () => {
         verifySecondFallback?: unknown;
         reviewStart?: unknown;
         verification?: unknown;
+        git?: unknown;
         configured: boolean;
       }[];
     };
@@ -615,6 +622,8 @@ describe("S1 create-modal and project APIs", () => {
       path: first,
       name: "Renamed",
       exists: true,
+      // a plain temp folder: its tasks would run in place (GET /api/repos)
+      git: "none",
       setupScript: "",
       archiveScript: "",
       copyFiles: [],

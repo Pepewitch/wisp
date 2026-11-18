@@ -21,6 +21,8 @@ import { liveNonReviewerChildren } from "../subtasks";
 import { READ_TIMEOUT_MS, runBounded } from "../subprocess";
 import { taskMode, type SubtaskKind, type Task } from "../types";
 import { relayed } from "../verify/prompts";
+import { pathExists } from "../fsutil";
+import { folderGit } from "../folder-git";
 import type { NewTaskInput, NewTaskRefusal } from "./task-create";
 
 /** A base resolved before the row exists, used as given by createWorktree. */
@@ -174,6 +176,8 @@ export async function resolveSubtask(
   }
   const refused = reviewer ? null : autopilotRefusal(input, kind, parent);
   if (refused) return refused;
+  const plain = await plainParentRefusal(parent.repo_path);
+  if (plain) return plain;
   const resolved = { parent, kind, report: !reviewer && request.report === true, reviewer };
   if (typeof input.base === "object") return { ...resolved, base: input.base, baseFrom: input.base.from };
   // an explicit base wins over the kind's, so a fork PR's review child can still be given one
@@ -182,6 +186,20 @@ export async function resolveSubtask(
   const pinned = kind === "review" ? await reviewBase(parent, deps) : await continueBase(parent);
   if ("error" in pinned) return pinned;
   return { ...resolved, base: pinned, baseFrom: pinned.from };
+}
+
+/**
+ * A parent working in a folder with no Git commit has nothing a worktree
+ * could fork from, and running the child in the same folder would put two
+ * agents on the same files. Checked after the policy refusals and before any
+ * kind's base. A folder that is gone is left to worktree creation, which
+ * names that fault itself.
+ */
+async function plainParentRefusal(repo: string): Promise<Refusal | null> {
+  if (!(await pathExists(repo))) return null;
+  const folder = await folderGit(repo);
+  if (folder === "repo") return null;
+  return refuse("invalid", `a subtask runs in its own worktree, and ${repo} ${folder === "none" ? "is not a Git repository" : "has no commits yet"}`);
 }
 
 /**

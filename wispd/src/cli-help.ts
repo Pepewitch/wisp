@@ -28,7 +28,8 @@ const COMMAND_USAGE = {
                                                        --fast runs in the harness's faster lane for the same
                                                        model, and is refused by a harness without one;
                                                        --local runs in the repo itself instead of a worktree,
-                                                       and archiving it never removes anything;
+                                                       and archiving it never removes anything (a folder with
+                                                       no Git commit always runs this way);
                                                        --auto-merge merges the task's PR once it is ready;
                                                        --auto-fix sends red CI, a conflict, or review feedback back to the agent;
                                                        --auto-review has an independent reviewer task verify each PR head;

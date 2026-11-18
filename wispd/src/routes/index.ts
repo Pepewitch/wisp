@@ -21,7 +21,7 @@ import { getTask, listTasks } from "../store";
 import { harnessesRoute, outboxRoute } from "./harnesses";
 import { diagnosticsRoute } from "./diagnostics";
 import { err, json } from "./http";
-import { addProjectRoute, copyPreviewRoute, prefetchBaseRefsRoute, projectEntriesRoute, projectSkillsRoute, removeProjectRoute, reorderReposRoute, reposRoute, statusRoute } from "./projects";
+import { addProjectRoute, copyPreviewRoute, initProjectGitRoute, prefetchBaseRefsRoute, projectEntriesRoute, projectSkillsRoute, removeProjectRoute, reorderReposRoute, reposRoute, statusRoute } from "./projects";
 import { eventStream, logStream } from "./stream";
 import {
   createSuffixPromptRoute,
@@ -114,6 +114,7 @@ function projectRoutes(
   if (path === "/api/projects/copy-preview" && method === "POST") return copyPreviewRoute(req);
   // the create composer, warming `git fetch origin` while the prompt is typed
   if (path === "/api/projects/base-refs" && method === "POST") return prefetchBaseRefsRoute(req, cfg);
+  if (path === "/api/projects/git" && method === "POST") return initProjectGitRoute(req, cfg);
   if (path === "/api/projects/entries" && method === "GET") return projectEntriesRoute(new URL(req.url), cfg, req.signal);
   // the create composer's `/` palette, which has a project and a harness but no task yet
   if (path === "/api/projects/skills" && method === "GET") return projectSkillsRoute(new URL(req.url), cfg, adapters, skills);

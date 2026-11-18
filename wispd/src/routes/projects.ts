@@ -13,7 +13,8 @@ import { listTasks } from "../store";
 import { Semaphore } from "../subprocess";
 import { taskMode, type Task } from "../types";
 import { typeName } from "../validate";
-import { baseRefFetches, matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
+import { baseRefFetches, folderGit, matchCopyFiles, statusSummary, worktreeHealth } from "../worktree";
+import { initProjectGit } from "../project-git";
 import { archiveTaskRows } from "../domain/archive";
 import { requestActor } from "../task-audit";
 import type { TaskSkillCache } from "../skills";
@@ -195,10 +196,14 @@ export function reposRoute(cfg: WispConfig): Promise<Response> {
       unique.map(async ({ path, entry }) => {
         const resolved = resolve(path);
         const config = entry && typeof entry !== "string" ? entry : undefined;
+        const exists = await pathExists(resolved);
         return {
           path: resolved,
           name: repoEntryName(resolved, entry),
-          exists: await pathExists(resolved),
+          exists,
+          // "repo" can run worktree tasks; "none" and "unborn" run tasks in
+          // the folder itself (task-create.ts). null: the folder is missing.
+          git: exists ? await folderGit(resolved) : null,
           // the project-settings modal reads these; a task-history repo has
           // no config entry, so they are simply absent for one
           setupScript: config?.setupScript ?? "",
@@ -309,6 +314,31 @@ export function prefetchBaseRefsRoute(req: Request, cfg: WispConfig): Promise<Re
     if (root === undefined) return err(`not a Wisp project: ${path}`, 404);
     const { state } = baseRefFetches.prefetch(root);
     return json({ path: root, state }, 202);
+  })();
+}
+
+/**
+ * POST /api/projects/git { path } — "Initialize Git" for a registered project
+ * folder with no commit: `git init` when needed, then its current files as a
+ * first commit, so its tasks can run in their own worktrees (project-git.ts).
+ *
+ * Only a registered project, for the same reason as base-refs: this runs git,
+ * and writes a commit, in the directory a client names.
+ */
+export function initProjectGitRoute(req: Request, cfg: WispConfig): Promise<Response> {
+  return (async () => {
+    const parsed = await jsonObjectBody(req);
+    if (parsed instanceof Response) return parsed;
+    const { path } = parsed as { path?: unknown };
+    if (typeof path !== "string" || path.length === 0) return err("path is required", 400);
+    if (!isAbsolute(path)) return err(`path must be absolute: ${path}`, 400);
+    const root = registeredProject(cfg, path);
+    if (root === undefined) return err(`not a Wisp project: ${path}`, 404);
+    if (!(await directoryExists(root))) return err(`path is not an existing directory: ${root}`, 400);
+    const result = await initProjectGit(root);
+    if (!result.ok) return err(result.error, result.status);
+    emit({ type: "project", action: "update", path: root });
+    return json({ path: root, git: result.git });
   })();
 }
 

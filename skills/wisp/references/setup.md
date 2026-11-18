@@ -335,10 +335,21 @@ address's last new wrong token. The web UI is served at `/`.
 - `POST /api/tasks/:id/compact` — run the harness's own compaction out of band
   (droid/codex; for claude send `/compact` as a dedicated recorded turn);
   `/send` returns 409 while either shape is still compacting
-- `GET /api/status` · `GET /api/repos` · `POST|DELETE /api/projects` ·
+- `GET /api/status` · `GET /api/repos` (each project's `git`: `repo`, or
+  `none`/`unborn` for a folder whose tasks can only run in place; `null` when
+  the folder is missing) · `POST|DELETE /api/projects` ·
   `POST /api/projects/copy-preview` ·
+  `POST /api/projects/git` (`{path}`: "Initialize Git" for a registered
+  project with no commit — `git init` when needed, then the folder's current
+  files, minus its `.gitignore`, as a first commit; `409` with git's reason
+  when it already has a commit or the commit fails, `404` for a path that is
+  not a project) ·
   `PUT /api/repos/order` (`{paths}`: every configured project once, by
   absolute path, in the new order; 409 when the list changed meanwhile)
+- `POST /api/tasks` without `mode` leaves the choice to Wisp: a worktree,
+  or a local task when the project folder has no Git commit. An explicit
+  `mode: "worktree"` there is refused with `400`, as is a subtask of a task
+  in such a folder
 - `POST /api/projects/base-refs` (`{path}`) — start `git fetch origin` for a
   registered project now, so a worktree task created soon after from the web
   or Desktop composer need not wait on it (the composer sends it while a

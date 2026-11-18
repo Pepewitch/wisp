@@ -94,7 +94,7 @@ function SubtaskForm({ parent, harnesses, harnessesError, onClose }: {
   const { connectionId, transport } = useDaemonRuntime()
   const scope = subtaskDraftScope(parent.id)
   const [preferredChoice, setPreferredChoice] = useState<ModelChoice | null>(() => loadPreferredModel(connectionId))
-  const composer = useCreateTaskComposer(connectionId, scope, harnesses, preferredChoice)
+  const composer = useCreateTaskComposer(connectionId, scope, harnesses, preferredChoice, false)
   const { prompt, setPrompt, choice, setChoice, effort, setEffort, fast, setFast, base, setBase, autopilot, suffixPromptId, setSuffixPromptId, harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForChoice, preferredEffort, togglePreferredEffort } = composer
   const [kind, setKind] = useState<SubtaskKind>("explore")
   const [report, setReport] = useState(true)

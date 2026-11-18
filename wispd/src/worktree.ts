@@ -8,99 +8,15 @@ import { LOG_DIR, WORKTREE_ROOT, repoConfigFor, type WispConfig } from "./config
 import { pathExists } from "./fsutil";
 import { assertWorkingDirectoryAllowed } from "./launch-policy";
 import { processGroupEnded, signalProcessTree } from "./process-tree";
-import { READ_TIMEOUT_MS, runBounded, WRITE_TIMEOUT_MS } from "./subprocess";
+import { WRITE_TIMEOUT_MS } from "./subprocess";
+import { git, must } from "./git-run";
+import { folderGit, plainFolderReason, type FolderGit } from "./folder-git";
 import { liveSetupGroups, recordSetupGroup } from "./task-processes";
 import { envForCwd } from "./turn-input";
 
-interface GitResult {
-  ok: boolean;
-  out: string;
-  err: string;
-  /** stdout hit its byte budget; only `fullDiff` has a use for knowing. */
-  truncated: boolean;
-}
+export { git, must } from "./git-run";
+export { folderGit, type FolderGit } from "./folder-git";
 
-/**
- * Async spawn, always (a prior audit): every caller of this module runs on the
- * daemon's only thread — diffStat on each polled GET /api/tasks/:id, push,
- * archive, task creation — and a 2-second `git worktree add` or a slow
- * `git status` on a big repo must not stall all tasks and the entire API.
- *
- * Bounded, always (a later review): the run carries a deadline and a byte
- * budget, because neither existed. A `git` that hangs on an unresponsive
- * filesystem or a credential prompt used to wait forever, and output was
- * buffered in full before any cap looked at its size — so a generated
- * lockfile diff cost tens of megabytes to serve a 512 KiB response. The
- * budget is enforced while reading now; see subprocess.ts.
- */
-export async function git(args: string[], cwd: string, options: GitRunOptions = {}): Promise<GitResult> {
-  const result = await runBounded({
-    cmd: ["git", ...args],
-    cwd,
-    // Never wait on a terminal prompt. The deadline already stops a hung
-    // one, but stopping it costs the full timeout and reports as "git timed
-    // out" rather than the auth failure it is. Task creation fetches from
-    // origin now, so this went from theoretical to the common case for
-    // anyone whose remote wants a passphrase.
-    //
-    // GIT_TERMINAL_PROMPT only. Blanking GIT_ASKPASS/SSH_ASKPASS would also
-    // apply to `git push` and the archive commit on this shared helper, and
-    // an empty askpass is a DIFFERENT contract from an unset one — it would
-    // break a user whose push authenticates through an askpass helper.
-    env: { GIT_TERMINAL_PROMPT: "0" },
-    maxBytes: options.maxBytes,
-    timeoutMs: options.timeoutMs ?? READ_TIMEOUT_MS,
-  });
-  if (result.cleanupError) {
-    throw new Error(`git ${args[0] ?? ""}: ${result.cleanupError}`);
-  }
-  if (result.timedOut) {
-    throw new Error(`git ${args[0] ?? ""} timed out after ${Math.round((options.timeoutMs ?? READ_TIMEOUT_MS) / 1000)}s and was stopped`);
-  }
-  // A cap-truncated read is a SUCCESS with less data, not a failure. The child
-  // is killed on purpose once the budget is reached, so it exits by signal
-  // rather than 0 — and treating that as an error would turn the very case
-  // these budgets exist for (a generated diff far past the pane's 512 KiB)
-  // into `git diff failed` instead of the labelled truncated diff the old
-  // buffer-then-slice code returned. A deadline or a caller's cancellation
-  // stays a failure: there, we do not have the answer at all.
-  const ok = result.exitCode === 0 || result.truncated;
-  return { ok, out: result.out.trim(), err: result.err.trim(), truncated: result.truncated };
-}
-
-interface GitRunOptions {
-  maxBytes?: number;
-  timeoutMs?: number;
-}
-
-/** Cap on the one stderr line a git failure is allowed to put in a message. */
-const GIT_ERR_CAP = 160;
-
-/**
- * The FIRST NON-EMPTY LINE of git's complaint, capped (D1 part 3).
- *
- * git answers `git diff <base>` outside a repository with a warning about
- * --no-index followed by its whole ~40-line usage text, and every one of those
- * lines used to reach the web UI's diff pane verbatim. The line is what names
- * the fault; the rest is a manpage. Capping here is what stops the NEXT unknown
- * git failure from looking like that one.
- */
-function gitErrLine(r: GitResult): string {
-  const line = (r.err || r.out)
-    .split("\n")
-    .map((l) => l.trim())
-    .find((l) => l !== "");
-  if (line === undefined) return "";
-  return line.length > GIT_ERR_CAP ? `${line.slice(0, GIT_ERR_CAP)}…` : line;
-}
-
-export function must(r: GitResult, what: string): string {
-  if (!r.ok) {
-    const line = gitErrLine(r);
-    throw new Error(line === "" ? what : `${what}: ${line}`);
-  }
-  return r.out;
-}
 
 /**
  * Whether a task's worktree is still something git will answer questions about.
@@ -111,7 +27,8 @@ export function must(r: GitResult, what: string): string {
  */
 export interface WorktreeHealth {
   ok: boolean;
-  kind: "ok" | "missing" | "detached";
+  /** `plain`: a local task's folder that is not a Git repository with a commit — a state, not a fault */
+  kind: "ok" | "missing" | "detached" | "plain";
   /** one muted-register sentence naming the fault and the way out; null when ok */
   reason: string | null;
 }
@@ -127,16 +44,28 @@ export interface WorktreeHealth {
  * gone (nothing to save), or the directory is full of files and git has
  * forgotten it (the user's bytes are still there).
  *
- * Deliberately cheap — one stat and at most one git call — because the read
- * sites call it on every poll.
+ * A local task's folder is the third case: it may be a plain folder that was
+ * never a Git repository (or one with no commit yet). That is how the task was
+ * created, not something to archive away, so it gets its own `plain` kind and
+ * a sentence that says what to do instead.
+ *
+ * Deliberately cheap — one stat and at most one git call (two for a local
+ * task) — because the read sites call it on every poll.
  */
-export async function worktreeHealth(worktree: string): Promise<WorktreeHealth> {
+export async function worktreeHealth(worktree: string, options: { local?: boolean } = {}): Promise<WorktreeHealth> {
   if (!(await pathExists(worktree))) {
     return {
       ok: false,
       kind: "missing",
-      reason: `The worktree directory is gone (${worktree}) — archive this task to clear the row.`,
+      reason: options.local
+        ? `The task's folder is gone (${worktree}) — archive this task to clear the row.`
+        : `The worktree directory is gone (${worktree}) — archive this task to clear the row.`,
     };
+  }
+  if (options.local) {
+    const state = await folderGit(worktree);
+    if (state !== "repo") return { ok: false, kind: "plain", reason: plainFolderReason(state) };
+    return { ok: true, kind: "ok", reason: null };
   }
   if (!(await git(["rev-parse", "--git-dir"], worktree)).ok) {
     return {
@@ -147,6 +76,7 @@ export async function worktreeHealth(worktree: string): Promise<WorktreeHealth> 
   }
   return { ok: true, kind: "ok", reason: null };
 }
+
 
 export interface WorktreeInfo {
   path: string;
@@ -349,18 +279,29 @@ export async function createWorktree(
  * worktree task carries so every downstream reader (diff, status, push) works
  * unchanged. base_commit is HEAD at creation, which makes the diff pane show
  * exactly what the agent did rather than the branch's whole history.
+ *
+ * A folder that is not a Git repository, or has no commit yet, runs too: the
+ * agent works in it as-is, with no branch and no base. Every reader already
+ * treats a null branch as "nothing for git to say" (status rows, PR lookup,
+ * archive preflight), and worktreeHealth names the state for the diff reads.
  */
-export async function localWorktree(repoPath: string): Promise<WorktreeInfo> {
+export async function localWorktree(repoPath: string): Promise<LocalWorktreeInfo> {
   const repo = resolve(repoPath);
-  must(await git(["rev-parse", "--git-dir"], repo), `not a git repository: ${repo}`);
+  const state = await folderGit(repo);
+  if (state !== "repo") return { path: repo, branch: null, base_commit: null, base_ref: null, base_note: null, plain: state };
   const base_commit = must(await git(["rev-parse", "HEAD"], repo), `repo has no commits: ${repo}`);
   const branch = must(await git(["rev-parse", "--abbrev-ref", "HEAD"], repo), "could not read the current branch");
   if (branch === "HEAD") throw new Error(`${repo} is in detached HEAD — check out a branch before running a local task`);
   // No base_ref: a local task did not fork from anything. It adopts the
   // branch the user is on, which is the entire point of the mode — choosing
   // a base for it would mean moving their checkout.
-  return { path: repo, branch, base_commit, base_ref: null, base_note: null };
+  return { path: repo, branch, base_commit, base_ref: null, base_note: null, plain: null };
 }
+
+/** A local task's folder: a Git checkout, or a plain folder with no branch and no base. */
+export type LocalWorktreeInfo =
+  | (WorktreeInfo & { plain: null })
+  | { path: string; branch: null; base_commit: null; base_ref: null; base_note: null; plain: Exclude<FolderGit, "repo"> };
 
 /** Directories never worth walking for copy patterns, however the glob is written. */
 const COPY_SCAN_SKIP = ["node_modules/", ".git/"];

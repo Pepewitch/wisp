@@ -8,7 +8,7 @@ import { CreateTaskNotices } from "@/components/create-task-notices"
 import { BasePicker } from "@/components/base-picker"
 import { PromptField } from "@/components/create-prompt-field"
 import { POPOVER_SURFACE } from "@/components/primitives"
-import { useCreateTask, useReprobeHarnesses } from "@/hooks/mutations"
+import { useCreateTask, useInitProjectGit, useReprobeHarnesses } from "@/hooks/mutations"
 import { useHarnessFeatures } from "@/hooks/queries"
 import { useCreateTaskComposer } from "@/hooks/useCreateTaskComposer"
 import { useDialogSubmitShortcut } from "@/hooks/useDialogSubmitShortcut"
@@ -19,7 +19,7 @@ import { clearCreateTaskDraft, readCreateTaskProject, writeCreateTaskProject } f
 import { rememberEffort } from "@/lib/effort"
 import { useDaemonRuntime } from "@/lib/runtime"
 import { decode, isUsable, loadPreferredModel, orderHarnesses, sameChoice, savePreferredModel, type ModelChoice } from "@/lib/model-choice"
-import type { HarnessInfo, RepoInfo } from "@/lib/types"
+import { isPlainFolder, type HarnessInfo, type RepoInfo } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 /**
@@ -159,7 +159,8 @@ function ProjectForm({
     mode, setMode, base, setBase, autopilot, suffixPromptId, setSuffixPromptId,
     harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForChoice,
     preferredEffort, togglePreferredEffort,
-  } = useCreateTaskComposer(connectionId, repoPath, harnesses, preferredChoice)
+  } = useCreateTaskComposer(connectionId, repoPath, harnesses, preferredChoice, isPlainFolder(repos.find((r) => r.path === repoPath)))
+  const plainFolder = usePlainFolderPicker(repoPath, repos)
   const [suffixPromptModalOpen, setSuffixPromptModalOpen] = useState(false)
   // this form remounts per project, so opening and switching project both land here
   usePrefetchBaseRefs(repoPath, mode === "worktree", prompt)
@@ -314,7 +315,7 @@ function ProjectForm({
           )}
         </Menu>
         <span className="flex-1" />
-        <ModePicker mode={mode} onChange={setMode} />
+        <ModePicker mode={mode} onChange={setMode} plainFolder={plainFolder} />
         {mode === "worktree" && <BasePicker base={base} onChange={setBase} onRestoreComposer={restoreComposer} />}
         {autopilot.picker}
       </div>
@@ -366,4 +367,15 @@ function ProjectForm({
       />
     </form>
   )
+}
+
+/** The mode menu's plain-folder state: present only for a project folder with no Git commit. */
+function usePlainFolderPicker(repoPath: string, repos: RepoInfo[]) {
+  const initGit = useInitProjectGit()
+  if (!isPlainFolder(repos.find((r) => r.path === repoPath))) return undefined
+  return {
+    onInitGit: () => initGit.mutate(repoPath),
+    pending: initGit.isPending,
+    error: initGit.error ? failureReason(initGit.error) : null,
+  }
 }

@@ -92,6 +92,7 @@ interface RepoRow {
   path: string;
   name: string | null;
   exists: boolean;
+  git: "repo" | "unborn" | "none" | null;
   setupScript: string;
   archiveScript: string;
   copyFiles: string[];
@@ -957,7 +958,7 @@ describe("daemon API contracts", () => {
     expect(repoRows.repos.find((row) => row.path === configured)).toEqual({
       path: configured,
       name: "Configured",
-      exists: true,
+      exists: true, git: "none",
       setupScript: "",
       archiveScript: "",
       copyFiles: [],
@@ -967,7 +968,7 @@ describe("daemon API contracts", () => {
     expect(repoRows.repos.find((row) => row.path === missing)).toEqual({
       path: missing,
       name: basename(missing),
-      exists: false,
+      exists: false, git: null,
       setupScript: "",
       archiveScript: "",
       copyFiles: [],
@@ -977,7 +978,7 @@ describe("daemon API contracts", () => {
     expect(repoRows.repos.find((row) => row.path === repo.path)).toEqual({
       path: repo.path,
       name: basename(repo.path),
-      exists: true,
+      exists: true, git: "repo",
       setupScript: "",
       archiveScript: "",
       copyFiles: [],

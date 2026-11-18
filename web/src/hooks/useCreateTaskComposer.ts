@@ -27,6 +27,8 @@ export function useCreateTaskComposer(
   repoPath: string,
   harnesses: HarnessInfo[],
   preferredChoice: ModelChoice | null,
+  /** the project folder has no Git commit, so its task can only run in place */
+  plainFolder: boolean,
 ) {
   const [saved] = useState(() => readCreateTaskDraft(connectionId, repoPath))
   const [prompt, setPrompt] = useState(saved?.prompt ?? "")
@@ -36,7 +38,10 @@ export function useCreateTaskComposer(
     seededEffort(connectionId, harnesses.find((h) => h.name === next?.harness), next?.model, stars.preferred)
   const [effort, setEffort] = useState(() => saved?.effort ?? seedFor(choice))
   const [fast, setFast] = useState(saved?.fast ?? false)
-  const [mode, setMode] = useState<TaskMode>(saved?.mode ?? "worktree")
+  const [chosenMode, setMode] = useState<TaskMode>(saved?.mode ?? "worktree")
+  // A plain folder has nothing to fork a worktree from. The person's own
+  // choice is kept (and saved) so it comes back once Git is initialized.
+  const mode = effectiveMode(chosenMode, plainFolder)
   // A base override belongs to this task, not the project's resolved default.
   const [base, setBase] = useState(saved?.base ?? "")
   const taskDefaults = useChoiceTaskDefaults(choice)
@@ -61,9 +66,9 @@ export function useCreateTaskComposer(
 
   useEffect(() => {
     writeCreateTaskDraft(connectionId, repoPath, {
-      prompt, choice, effort, fast, mode, base, suffixPromptId, autopilot: autopilot.chosen,
+      prompt, choice, effort, fast, mode: chosenMode, base, suffixPromptId, autopilot: autopilot.chosen,
     })
-  }, [connectionId, repoPath, prompt, choice, effort, fast, mode, base, suffixPromptId, autopilot.chosen])
+  }, [connectionId, repoPath, prompt, choice, effort, fast, chosenMode, base, suffixPromptId, autopilot.chosen])
   useEffect(() => {
     writePendingAttachmentCount(connectionId, createTaskScope(repoPath), attachments.list.length)
   }, [connectionId, repoPath, attachments.list.length])
@@ -85,6 +90,10 @@ export function useCreateTaskComposer(
     harness, attachments, modelAvailable, suffixAvailable, canSubmit, reseedForChoice,
     preferredEffort, togglePreferredEffort,
   }
+}
+
+function effectiveMode(chosen: TaskMode, plainFolder: boolean): TaskMode {
+  return plainFolder ? "local" : chosen
 }
 
 /**

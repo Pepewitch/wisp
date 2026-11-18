@@ -168,6 +168,8 @@ export function createTaskRoute(
     const rawPrompt = body.prompt as string;
     const prompt = promptWithSuffix(rawPrompt, body.suffixPromptId as string | undefined);
     if (prompt === null) return err(`unknown suffixPromptId '${body.suffixPromptId}'`, 400);
+    // Omitted is not "worktree": it leaves the choice to Wisp, which runs a
+    // project folder with no Git commit as a local task (task-create.ts).
     let mode: TaskMode = "worktree";
     if (body.mode !== undefined) {
       if (typeof body.mode !== "string" || !(TASK_MODES as readonly string[]).includes(body.mode)) {
@@ -188,6 +190,7 @@ export function createTaskRoute(
         effort: body.effort as string | undefined,
         fast: body.fast === true,
         mode,
+        modeAsked: body.mode !== undefined,
         base: body.base as string | undefined,
         attachments: body.attachments,
         autopilot: isRecord(body.autopilot)
@@ -409,7 +412,7 @@ function taskDetailRoute(task: Task, url: URL, adapters: Record<string, AdapterD
     // An archived task is ALREADY modelled as "the worktree is gone", so it
     // is not asked — a health sentence there would tell the user to archive a
     // task they archived.
-    const health = task.archived || !task.worktree_path ? null : await worktreeHealth(task.worktree_path);
+    const health = task.archived || !task.worktree_path ? null : await worktreeHealth(task.worktree_path, { local: taskMode(task) === "local" });
     const stat = health?.ok ? await diffStat(task.worktree_path!) : null;
     return json<TaskDetail>({
       ...conversationDetail(task, adapters),
@@ -663,7 +666,7 @@ async function diffRoute(task: Task): Promise<Response> {
   // an empty diff and the reason, the same shape the UI already uses for an
   // archived task. Erroring here is what rendered git's usage text in the
   // diff pane (D1).
-  const health = await worktreeHealth(task.worktree_path);
+  const health = await worktreeHealth(task.worktree_path, { local: taskMode(task) === "local" });
   if (!health.ok) {
     return json({ diff: "", truncated: false, untracked: [], base: null, worktreeReason: health.reason });
   }
@@ -690,7 +693,7 @@ function diffBase(task: Task): string | null {
 export async function diffSummaryRoute(task: Task): Promise<Response> {
   if (task.archived) return err("task is archived — worktree removed", 409);
   if (!task.worktree_path) return err("task has no worktree (failed before setup?)", 409);
-  const health = await worktreeHealth(task.worktree_path);
+  const health = await worktreeHealth(task.worktree_path, { local: taskMode(task) === "local" });
   if (!health.ok) return json<DiffSummary>({ files: 0, worktreeReason: health.reason });
   const summary = await diffSummary(task.worktree_path, diffBase(task));
   return json<DiffSummary>({ ...summary, worktreeReason: null });
