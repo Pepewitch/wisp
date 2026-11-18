@@ -1147,8 +1147,9 @@ describe("daemon API contracts", () => {
   test("the picker's default is Wisp's where the probed catalog offers it, else the CLI's", () => {
     const codex = BUILTIN_ADAPTERS.codex!;
     const probed = (list: string[]) => ({ models: { list, defaultModel: "gpt-6-sol", probedAt: "2026-09-30T00:00:00.000Z" } });
-    expect(offeredCachedModels(codex, probed(["gpt-6-sol", "gpt-6.1-sol"]))?.defaultModel).toBe("gpt-6.1-sol");
-    expect(offeredCachedModels(codex, probed(["gpt-6-sol"]))?.defaultModel).toBe("gpt-6-sol");
+    expect(offeredCachedModels(codex, probed(["gpt-6-sol", "gpt-6.1-sol", "gpt-6.2-sol"]))?.defaultModel).toBe("gpt-6.2-sol");
+    // a catalog without gpt-6.2-sol gets the CLI's probed default, never a fallback to gpt-6.1-sol
+    expect(offeredCachedModels(codex, probed(["gpt-6-sol", "gpt-6.1-sol"]))?.defaultModel).toBe("gpt-6-sol");
     expect(offeredCachedModels(codex, { models: null })).toBeNull();
   });
 
