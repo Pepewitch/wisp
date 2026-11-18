@@ -260,6 +260,9 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     // per-turn-consistent policy has to be this one. Codex 0.154.0 also added
     // `--worktree`; Wisp deliberately omits it because the task already runs
     // in the exact Wisp-owned worktree its lifecycle and diff views track.
+    // Codex 0.170.0's `--trust` is omitted too: it persists project trust into
+    // the user's codex config, one entry per throwaway task worktree, and this
+    // bypass already runs without the approvals trust would relax.
     exec: ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox"],
     resume: ["resume", "{session}"],
     model: ["-m", "{model}"],
