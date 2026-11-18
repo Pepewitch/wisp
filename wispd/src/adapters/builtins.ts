@@ -316,8 +316,10 @@ export const BUILTIN_ADAPTERS: Record<string, AdapterDef> = {
     attach: ["resume", "{session}"], // `codex resume <id>` = interactive, same session
     // task env reaches the agent's tool shell: tests/harness-facts/codex.json taskEnv
     modelDiscovery: "codex-models",
-    // Wisp's default for new codex tasks (owner decision, 2026-09-30).
-    defaultModel: "gpt-6.1-sol",
+    // Wisp's default for new codex tasks (owner decision, 2026-09-30), moved
+    // to gpt-6.2-sol on 2026-11-18 with codex 0.168.0's own catalog default.
+    // A CLI whose catalog lacks it keeps its own default (wispDefaultModel).
+    defaultModel: "gpt-6.2-sol",
     // A3 (SP1, live-verified 0.149.0): the app-server reads account usage out
     // of band. There is NO per-thread context read (token usage is a
     // notification, never an answer), so /context is honestly absent here.

@@ -232,7 +232,7 @@ agent runs from inside its own turn, such as `wisp output add` and
 `wisp models` prints, per harness, the effective model for new tasks
 (`--model` > `harnessDefaults` > Wisp default > harness default) and the
 models on offer. The Wisp default is the builtin adapter's pick (claude and
-droid: `claude-opus-5-5`, codex: `gpt-6.1-sol`, cursor: `grok-4.7-high`). For
+droid: `claude-opus-5-5`, codex: `gpt-6.2-sol`, cursor: `grok-4.7-high`). For
 droid, codex and cursor it applies only once the daemon's model probe shows
 the installed CLI offers that id; until then, and on a CLI without it, the
 CLI's own default runs. Claude has no model list to check, so its default is
