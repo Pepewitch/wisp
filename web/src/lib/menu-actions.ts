@@ -16,4 +16,6 @@ export const MENU_ACTION = {
   revealModels: "@@reveal-models",
   /** Opens the model-visibility manager. */
   manageModels: "@@manage-models",
+  /** Turns a plain project folder into a Git repository (POST /api/projects/git). */
+  initGit: "@@init-git",
 } as const;

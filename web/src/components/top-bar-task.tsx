@@ -71,7 +71,12 @@ export function TopBarTask({
       {task.mode === "local" && (
         // Worktree is the default and the wisp/… branch already says so; LOCAL
         // is the one worth the width, because this task edits your checkout.
-        <span data-tauri-drag-region={drag} className="flex shrink-0 items-center gap-1 text-[11.5px] text-muted-foreground" title="This task works in the project checkout, not a worktree">
+        <span
+          data-tauri-drag-region={drag}
+          className="flex shrink-0 items-center gap-1 text-[11.5px] text-muted-foreground"
+          // a local task with no branch ran in a folder Git does not track: nothing records its edits
+          title={task.branch === null ? "This task works in the project folder itself, which has no Git history to show or undo its changes" : "This task works in the project checkout, not a worktree"}
+        >
           <Local aria-hidden className="pointer-events-none size-3" />
           <span className="pointer-events-none">Local</span>
         </span>

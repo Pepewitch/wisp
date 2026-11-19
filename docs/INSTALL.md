@@ -11,7 +11,9 @@ For Apple Silicon, use the [macOS guide](INSTALL-MACOS.md).
 
 You need `curl`, `git`, `sha256sum`, and the standard `install` utility, plus:
 
-- a Git repository with `user.name` and `user.email` configured;
+- a Git repository with `user.name` and `user.email` configured; a folder
+  that is not a Git repository also works, but its tasks run in the folder
+  itself, with no worktree, branch or diff;
 - an installed and authenticated harness: Droid, Claude Code, Codex, Cursor,
   or OpenCode;
 - the same OS user for Wisp, the repository, and the harness credentials.

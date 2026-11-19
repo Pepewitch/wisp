@@ -304,10 +304,25 @@ export type ProjectReviewStart = "ready" | "checks";
  * active-task repos, deduped by resolved path. `name` is the configured
  * display name or a path-derived basename; `exists` is a live fs probe.
  */
+/** What Git knows about a project folder (GET /api/repos). */
+export type ProjectGit = "repo" | "unborn" | "none";
+
+/** True for a project whose tasks can only run in the folder itself. */
+export function isPlainFolder(repo: Pick<RepoInfo, "git"> | undefined): boolean {
+  return repo?.git === "none" || repo?.git === "unborn";
+}
+
 export interface RepoInfo {
   path: string;
   name: string | null;
   exists: boolean;
+  /**
+   * What Git knows about the folder: "repo" has a commit and can run worktree
+   * tasks; "none" (not a repository) and "unborn" (no commit yet) run tasks in
+   * the folder itself. null when the folder is missing; absent from a daemon
+   * older than plain-folder projects, which treats every project as a repo.
+   */
+  git?: ProjectGit | null;
   /** shell run in each NEW worktree after files are copied in; "" = none */
   setupScript: string;
   /** shell run in the worktree before archive removes it; "" = none */

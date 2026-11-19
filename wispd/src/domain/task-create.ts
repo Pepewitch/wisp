@@ -25,6 +25,7 @@ import { autopilotSwitchDetail, recordAudit, type TaskAuditActor } from "../task
 import { TASK_TITLE_MAX, updateTaskAndEmit } from "../task-update";
 import { taskMode, type Task, type TaskMode } from "../types";
 import type { ModelProbeCache } from "../model-probes";
+import { folderGit } from "../worktree";
 import { baseFromCaller, projectCheckoutFor } from "./project-checkout";
 import {
   defaultSubtaskDeps,
@@ -52,6 +53,13 @@ export interface NewTaskInput {
   effort?: string;
   fast: boolean;
   mode: TaskMode;
+  /**
+   * false when the caller left the mode to Wisp (an API create without
+   * `mode`, `wisp new` without `--local`): a project folder with no Git commit
+   * then runs as a local task instead of failing to fork a worktree. Omitted
+   * means the caller chose `mode` itself.
+   */
+  modeAsked?: boolean;
   /** the ref a worktree task forks from, instead of the project's; pinned when Wisp already resolved it */
   base?: string | PinnedBase;
   /** the parent this task is a subtask of (subtask-create.ts) */
@@ -112,7 +120,7 @@ function unsupportedRequest(
  * Refuse by name so the fix is obvious. (Worktree tasks are isolated by
  * construction; the global admission limit still applies.)
  */
-function localTaskRefusal(input: NewTaskInput): NewTaskRefusal | null {
+async function localTaskRefusal(input: NewTaskInput): Promise<NewTaskRefusal | null> {
   if (input.mode !== "local") return null;
   // A local task adopts the branch the checkout is already on; there is
   // nothing to fork, so a base could only be honoured by moving the user's
@@ -126,6 +134,10 @@ function localTaskRefusal(input: NewTaskInput): NewTaskRefusal | null {
   const repo = resolve(input.repoPath);
   const live = listTasks(false).find((t) => taskMode(t) === "local" && resolve(t.repo_path) === repo);
   if (!live) return null;
+  // a folder with no Git commit has no worktree to offer instead
+  if ((await folderGit(repo)) !== "repo") {
+    return refuse("conflict", `task ${live.id} already works in ${repo}, which has no Git commit, so it runs one task at a time — send ${live.id} a message, or archive it first`);
+  }
   return refuse(
     "conflict",
     `task ${live.id} is already running locally in ${repo} — archive it first, or create this one as a worktree task`,
@@ -185,6 +197,30 @@ function insertTaskRow(input: NewTaskInput, model: string | null, effort: string
  * when `wisp new` runs in a turn), that project's checkout (#412). A local
  * task runs in the directory it was given, so it keeps it.
  */
+/**
+ * A worktree forks from a commit, so a project folder that is not a Git
+ * repository (or has no commit yet) can only run a task in place. When the
+ * caller left the mode to Wisp, that is what it gets; a caller that asked for
+ * a worktree, a base, or autopilot is refused by name instead of half-served.
+ */
+async function plainFolderMode(input: NewTaskInput): Promise<NewTaskInput | NewTaskRefusal> {
+  // a missing folder is placement's refusal to make, with its own wording
+  if (input.mode === "local" || !(await pathExists(input.repoPath))) return input;
+  const state = await folderGit(input.repoPath);
+  if (state === "repo") return input;
+  const repo = resolve(input.repoPath);
+  const what = state === "none" ? "is not a Git repository" : "has no commits yet";
+  const fix = state === "none" ? "initialize Git and make a first commit" : "make a first commit";
+  if (input.modeAsked !== false) {
+    return refuse("invalid", `${repo} ${what}, so a worktree task cannot start there — create it as a local task, or ${fix}`);
+  }
+  const asked = input.autopilot;
+  if (input.base !== undefined || asked?.autoMerge || asked?.autoFix || asked?.autoReview) {
+    return refuse("invalid", `${repo} ${what}, so its tasks run in the folder itself — base, auto-merge, auto-fix and auto-review need Git; ${fix}`);
+  }
+  return { ...input, mode: "local" };
+}
+
 async function placement(input: NewTaskInput, cfg: WispConfig, sub: ResolvedSubtask | null): Promise<NewTaskInput | NewTaskRefusal> {
   if (sub) return { ...input, repoPath: sub.parent.repo_path, base: sub.base };
   if (!(await pathExists(input.repoPath))) return refuse("invalid", `repoPath does not exist: ${input.repoPath}`);
@@ -239,6 +275,11 @@ export async function createAndLaunchTask(
   if (!def) return refuse("invalid", `unknown harness '${harness}' (known: ${Object.keys(adapters).join(", ")})`);
   const sub = await resolveSubtask(input, cfg, deps);
   if (sub && "error" in sub) return sub;
+  if (!sub) {
+    const folder = await plainFolderMode(input);
+    if ("error" in folder) return folder;
+    input = folder;
+  }
   const placed = await placement(input, cfg, sub);
   if ("error" in placed) return placed;
   input = placed;
@@ -253,7 +294,7 @@ export async function createAndLaunchTask(
   const effort = resolved.effort;
   const unsupported = unsupportedRequest(def, harness, { effort, fast: input.fast });
   if (unsupported) return refuse("invalid", unsupported);
-  const local = localTaskRefusal(input);
+  const local = await localTaskRefusal(input);
   if (local) return local;
   // S3: turn-1 attachments are validated BEFORE the task row exists — a
   // rejected create never leaves a task behind (named refusals, never silent)

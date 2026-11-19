@@ -5,7 +5,7 @@ import { clearRememberedAttachments } from "@/lib/attachments"
 import { createDesktopTransport } from "@/lib/desktop-transport"
 import { clearConnectionDrafts, connectionLocalData } from "@/lib/drafts"
 import { preferredEffortsStorageKey, savePreferredEffort } from "@/lib/effort"
-import type { DaemonTransport } from "@/lib/transport"
+import { ApiError, type DaemonTransport } from "@/lib/transport"
 import type { HarnessInfo, RepoInfo } from "@/lib/types"
 import { sameOriginWebTransport } from "@/lib/web-transport"
 import { fakeDaemonTransport, runtimeWrapper } from "@/test/runtime"
@@ -510,6 +510,62 @@ describe("auto-merge and auto-fix at creation", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Manual PR" }))
     await screen.findByRole("menuitemcheckbox", { name: "Auto-merge" })
     expect(screen.queryByRole("menuitemcheckbox", { name: "Auto-review" })).toBeNull()
+  })
+})
+
+describe("a project folder with no Git", () => {
+  const plain: RepoInfo = { ...repo, git: "none" }
+  function mount(respond: (path: string) => Promise<unknown> = () => Promise.resolve({ id: "tk9zdy" })) {
+    const sent: { path: string; body: unknown }[] = []
+    const request = ((path: string, init?: { body?: unknown }) => {
+      if (path === "/api/settings") return Promise.resolve({ autoRenameTasksFromPullRequests: true, hiddenModels: {} })
+      if (path === "/api/harnesses") return Promise.resolve({ harnesses: [harness], features: { taskAutopilot: true } })
+      sent.push({ path, body: init?.body })
+      return respond(path)
+    }) as unknown as DaemonTransport["request"]
+    render(
+      <CreateTaskDialog
+        open
+        onOpenChange={() => {}}
+        initialRepoPath="/repo"
+        repos={[plain]}
+        harnesses={[harness]}
+        harnessesError={null}
+        onCreated={() => {}}
+      />,
+      { wrapper: runtimeWrapper(fakeDaemonTransport("test-connection", { request })) },
+    )
+    fireEvent.change(screen.getByPlaceholderText("What do you want to work on?"), { target: { value: "draft the plan" } })
+    return sent
+  }
+
+  it("runs the task in the folder itself, with nothing that needs Git on offer", async () => {
+    const sent = mount()
+    fireEvent.click(await screen.findByRole("button", { name: "This folder" }))
+    expect(await screen.findByRole("menuitemradio", { name: /Worktree/ })).toHaveAttribute("aria-disabled", "true")
+    expect(screen.getByText(/Not a Git repository: tasks run in this folder/)).toBeInTheDocument()
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" })
+    expect(screen.queryByRole("button", { name: /^Base$/ })).toBeNull()
+    expect(screen.queryByRole("button", { name: "Manual PR" })).toBeNull()
+    fireEvent.click(screen.getByRole("button", { name: "Create" }))
+    await waitFor(() => expect(sent.filter((s) => s.path === "/api/tasks")).toHaveLength(1))
+    const body = sent.find((s) => s.path === "/api/tasks")!.body
+    expect(body).toMatchObject({ mode: "local" })
+    expect(body).not.toHaveProperty("base")
+    expect(body).not.toHaveProperty("autopilot")
+  })
+
+  it("initializes Git from the menu, and shows the daemon's refusal in place", async () => {
+    const sent = mount((path) => (path === "/api/projects/git" ? Promise.reject(new ApiError("the first commit failed: no identity", 409, null, {})) : Promise.resolve({})))
+    fireEvent.click(await screen.findByRole("button", { name: "This folder" }))
+    fireEvent.click(await screen.findByRole("menuitemradio", { name: "Initialize Git" }))
+    // the first choice only says what it will commit
+    expect(await screen.findByText(/Commits every file not excluded by .gitignore/)).toBeInTheDocument()
+    expect(sent.some((s) => s.path === "/api/projects/git")).toBe(false)
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Commit all files and initialize Git" }))
+    await waitFor(() => expect(sent).toContainEqual({ path: "/api/projects/git", body: { path: "/repo" } }))
+    // a radio-row action keeps the menu open, so the refusal is read where it was asked
+    expect(await screen.findByText(/the first commit failed: no identity/)).toBeInTheDocument()
   })
 })
 

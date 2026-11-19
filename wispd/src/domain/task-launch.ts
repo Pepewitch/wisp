@@ -77,7 +77,9 @@ export async function launchTask(
       task.id,
       "creating",
       mode === "local"
-        ? "using the checkout"
+        ? "plain" in wt && wt.plain !== null
+          ? `using the folder as-is (${wt.plain === "none" ? "not a Git repository" : "no commits yet"})`
+          : "using the checkout"
         : wt.base_note
           ? `${wt.base_note} — running setup`
           : "worktree ready, running setup",

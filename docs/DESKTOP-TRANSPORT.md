@@ -54,7 +54,8 @@ The UI reads or mutates these route families:
   `/api/status`, `/api/pull-requests`, and `/api/outbox` (the undelivered
   webhook queue);
 - daemon-owned configuration: `/api/repos`, `/api/repos/order`, `/api/projects`,
-  `/api/projects/copy-preview`, `/api/harnesses`, and `/api/suffix-prompts`;
+  `/api/projects/copy-preview`, `/api/projects/git` (Initialize Git for a
+  plain project folder), `/api/harnesses`, and `/api/suffix-prompts`;
 - the create composer's base-ref prefetch: `POST /api/projects/base-refs`,
   fire and forget; an older daemon answers 404, which the composer ignores;
 - project folders for the composer's `@` list:
