@@ -340,7 +340,7 @@ export function ModePicker({
   mode: TaskMode
   onChange: (mode: TaskMode) => void
   /** the project has no Git commit: only "this folder" can run, and Git can be initialized from here */
-  plainFolder?: { onInitGit: () => void; pending: boolean; error: string | null }
+  plainFolder?: PlainFolderPicker
 }) {
   if (plainFolder) return <PlainFolderModePicker {...plainFolder} />
   return (
@@ -365,13 +365,34 @@ export function ModePicker({
  * and Worktree stays visible but unavailable, with the one action that makes
  * it available. Nothing here is offered and then refused.
  */
-function PlainFolderModePicker({ onInitGit, pending, error }: { onInitGit: () => void; pending: boolean; error: string | null }) {
+export interface PlainFolderPicker {
+  /** "unborn": a repository with no commit yet; "none": not a repository at all */
+  git: "none" | "unborn"
+  onInitGit: () => void
+  pending: boolean
+  error: string | null
+}
+
+function PlainFolderModePicker({ git, onInitGit, pending, error }: PlainFolderPicker) {
+  // Initialize Git commits every file the folder holds, so the first click
+  // only says that, and the second one does it
+  const [confirming, setConfirming] = useState(false)
+  const note =
+    error ??
+    (confirming
+      ? "Commits every file not excluded by .gitignore, including any .env or build output. Choose again to continue."
+      : git === "unborn"
+        ? "No Git commit yet: tasks run in this folder, with no branch or diff. Initialize Git commits its files once."
+        : "Not a Git repository: tasks run in this folder, with no branch or diff. Initialize Git commits its files once.")
   return (
     <Menu icon={<Local />} label="This folder">
       <MenuRadioGroup
         value="local"
         onValueChange={(value) => {
-          if (value === MENU_ACTION.initGit) onInitGit()
+          if (value !== MENU_ACTION.initGit) return
+          if (!confirming) return setConfirming(true)
+          setConfirming(false)
+          onInitGit()
         }}
       >
         <MenuRadioItem value="worktree" hint="needs Git" disabled>
@@ -379,13 +400,10 @@ function PlainFolderModePicker({ onInitGit, pending, error }: { onInitGit: () =>
         </MenuRadioItem>
         <MenuRadioItem value="local">This folder</MenuRadioItem>
         <MenuAction value={MENU_ACTION.initGit} disabled={pending}>
-          {pending ? "Initializing Git…" : "Initialize Git"}
+          {pending ? "Initializing Git…" : confirming ? "Commit all files and initialize Git" : "Initialize Git"}
         </MenuAction>
       </MenuRadioGroup>
-      <MenuNote>
-        {error ??
-          "Not a Git repository: tasks run in this folder, with no branch or diff. Initialize Git commits its files once."}
-      </MenuNote>
+      <MenuNote>{note}</MenuNote>
     </Menu>
   )
 }

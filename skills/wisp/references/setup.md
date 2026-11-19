@@ -342,8 +342,8 @@ address's last new wrong token. The web UI is served at `/`.
   `POST /api/projects/git` (`{path}`: "Initialize Git" for a registered
   project with no commit — `git init` when needed, then the folder's current
   files, minus its `.gitignore`, as a first commit; `409` with git's reason
-  when it already has a commit or the commit fails, `404` for a path that is
-  not a project) ·
+  when it already has a commit, sits inside another repository that has
+  none, or the commit fails; `404` for a path that is not a project) ·
   `PUT /api/repos/order` (`{paths}`: every configured project once, by
   absolute path, in the new order; 409 when the list changed meanwhile)
 - `POST /api/tasks` without `mode` leaves the choice to Wisp: a worktree,

@@ -145,12 +145,29 @@ export function outputReminder(): string {
 /** A conversation's framing, in Wisp's voice; the runner puts it in the turn's one Wisp section. */
 export function taskPreambleLines(task: Task): string[] {
   return [
-    `You are working on task ${task.id}, managed by Wisp, in a dedicated git worktree.`,
-    `Worktree: ${task.worktree_path} (branch ${task.branch}). Work ONLY inside this directory.`,
-    `When you finish the requested work, commit your changes to this branch with a clear message. Do not push unless asked.`,
+    ...placeLines(task),
     `For follow-up after waiting on time or an external condition, use \`${wispCommand()} workflow types\` to choose durable automation instead of relying on a harness background process.`,
     ...subtaskPreambleLines(task),
   ]
+}
+
+/**
+ * Where the agent works. A local task with no branch runs in a project folder
+ * Git does not track (task-create.ts): there is no branch to commit to, and
+ * making the folder a repository is the person's decision, not the agent's.
+ */
+function placeLines(task: Task): string[] {
+  if (task.mode === "local" && task.branch === null) {
+    return [
+      `You are working on task ${task.id}, managed by Wisp, directly in the project folder ${task.worktree_path}.`,
+      `This folder is not a Git repository: work ONLY inside it, and do not run git init or commit unless asked.`,
+    ];
+  }
+  return [
+    `You are working on task ${task.id}, managed by Wisp, in a dedicated git worktree.`,
+    `Worktree: ${task.worktree_path} (branch ${task.branch}). Work ONLY inside this directory.`,
+    `When you finish the requested work, commit your changes to this branch with a clear message. Do not push unless asked.`,
+  ];
 }
 
 /**

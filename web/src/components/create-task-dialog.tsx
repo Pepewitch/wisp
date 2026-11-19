@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { Dialog } from "@base-ui/react/dialog"
+import { useQueryClient } from "@tanstack/react-query"
 
 import { Folder } from "@/components/icons"
-import { ModePicker, TaskControls } from "@/components/create-task-controls"
+import { ModePicker, TaskControls, type PlainFolderPicker } from "@/components/create-task-controls"
 import { Menu, MenuNote, MenuRadioGroup, MenuRadioItem } from "@/components/menu"
 import { CreateTaskNotices } from "@/components/create-task-notices"
 import { BasePicker } from "@/components/base-picker"
@@ -370,10 +371,19 @@ function ProjectForm({
 }
 
 /** The mode menu's plain-folder state: present only for a project folder with no Git commit. */
-function usePlainFolderPicker(repoPath: string, repos: RepoInfo[]) {
+function usePlainFolderPicker(repoPath: string, repos: RepoInfo[]): PlainFolderPicker | undefined {
   const initGit = useInitProjectGit()
-  if (!isPlainFolder(repos.find((r) => r.path === repoPath))) return undefined
+  const client = useQueryClient()
+  const { qk } = useDaemonRuntime()
+  const project = repos.find((r) => r.path === repoPath)
+  const plain = isPlainFolder(project)
+  // the cached state may predate a `git init` the person ran outside Wisp
+  useEffect(() => {
+    if (plain) void client.invalidateQueries({ queryKey: qk.repos })
+  }, [plain, repoPath, client, qk])
+  if (!plain || !project?.git || project.git === "repo") return undefined
   return {
+    git: project.git,
     onInitGit: () => initGit.mutate(repoPath),
     pending: initGit.isPending,
     error: initGit.error ? failureReason(initGit.error) : null,

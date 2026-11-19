@@ -14,6 +14,7 @@ import { initProjectGitRoute, reposRoute } from "../src/routes/projects";
 import { diffSummaryRoute } from "../src/routes/tasks";
 import { hasRunningTurn } from "../src/runner";
 import { getTask, turnsFor } from "../src/store";
+import { taskPreambleLines } from "../src/turn-input";
 import type { Task } from "../src/types";
 import { localWorktree, worktreeHealth } from "../src/worktree";
 
@@ -102,6 +103,11 @@ describe("what Git knows about a folder", () => {
     expect(await folderGit(repo)).toBe("repo");
     mkdirSync(join(repo, "sub"));
     expect(await folderGit(join(repo, "sub"))).toBe("repo");
+    // HEAD on an orphan branch still has refs to fork a worktree from
+    sh(repo, "checkout", "-q", "--orphan", "gh-pages");
+    expect(await folderGit(repo)).toBe("repo");
+    // and a folder git cannot answer for is never guessed to be plain
+    expect(await folderGit(join(repo, "missing"))).toBe("repo");
   });
 
   test("a local task's folder with no Git has no branch and no base, and says why it shows no changes", async () => {
@@ -125,6 +131,11 @@ describe("creating a task in a plain folder", () => {
     const done = await settled(task.id);
     expect(done.state).toBe("done");
     expect(done).toMatchObject({ worktree_path: dir, branch: null, base_commit: null });
+    // the agent is never told about a branch or asked to commit
+    const preamble = taskPreambleLines(done).join("\n");
+    expect(preamble).toContain(`directly in the project folder ${dir}`);
+    expect(preamble).toContain("do not run git init or commit unless asked");
+    expect(preamble).not.toContain("branch null");
     const summary = (await (await diffSummaryRoute(done)).json()) as { files: number; worktreeReason: string };
     expect(summary.files).toBe(0);
     expect(summary.worktreeReason).toContain("not a Git repository");

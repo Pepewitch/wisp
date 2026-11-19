@@ -559,6 +559,10 @@ describe("a project folder with no Git", () => {
     const sent = mount((path) => (path === "/api/projects/git" ? Promise.reject(new ApiError("the first commit failed: no identity", 409, null, {})) : Promise.resolve({})))
     fireEvent.click(await screen.findByRole("button", { name: "This folder" }))
     fireEvent.click(await screen.findByRole("menuitemradio", { name: "Initialize Git" }))
+    // the first choice only says what it will commit
+    expect(await screen.findByText(/Commits every file not excluded by .gitignore/)).toBeInTheDocument()
+    expect(sent.some((s) => s.path === "/api/projects/git")).toBe(false)
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Commit all files and initialize Git" }))
     await waitFor(() => expect(sent).toContainEqual({ path: "/api/projects/git", body: { path: "/repo" } }))
     // a radio-row action keeps the menu open, so the refusal is read where it was asked
     expect(await screen.findByText(/the first commit failed: no identity/)).toBeInTheDocument()

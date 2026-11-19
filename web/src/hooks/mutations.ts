@@ -432,7 +432,9 @@ export function useInitProjectGit() {
   const { transport, qk } = useDaemonRuntime();
   return useMutation({
     mutationFn: (path: string) => transport.request<{ path: string; git: string }>("/api/projects/git", { method: "POST", body: { path } }),
-    onSuccess: () => {
+    // a refusal can still have changed the folder (git init ran, the commit
+    // did not), so the project's state is read again either way
+    onSettled: () => {
       void client.invalidateQueries({ queryKey: qk.repos });
     },
   });
