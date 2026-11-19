@@ -5,6 +5,7 @@ import type { DesktopConnectionEntry } from "./desktop-connections"
 import { InactiveConnectionMonitor } from "./inactive-connection-monitor"
 import type { DaemonEventStream, DaemonTransport } from "./transport"
 import type { ApiTask } from "./types"
+import { uiIntentsFor } from "./ui-intents"
 import { fakeDaemonTransport } from "@/test/runtime"
 
 class FakeEvents implements DaemonEventStream {
@@ -29,7 +30,7 @@ function deferred<T>() {
 const task = (id: string) => ({ id, archived: false, state: "done" }) as ApiTask
 
 function fixture(request: ReturnType<typeof vi.fn>) {
-  const events = new FakeEvents()
+  const openEventStream = vi.fn(() => new FakeEvents())
   const entry: DesktopConnectionEntry = {
     metadata: {
       id: "inactive-remote", kind: "remote", name: "Remote", url: "https://example.test",
@@ -37,7 +38,7 @@ function fixture(request: ReturnType<typeof vi.fn>) {
     },
     transport: fakeDaemonTransport("inactive-remote", {
       request: request as DaemonTransport["request"],
-      openEventStream: () => events,
+      openEventStream,
     }),
   }
   const onAttention = vi.fn()
@@ -46,13 +47,28 @@ function fixture(request: ReturnType<typeof vi.fn>) {
   const view = render(<InactiveConnectionMonitor
     entry={entry} onAttention={onAttention} onReachability={onReachability} onTasks={onTasks}
   />)
-  return { events, onAttention, onReachability, onTasks, view }
+  const events = openEventStream.mock.results[0]!.value
+  return { events, openEventStream, onAttention, onReachability, onTasks, view }
 }
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
 
 describe("inactive connection task refresh", () => {
+  it("replaces its stream and stale task read when its connection is asked to reopen", async () => {
+    const pending = deferred<ApiTask[]>()
+    const request = vi.fn().mockReturnValueOnce(pending.promise).mockResolvedValueOnce([task("fresh")])
+    const { events, openEventStream, onTasks } = fixture(request)
+    const signal = request.mock.calls[0]?.[1]?.signal as AbortSignal
+
+    await act(async () => uiIntentsFor("inactive-remote").reopenStreams())
+    expect(events.close).toHaveBeenCalledOnce()
+    expect(openEventStream).toHaveBeenCalledTimes(2)
+    expect(signal.aborted).toBe(true)
+    await act(async () => pending.resolve([task("stale")]))
+    expect(onTasks.mock.calls.map(([, tasks]) => tasks)).toEqual([[task("fresh")]])
+  })
+
   it("serializes the first-open reconciliation behind an in-flight initial read", async () => {
     const first = deferred<ApiTask[]>()
     const second = deferred<ApiTask[]>()

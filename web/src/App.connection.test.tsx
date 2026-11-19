@@ -15,7 +15,9 @@ import {
 import { DesktopUpdaterProvider } from "@/lib/desktop-updater"
 import { DesktopZoomProvider } from "@/lib/desktop-zoom"
 import { connectionStore } from "@/lib/conn"
+import { queryClient } from "@/lib/query"
 import { DaemonRuntimeProvider } from "@/lib/runtime"
+import { uiIntentsFor } from "@/lib/ui-intents"
 import { useWispUpdateControl } from "@/lib/use-wisp-update-control"
 import type { ApiTask, UpdateStatus } from "@/lib/types"
 import type { DaemonUpdateOutcome } from "@/lib/update"
@@ -50,6 +52,14 @@ const UPDATE: UpdateStatus = {
   installMethod: "homebrew",
   message: null,
   checkedAt: "2026-09-05T08:00:00Z",
+}
+
+const STREAM_TASK: ApiTask = {
+  id: "test-task", title: "Test task", repo_path: "/tmp/repo", worktree_path: null,
+  branch: null, base_commit: null, harness: "fake", model: null, effort: null,
+  slot: 0, state: "done", state_detail: null, session_id: null, seq: 1,
+  turn_count: 0, archived: false, mode: "worktree", created_at: "2026-09-01",
+  updated_at: "2026-09-01",
 }
 
 const LOCAL: DesktopConnectionMetadata = {
@@ -373,10 +383,69 @@ describe("connection-bound update recovery", () => {
     const initiatingTransport = mocks.waitForUpdatedDaemon.mock.calls.at(-1)?.[1]
       .transport
     expect(initiatingTransport.connectionId).toBe("local")
+    const localReconnects = uiIntentsFor(LOCAL.id).reconnectRequests()
+    const remoteReconnects = uiIntentsFor(REMOTE.id).reconnectRequests()
     finishWait({ kind: "restarted" })
     await waitFor(() =>
       expect(screen.queryByText("Restarting Local daemon…")).toBeNull()
     )
+    expect(uiIntentsFor(LOCAL.id).reconnectRequests()).toBe(localReconnects + 1)
+    expect(uiIntentsFor(REMOTE.id).reconnectRequests()).toBe(remoteReconnects)
+  })
+
+  it("reopens Local streams and clears the Desktop update operation while data refreshes", async () => {
+    const nativeBridge = desktopBridge()
+    const { waitForUpdatedDaemon } = await vi.importActual<typeof import("@/lib/update")>(
+      "@/lib/update"
+    )
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      if (String(url).endsWith("/api/health")) {
+        return Response.json({ ok: true, version: UPDATE.latestVersion })
+      }
+      return Response.json([])
+    })
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries")
+      .mockReturnValue(new Promise(() => undefined))
+    mocks.install.mockResolvedValueOnce({ ...UPDATE, state: "restarting" })
+    mocks.waitForUpdatedDaemon.mockImplementationOnce(waitForUpdatedDaemon)
+    fixtures.tasks = [STREAM_TASK]
+
+    try {
+      render(
+        <DesktopUpdaterProvider bridge={nativeBridge} launchCheckDelay={60_000}>
+          <DesktopZoomProvider>
+            <DesktopApplicationProvider
+              initial={desktopBootstrap()}
+              bridge={nativeBridge}
+            >
+              <App />
+            </DesktopApplicationProvider>
+          </DesktopZoomProvider>
+        </DesktopUpdaterProvider>
+      )
+
+      const eventCalls = mocks.connectEventsBridge.mock.calls.length
+      const logGeneration = mocks.useLogStream.mock.lastCall![2]
+      fireEvent.click(screen.getByRole("button", { name: /Updates/ }))
+      fireEvent.click(screen.getByRole("button", { name: "Update Local daemon" }))
+
+      await waitFor(() =>
+        expect(invalidate).toHaveBeenCalledWith({ queryKey: [LOCAL.id] })
+      )
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${desktopBootstrap().proxyBaseUrl}/connections/local/0/api/health`,
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+      await waitFor(() =>
+        expect(screen.getByRole("button", { name: "Check now" })).toBeEnabled()
+      )
+      expect(mocks.connectEventsBridge.mock.calls.length).toBe(eventCalls + 1)
+      expect(mocks.useLogStream.mock.lastCall![2]).toBe(logGeneration + 1)
+    } finally {
+      fixtures.tasks = []
+      fetchMock.mockRestore()
+      invalidate.mockRestore()
+    }
   })
 
   it("keeps a manual Local check visible and locked across Desktop tab changes", async () => {
@@ -445,13 +514,7 @@ describe("the top bar's left end", () => {
   })
 
   it("reopens the selected connection's event and log streams after a stable reconnect", async () => {
-    fixtures.tasks = [{
-      id: "test-task", title: "Test task", repo_path: "/tmp/repo", worktree_path: null,
-      branch: null, base_commit: null, harness: "fake", model: null, effort: null,
-      slot: 0, state: "done", state_detail: null, session_id: null, seq: 1,
-      turn_count: 0, archived: false, mode: "worktree", created_at: "2026-09-01",
-      updated_at: "2026-09-01",
-    }]
+    fixtures.tasks = [STREAM_TASK]
     const nativeBridge = desktopBridge()
     const view = render(
       <DesktopUpdaterProvider bridge={nativeBridge} launchCheckDelay={60_000}>
