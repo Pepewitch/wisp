@@ -2,20 +2,68 @@
 
 This ledger separates release evidence from the version label. The 0.9 releases
 are regular pre-1.0 releases, not a claim of exhaustive security or platform
-coverage. 0.9.1 is the current release; earlier 0.9 records are retained
+coverage. 0.9.2 is the current release; earlier 0.9 records are retained
 below. The 0.8 records remain in
 [the 0.8 ledger](../v0.8/QUALIFICATION.md).
 
 The tested limits, remaining platform gaps and native dependency advisory scope
 recorded for 0.5 under
 [Still unqualified or outside scope](../v0.5/QUALIFICATION.md#still-unqualified-or-outside-scope)
-still apply to 0.9.1.
+still apply to 0.9.2.
+
+## 0.9.2 publication
+
+**Published and promoted on 2026-11-19.**
+[Wisp 0.9.2](https://github.com/Pepewitch/wisp/releases/tag/v0.9.2) is the
+latest regular GitHub release (`draft: false`, `prerelease: false`), published
+at 02:49:06 UTC with ten release assets. The annotated tag resolves to clean
+main commit
+[`02d2b898e0c17efde8938e11fb5746cf60ea1fc3`](https://github.com/Pepewitch/wisp/commit/02d2b898e0c17efde8938e11fb5746cf60ea1fc3),
+landed through [PR #592](https://github.com/Pepewitch/wisp/pull/592). It carries
+tasks that run in a project folder that is not a Git repository, refusals
+by name for what needs Git, and an Initialize Git action in the composer
+([#591](https://github.com/Pepewitch/wisp/pull/591)), and the other changes
+listed in the release notes since 0.9.1.
+
+The
+[release workflow](https://github.com/Pepewitch/wisp/actions/runs/44445975818)
+completed every job successfully on its first run:
+
+| Gate | Result |
+|---|---|
+| Source checks | Release PR test, browser-security, Linux-contract, supply-chain, update-verifier, and public-promotion dry-run checks passed; the exact-main [release candidate](https://github.com/Pepewitch/wisp/actions/runs/44445695508) also passed Linux-contract and update-verifier before tagging |
+| Release identity and reproducibility | Clean annotated main tag; full-history Gitleaks; web and Desktop UI bundles, Linux daemon, macOS daemon, and two clean unsigned Desktop rebuilds matched byte for byte |
+| Linux installation | Published-artifact installer and fixture activation contracts passed |
+| macOS trust | Developer ID signing, Apple notarization and staples, and Gatekeeper passed for both the public daemon app and Desktop; daemon entitlement checks, the Desktop updater signature, and altered-archive rejection passed |
+| Public assets | All ten assets matched all three checksum sets, and anonymous public downloads of clean tagged commit `02d2b89` were verified |
+| Homebrew installability | The Formula and Cask were audited offline before publication, and the published Formula was installed the way a user does before the tap advanced |
+
+Promotion completed at 02:51:14 UTC with Homebrew tap commit
+[`47e614590dabbd61fc750a4d6dd89d503158bf03`](https://github.com/Pepewitch/homebrew-tap/commit/47e614590dabbd61fc750a4d6dd89d503158bf03).
+The Formula, Cask, daemon update channel, and Desktop update channel all serve
+0.9.2.
+
+0.9.2 adds no database migration. No PNG asset or brand-generator input changed
+since 0.9.1, so the PNG assets were not re-rendered. This is a fully automated
+publication: no maintainer qualification — fresh-install or upgrade receipts, a
+Desktop updater journey across this version, the token-spending harness probes,
+or the paid evaluator panel — was performed, and this record does not claim
+them. The published assets and release body remain immutable; this ledger
+records the completed outcome separately.
+
+The plain-folder flow was run live before the release, against a daemon
+built from the change's own branch (#591), not against the published 0.9.2
+daemon or Desktop: a task in a plain folder ran to `done` with no branch, its
+`--base` and second-task refusals were read, Initialize Git committed the
+folder, and the next task got a worktree; the composer's plain-folder menu
+was checked in a browser. Nobody repeated that against the published
+artifacts.
 
 ## 0.9.1 publication
 
 **Published and promoted on 2026-11-18.**
-[Wisp 0.9.1](https://github.com/Pepewitch/wisp/releases/tag/v0.9.1) is the
-latest regular GitHub release (`draft: false`, `prerelease: false`), published
+[Wisp 0.9.1](https://github.com/Pepewitch/wisp/releases/tag/v0.9.1) is a
+regular GitHub release (`draft: false`, `prerelease: false`), published
 at 08:52:47 UTC with ten release assets. The annotated tag resolves to clean
 main commit
 [`fe54f0459700b85ca87d7314529bac402ec93764`](https://github.com/Pepewitch/wisp/commit/fe54f0459700b85ca87d7314529bac402ec93764),
@@ -49,8 +97,8 @@ and notarized the same tagged commit, so the rerun was safe:
 
 Promotion completed at 08:55:09 UTC with Homebrew tap commit
 [`956853ac22e0adc32a8ea7fea43afd16b8848425`](https://github.com/Pepewitch/homebrew-tap/commit/956853ac22e0adc32a8ea7fea43afd16b8848425).
-The Formula, Cask, daemon update channel, and Desktop update channel all serve
-0.9.1.
+The Formula, Cask, daemon update channel, and Desktop update channel all served
+0.9.1 until 0.9.2 was promoted.
 
 0.9.1 adds no database migration. No PNG asset or brand-generator input changed
 since 0.9.0, so the PNG assets were not re-rendered. This is a fully automated
