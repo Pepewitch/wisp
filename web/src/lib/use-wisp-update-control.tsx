@@ -20,6 +20,7 @@ import {
   useDaemonRuntime,
   type DaemonRuntime,
 } from "@/lib/runtime"
+import { uiIntentsFor } from "@/lib/ui-intents"
 import {
   daemonRestartsAutomatically,
   waitForUpdatedDaemon,
@@ -38,11 +39,14 @@ export function useWispUpdateControl() {
   )
   const updateRuntime = useMemo(() => {
     if (!localConnection) return runtime
+    const { connectionId } = localConnection.transport
     return createDaemonRuntime(localConnection.transport, {
-      recoverAfterUpdate: () =>
-        queryClient.invalidateQueries({
-          queryKey: [localConnection.metadata.id],
-        }),
+      recoverAfterUpdate: () => {
+        uiIntentsFor(connectionId).reopenStreams()
+        // Health already proved the restart. Unrelated data reads can retry
+        // in the background without keeping the update controls locked.
+        void queryClient.invalidateQueries({ queryKey: [connectionId] })
+      },
     })
   }, [localConnection, runtime])
   const updateQuery = useUpdateStatus(updateRuntime)

@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useSyncExternalStore } from "react"
 
 import { connectionAttention, type ConnectionAttention } from "@/lib/connection-attention"
 import { classifyConnectionError, type ConnectionReachability } from "@/lib/connection-reachability"
@@ -6,6 +6,7 @@ import { connectionStore } from "@/lib/conn"
 import type { DesktopConnectionEntry } from "@/lib/desktop-connections"
 import type { DaemonEventStream } from "@/lib/transport"
 import type { ApiTask } from "@/lib/types"
+import { uiIntentsFor } from "@/lib/ui-intents"
 
 /** Unknown event types stay refreshable so a newer daemon can add task facts. */
 function canChangeTaskList(data: string): boolean {
@@ -29,6 +30,12 @@ export function InactiveConnectionMonitor({
   onReachability: (connectionId: string, value: ConnectionReachability) => void
   onTasks: (connectionId: string, tasks: readonly ApiTask[]) => void
 }) {
+  // A daemon update can finish while Local is being monitored in the background.
+  const intents = uiIntentsFor(entry.metadata.id)
+  const reconnectRequests = useSyncExternalStore(
+    intents.subscribe,
+    intents.reconnectRequests
+  )
   useEffect(() => {
     const store = connectionStore(entry.metadata.id)
     // A JSON probe alone cannot prove event delivery, but a routine handoff
@@ -117,6 +124,6 @@ export function InactiveConnectionMonitor({
       inFlight?.abort()
       events?.close()
     }
-  }, [entry, onAttention, onReachability, onTasks])
+  }, [entry, onAttention, onReachability, onTasks, reconnectRequests])
   return null
 }
