@@ -25,7 +25,7 @@
 #   not Mac App Store, so the private API costs nothing there.
 [package]
 name = "wisp-desktop"
-version = "0.9.1"
+version = "0.9.2"
 edition = "2021"
 rust-version = "1.82"
 description = "Native core for the Wisp desktop shell"
