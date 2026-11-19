@@ -9,9 +9,9 @@ things:
   task in the folder itself, and say so.
 - **What needs Git says so.** Worktrees, a base, auto-merge, auto-fix,
   auto-review and subtasks are refused by name in such a folder, instead of
-  being offered and then failing.
+  being accepted and then failing.
 - **Initialize Git from the composer.** One action turns the folder into a
-  repository whose tasks get their own worktrees again.
+  repository whose new tasks get their own worktrees.
 
 ## What changed since 0.9.1
 
@@ -22,8 +22,8 @@ things:
   `mode`), a project folder that is not a Git repository, or is one with no
   ref at all, gets a local task. `wisp new` prints `local — the folder has no
   Git commit`. The task has no branch and no diff: the Changes pane, the task
-  detail and `wisp show` say the folder is not a Git repository instead of
-  telling you to archive the task. The agent is told it works directly in the
+  detail and `wisp show` say the folder is not a Git repository, or has no
+  commit yet, instead of telling you to archive the task. The agent is told it works directly in the
   folder and not to run `git init` or commit unless asked.
 - **What needs Git is refused by name** (#591). An explicit worktree, a
   `--base`, auto-merge, auto-fix and auto-review are refused there with the
@@ -35,14 +35,14 @@ things:
   Git** action. It asks once more, then runs `git init` when needed and
   commits the folder's current files, minus whatever its `.gitignore`
   excludes, as a first commit. After that the project offers Worktree, Base
-  and autopilot again. Git's own reason is shown when it refuses: no
-  identity configured, the folder sits inside another repository, or it
-  already has a commit. The same action is `POST /api/projects/git`.
+  and autopilot again. When it is refused, the menu shows why: no Git
+  identity configured, the folder sits inside another repository that has no
+  commit yet, or it already has a commit. The same action is `POST /api/projects/git`.
 - **`GET /api/repos` reports each project's Git state** (#591), as `git`:
   `repo`, `unborn`, `none`, or `null` for a missing folder. An older client
   ignores it; this client treats a daemon without it as before.
 - **Wisp never guesses a folder is plain** (#591). Only git's own "not a git
-  repository" makes it one. A repository on an orphan branch, or one git
+  repository", or a repository with no ref at all, makes it one. A repository on an orphan branch, or one git
   cannot answer for (a timeout, `safe.directory`, git missing), keeps the old
   behaviour: a worktree, or git's own error.
 
@@ -105,7 +105,9 @@ records the final outcome separately from these immutable release notes.
 A task in a folder without Git has nothing to show or undo its changes with,
 and only one task at a time works in such a folder. Initialize Git commits
 every file `.gitignore` does not exclude, including secrets or build output
-when there is no `.gitignore`; it asks once more before it does. The
+when there is no `.gitignore`; it asks once more before it does. It does not wait for a task already working
+in the folder: that task's edits so far go into the first commit, and the task
+keeps running as it started, with no branch. The
 composer reads a project's Git state when it opens, so a `git init` run
 outside Wisp while the composer is open shows after it is reopened. Asking
 for a worktree in a plain folder from inside Wisp, such as setting up a
